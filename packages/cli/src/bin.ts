@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
 import { createCli } from "./create-cli";
 
-process.exit(await createCli({ name: "chatbridge" }).run(process.argv));
+// Set exitCode instead of calling process.exit(): on a pipe, stdout writes are
+// asynchronous and process.exit() would drop pending output.
+process.exitCode = await createCli({ name: "chatbridge" }).run(process.argv);
