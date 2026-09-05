@@ -10,6 +10,13 @@
         "typescript": "^5.6.0",
       },
     },
+    "examples/dummy-chat": {
+      "name": "@chatbridge/example-dummy-chat",
+      "version": "0.0.0",
+      "dependencies": {
+        "@chatbridge/provider": "workspace:*",
+      },
+    },
     "packages/cli": {
       "name": "chatbridge",
       "version": "0.0.0",
@@ -61,6 +68,8 @@
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@1.9.4", "", { "os": "win32", "cpu": "x64" }, "sha512-8Y5wMhVIPaWe6jw2H+KlEm4wP/f7EW3810ZLmDlrEEy5KvBsb9ECEfu/kMWD484ijfQ8+nIi0giMgu9g1UAuuA=="],
 
     "@chatbridge/core": ["@chatbridge/core@workspace:packages/core"],
+
+    "@chatbridge/example-dummy-chat": ["@chatbridge/example-dummy-chat@workspace:examples/dummy-chat"],
 
     "@chatbridge/provider": ["@chatbridge/provider@workspace:packages/provider"],
 
