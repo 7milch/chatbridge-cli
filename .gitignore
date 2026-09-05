@@ -1,0 +1,11 @@
+# Local-only design notes (Japanese source document)
+INIT.md
+
+# Browser authentication state — contains session cookies
+.auth/
+storage-state*.json
+
+node_modules/
+dist/
+.DS_Store
+*.log
