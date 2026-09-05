@@ -1,6 +1,6 @@
 {
   "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
-  "files": { "ignore": ["node_modules", "dist", "*.tsbuildinfo"] },
+  "files": { "ignore": ["node_modules", "dist", "*.tsbuildinfo", ".claude"] },
   "formatter": { "enabled": true, "indentStyle": "space" },
   "linter": { "enabled": true, "rules": { "recommended": true } },
   "organizeImports": { "enabled": true }

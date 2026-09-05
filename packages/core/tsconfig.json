@@ -12,5 +12,6 @@
     "rootDir": "src"
   },
   "include": ["src"],
+  "exclude": ["**/*.test.ts"],
   "references": [{ "path": "../provider" }, { "path": "../runtime" }]
 }
