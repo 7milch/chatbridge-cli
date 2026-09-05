@@ -31,6 +31,9 @@
         "@chatbridge/provider": "workspace:*",
         "@chatbridge/runtime": "workspace:*",
       },
+      "devDependencies": {
+        "@chatbridge/example-dummy-chat": "workspace:*",
+      },
     },
     "packages/provider": {
       "name": "@chatbridge/provider",
