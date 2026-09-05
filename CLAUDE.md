@@ -11,9 +11,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-Greenfield. No implementation code yet — the repository holds only project scaffolding. Build, test, and lint commands do not exist yet; replace this section with the real commands once a toolchain is chosen and set up.
+Bun-workspaces monorepo. Commands:
 
-Read `INIT.md` (local, Japanese) before starting implementation. Its §14 states an explicit policy: set up the development environment and AI development rules *before* building features.
+- `bun install` — install all workspace deps
+- `bun run check` — lint (Biome) + typecheck (tsc --build) + tests (bun test); required before every commit/PR
+- `bun test packages/<name>` — run one package's tests
+- `bunx playwright install chromium` — one-time browser install for E2E
+
+Dependency direction is one-way: `cli → core → runtime → provider`. Never import in reverse.
+Spec for the current milestone: `docs/superpowers/specs/2026-09-05-oneshot-vertical-slice-design.md`.
 
 ## Purpose
 

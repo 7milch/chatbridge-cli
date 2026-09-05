@@ -1,0 +1,10 @@
+{
+  "name": "@chatbridge/runtime",
+  "version": "0.0.0",
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "playwright": "^1.48.0",
+    "@chatbridge/provider": "workspace:*"
+  }
+}
