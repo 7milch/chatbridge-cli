@@ -3,7 +3,11 @@
   "version": "0.0.0",
   "type": "module",
   "exports": { ".": "./src/index.ts" },
+  "bin": { "chatbridge": "./src/bin.ts" },
   "dependencies": {
     "@chatbridge/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@chatbridge/example-dummy-chat": "workspace:*"
   }
 }

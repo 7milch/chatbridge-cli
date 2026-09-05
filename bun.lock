@@ -20,8 +20,14 @@
     "packages/cli": {
       "name": "chatbridge",
       "version": "0.0.0",
+      "bin": {
+        "chatbridge": "./src/bin.ts",
+      },
       "dependencies": {
         "@chatbridge/core": "workspace:*",
+      },
+      "devDependencies": {
+        "@chatbridge/example-dummy-chat": "workspace:*",
       },
     },
     "packages/core": {
