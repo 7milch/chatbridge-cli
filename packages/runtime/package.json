@@ -6,5 +6,8 @@
   "dependencies": {
     "playwright": "^1.48.0",
     "@chatbridge/provider": "workspace:*"
+  },
+  "devDependencies": {
+    "@chatbridge/example-dummy-chat": "workspace:*"
   }
 }

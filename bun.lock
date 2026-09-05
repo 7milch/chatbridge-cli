@@ -46,6 +46,9 @@
         "@chatbridge/provider": "workspace:*",
         "playwright": "^1.48.0",
       },
+      "devDependencies": {
+        "@chatbridge/example-dummy-chat": "workspace:*",
+      },
     },
   },
   "packages": {
