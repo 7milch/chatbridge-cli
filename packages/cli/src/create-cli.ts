@@ -3,6 +3,7 @@ import {
   AuthStore,
   ChatBridgeError,
   type Provider,
+  ProviderLoadError,
   runLogin,
   runOneShot,
 } from "@chatbridge/core";
@@ -27,6 +28,19 @@ const EXIT_CODES: Record<string, number> = {
 };
 
 const DEFAULT_TIMEOUT_SEC = 120;
+
+/** Validates --timeout before any browser is launched. */
+function parseTimeoutMs(raw: string | undefined): number {
+  if (raw === undefined) return DEFAULT_TIMEOUT_SEC * 1000;
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    throw new ChatBridgeError(
+      "INVALID_ARGUMENT",
+      "--timeout must be a positive number of seconds",
+    );
+  }
+  return seconds * 1000;
+}
 
 export function createCli(opts: CreateCliOptions) {
   const configDir = opts.configDir ?? opts.name;
@@ -53,8 +67,7 @@ export function createCli(opts: CreateCliOptions) {
   async function getProvider(flag: string | undefined): Promise<Provider> {
     if (opts.provider) return opts.provider;
     if (!flag) {
-      throw new ChatBridgeError(
-        "PROVIDER_LOAD",
+      throw new ProviderLoadError(
         "No provider specified. Pass --provider <npm-package|./path>.",
       );
     }
@@ -110,13 +123,13 @@ export function createCli(opts: CreateCliOptions) {
       }
 
       if (typeof values.prompt === "string") {
+        const timeoutMs = parseTimeoutMs(values.timeout);
         const provider = await getProvider(values.provider);
         const authStore = new AuthStore({
           configDir,
           providerName: provider.name,
           baseDir: opts.baseDir,
         });
-        const timeoutMs = Number(values.timeout ?? DEFAULT_TIMEOUT_SEC) * 1000;
         const reply = await runOneShot({
           provider,
           authStore,
