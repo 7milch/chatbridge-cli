@@ -29,9 +29,15 @@ export class BrowserRuntime {
       ? // Playwright accepts a file path for storageState.
         opts.authStore.path()
       : undefined;
-    const context = await browser.newContext({ storageState });
-    const page = await context.newPage();
-    return new BrowserRuntime(browser, context, page, opts.authStore);
+    try {
+      const context = await browser.newContext({ storageState });
+      const page = await context.newPage();
+      return new BrowserRuntime(browser, context, page, opts.authStore);
+    } catch (err) {
+      // Never leak a launched browser process when context/page setup fails.
+      await browser.close();
+      throw err;
+    }
   }
 
   async saveAuthState(): Promise<void> {
