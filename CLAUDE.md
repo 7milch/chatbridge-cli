@@ -60,3 +60,14 @@ Those live in a separate company repository that consumes this project as a depe
 ## Technology candidates (not final)
 
 TypeScript / Bun / OpenTUI / Playwright. These are candidates, to be confirmed after the spec is written. Update this section when the stack is decided or changed.
+
+## Development process
+
+- Work on a branch named `issue-[number]`; sync progress to the GitHub issue with `gh issue comment` (in English) after each completed task. The issue is the long-term memory across sessions.
+- Execution model: subagent-driven development (fresh implementer per task, task review after each, whole-branch review at the end).
+- Model policy for subagents:
+  - **Fable** — orchestration decisions, all reviews (task reviews, final whole-branch review), fix-loop escalation rounds 4–5.
+  - **Opus** — implementation tasks with integration risk or multi-file judgment (browser runtime, session flows, CLI wiring).
+  - **Sonnet** — mechanical/transcription implementation tasks where the plan contains the full code (scaffolding, type definitions, error classes, file stores, dummy fixtures, CI/docs).
+- TDD; `bun run check` must pass before every commit.
+- Current milestone plan: `docs/superpowers/plans/2026-09-05-oneshot-vertical-slice.md`
