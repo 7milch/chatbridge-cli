@@ -1,0 +1,9 @@
+{
+  "name": "@chatbridge/example-dummy-chat",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": { "./server": "./server.ts", "./provider": "./provider.ts" },
+  "scripts": { "start": "bun run serve.ts" },
+  "dependencies": { "@chatbridge/provider": "workspace:*" }
+}

@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/provider" },
+    { "path": "packages/runtime" },
+    { "path": "packages/core" },
+    { "path": "packages/cli" },
+    { "path": "examples/dummy-chat" }
+  ]
+}

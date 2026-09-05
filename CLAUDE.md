@@ -11,9 +11,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-Greenfield. No implementation code yet — the repository holds only project scaffolding. Build, test, and lint commands do not exist yet; replace this section with the real commands once a toolchain is chosen and set up.
+Bun-workspaces monorepo. Commands:
 
-Read `INIT.md` (local, Japanese) before starting implementation. Its §14 states an explicit policy: set up the development environment and AI development rules *before* building features.
+- `bun install` — install all workspace deps
+- `bun run check` — lint (Biome) + typecheck (tsc --build) + tests (bun test); required before every commit/PR
+- `bun test packages/<name>` — run one package's tests
+- `./packages/runtime/node_modules/.bin/playwright install chromium` — one-time browser install for E2E
+
+Dependency direction is one-way: `cli → core → runtime → provider`. Never import in reverse.
+Spec for the current milestone: `docs/superpowers/specs/2026-09-05-oneshot-vertical-slice-design.md`.
 
 ## Purpose
 
@@ -57,17 +63,20 @@ Those live in a separate company repository that consumes this project as a depe
 - Intended API surface: `login()` / `saveAuth()` / `loadAuth()` / `isAuthenticated()` / `logout()`
 - `auth login` launches Playwright in headful mode.
 
-## Technology candidates (not final)
+## Technology stack
 
-TypeScript / Bun / OpenTUI / Playwright. These are candidates, to be confirmed after the spec is written. Update this section when the stack is decided or changed.
+Finalized for milestone 1: TypeScript + Bun (workspaces, test runner) +
+Playwright (Chromium). Verified by CI E2E (`packages/runtime` and
+`packages/cli` E2E tests run real Chromium under Bun). OpenTUI remains
+provisional until the interactive-mode milestone.
 
 ## Development process
 
 - Work on a branch named `issue-[number]`; sync progress to the GitHub issue with `gh issue comment` (in English) after each completed task. The issue is the long-term memory across sessions.
 - Execution model: subagent-driven development (fresh implementer per task, task review after each, whole-branch review at the end).
 - Model policy for subagents:
-  - **Fable** — orchestration decisions, all reviews (task reviews, final whole-branch review), fix-loop escalation rounds 4–5.
-  - **Opus** — implementation tasks with integration risk or multi-file judgment (browser runtime, session flows, CLI wiring).
-  - **Sonnet** — mechanical/transcription implementation tasks where the plan contains the full code (scaffolding, type definitions, error classes, file stores, dummy fixtures, CI/docs).
+  - **Fable** — the final whole-branch review only.
+  - **Opus** — implementation tasks with integration risk or multi-file judgment (browser runtime, session flows, CLI wiring), task reviews of those diffs, and fix-loop escalation rounds 4–5.
+  - **Sonnet** — mechanical/transcription implementation tasks where the plan contains the full code (scaffolding, type definitions, error classes, file stores, dummy fixtures, CI/docs), and task reviews of those small diffs.
 - TDD; `bun run check` must pass before every commit.
 - Current milestone plan: `docs/superpowers/plans/2026-09-05-oneshot-vertical-slice.md`

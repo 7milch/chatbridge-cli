@@ -6,7 +6,9 @@ Service-specific behaviour (URLs, DOM selectors, login flows, response detection
 
 ## Status
 
-Early design stage. No implementation yet.
+Milestone 1 (one-shot vertical slice) implemented: `auth login`,
+auth-state persistence, and `-p` one-shot round trips work against the
+bundled dummy chat. Interactive TUI is not built yet.
 
 ## Planned features
 
@@ -32,6 +34,18 @@ CLI ─┬─ Interactive Mode (TUI)
 ```
 
 The core and providers do not depend on the TUI, so both execution modes share the same code paths.
+
+## Quick start (against the bundled dummy chat)
+
+```bash
+bun install
+./packages/runtime/node_modules/.bin/playwright install chromium
+bun run examples/dummy-chat/serve.ts &          # dummy service on :8735
+bun packages/cli/src/bin.ts auth login \
+  --provider ./examples/dummy-chat/provider.ts  # click "Log in" in the opened browser
+bun packages/cli/src/bin.ts -p "hello" \
+  --provider ./examples/dummy-chat/provider.ts  # → Echo: hello
+```
 
 ## Authentication
 
