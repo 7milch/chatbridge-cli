@@ -16,7 +16,7 @@ Bun-workspaces monorepo. Commands:
 - `bun install` — install all workspace deps
 - `bun run check` — lint (Biome) + typecheck (tsc --build) + tests (bun test); required before every commit/PR
 - `bun test packages/<name>` — run one package's tests
-- `bunx playwright install chromium` — one-time browser install for E2E
+- `./packages/runtime/node_modules/.bin/playwright install chromium` — one-time browser install for E2E
 
 Dependency direction is one-way: `cli → core → runtime → provider`. Never import in reverse.
 Spec for the current milestone: `docs/superpowers/specs/2026-09-05-oneshot-vertical-slice-design.md`.
@@ -63,9 +63,12 @@ Those live in a separate company repository that consumes this project as a depe
 - Intended API surface: `login()` / `saveAuth()` / `loadAuth()` / `isAuthenticated()` / `logout()`
 - `auth login` launches Playwright in headful mode.
 
-## Technology candidates (not final)
+## Technology stack
 
-TypeScript / Bun / OpenTUI / Playwright. These are candidates, to be confirmed after the spec is written. Update this section when the stack is decided or changed.
+Finalized for milestone 1: TypeScript + Bun (workspaces, test runner) +
+Playwright (Chromium). Verified by CI E2E (`packages/runtime` and
+`packages/cli` E2E tests run real Chromium under Bun). OpenTUI remains
+provisional until the interactive-mode milestone.
 
 ## Development process
 

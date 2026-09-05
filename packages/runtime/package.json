@@ -4,7 +4,7 @@
   "type": "module",
   "exports": { ".": "./src/index.ts" },
   "dependencies": {
-    "playwright": "^1.48.0",
+    "playwright": "1.63.0",
     "@chatbridge/provider": "workspace:*"
   },
   "devDependencies": {
