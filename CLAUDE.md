@@ -80,3 +80,5 @@ provisional until the interactive-mode milestone.
   - **Sonnet** — mechanical/transcription implementation tasks where the plan contains the full code (scaffolding, type definitions, error classes, file stores, dummy fixtures, CI/docs), and task reviews of those small diffs.
 - TDD; `bun run check` must pass before every commit.
 - Current milestone plan: `docs/superpowers/plans/2026-09-05-oneshot-vertical-slice.md`
+
+Roadmap across milestones: `docs/ROADMAP.md`.
