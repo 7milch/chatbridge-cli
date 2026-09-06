@@ -44,34 +44,37 @@ Every package under `packages/` emits JS and declarations:
 - `tsconfig.json` per package: `emitDeclarationOnly: false`, `declaration: true`,
   `outDir: dist`, `rootDir: src`, tests excluded. `tsc --build` at the root
   produces `dist/` for all four packages in dependency order.
-- Root scripts: `build` is `tsc --build` (emits `dist/`, gitignored).
-  `typecheck` is removed in favour of `build`, since with `composite` projects
-  the two are the same command. `check` becomes `lint && build && test`.
-- Tests keep running against `src/*.ts` under `bun test`; no build is needed
-  to run tests.
+- Root scripts: `build` is `tsc --build` (emits `dist/`, gitignored);
+  `typecheck` is removed since with `composite` projects it is the same
+  command. `test` is `bun run build && bun test`; `check` is
+  `bun run lint && bun run test`.
+- Node ESM needs explicit file extensions in relative imports, so all packages
+  switch to `module: "NodeNext"` / `moduleResolution: "NodeNext"` and relative
+  imports use the `.js` suffix (`./auth-store.js`). Bun resolves these to the
+  `.ts` sources during tests.
+- Tests run against `src/*.ts` under `bun test`, but cross-package imports
+  (`@chatbridge/core` etc.) resolve through `exports` to `dist/`, so the root
+  `test` script is `tsc --build && bun test`. `tsc --build` is incremental.
 
 ### Package manifests
 
-Development keeps `exports` pointing at `src/index.ts` so workspace resolution
-under Bun needs no build step. Publishing swaps the entry points via
-`publishConfig`:
+`exports` always points at the build output (verified: `bun pm pack` 1.4.0
+does not apply `publishConfig` overrides for `exports`/`bin`, so a dev/publish
+split is not possible without custom tooling):
 
 ```json
 {
-  "exports": { ".": "./src/index.ts" },
-  "publishConfig": {
-    "access": "public",
-    "exports": {
-      ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
-    }
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
   },
-  "files": ["dist", "README.md", "LICENSE"]
+  "files": ["dist", "README.md", "LICENSE"],
+  "publishConfig": { "access": "public" }
 }
 ```
 
-The CLI package additionally has `"bin": { "chatbridge": "./dist/bin.js" }` in
-`publishConfig` (dev `bin` stays `./src/bin.ts`). `bin.ts` keeps the
-top-level `await` (ESM) and switches its shebang to `#!/usr/bin/env node`.
+The CLI package has `"bin": { "chatbridge": "./dist/bin.js" }`. `bin.ts` keeps
+the top-level `await` (ESM) and switches its shebang to `#!/usr/bin/env node`.
+`examples/dummy-chat` stays private and keeps exporting its `.ts` files.
 
 Each published `package.json` gains: `description`, `license: "MIT"`,
 `repository` (`git+https://github.com/7milch/chatbridge-cli.git`, with
@@ -296,13 +299,11 @@ expects exit 0. The dummy-chat E2E is not run under Node (its server uses
   Playwright chromium install → `bun run check` → `bun run build` → verify
   every publishable `package.json` `version` equals the tag without `v` (fail
   otherwise) → publish in dependency order: provider, runtime, core, cli.
-- Publish command: `bun publish --access public` in each package directory.
-  `bun publish` rewrites `workspace:*` to the concrete version and applies
-  `publishConfig`. **Open point:** whether `bun publish` supports npm
-  Trusted Publishing (OIDC provenance). The implementer verifies this first;
-  if unsupported, the step becomes `bun pm pack` followed by
-  `npm publish <tarball> --provenance --access public` (setup-node with
-  `registry-url` for OIDC).
+- Publish command: `bun pm pack` in each package directory (verified: it
+  rewrites `workspace:*` to the concrete version), then
+  `npm publish <tarball> --provenance --access public` using `actions/setup-node`
+  with `registry-url` so npm's OIDC Trusted Publishing applies. Bun 1.4.0's
+  `bun publish` has no documented OIDC support, so npm does the upload.
 
 `docs/PUBLISHING.md` (English) documents: obtaining the scope, registering a
 Trusted Publisher for each of the four packages (repository, workflow file
