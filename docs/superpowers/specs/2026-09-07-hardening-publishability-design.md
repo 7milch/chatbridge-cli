@@ -195,9 +195,8 @@ An unknown `ChatBridgeError.code` still falls back to 1.
 
 `AuthStore`'s constructor validates `providerName` against
 `^[a-z0-9][a-z0-9._-]{0,63}$` and throws
-`InvalidProviderError` (`code: "INVALID_PROVIDER"`, extends
-`ProviderLoadError` so existing `instanceof ProviderLoadError` checks and the
-exit-5 mapping hold) when it does not match. Names are rejected, never
+`InvalidProviderError` (`code: "INVALID_PROVIDER"`, a direct `ChatBridgeError`
+subclass mapped to exit 5 like `PROVIDER_LOAD`) when it does not match. Names are rejected, never
 rewritten, so the auth file location stays predictable for the user.
 
 Because both the pinned path and `resolveProvider` construct an `AuthStore`
