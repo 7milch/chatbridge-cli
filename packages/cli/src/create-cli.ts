@@ -7,7 +7,7 @@ import {
   runLogin,
   runOneShot,
 } from "@chatbridge/core";
-import { resolveProvider } from "./resolve-provider";
+import { resolveProvider } from "./resolve-provider.js";
 
 export interface CreateCliOptions {
   /** CLI name shown in help and errors, e.g. "chatbridge" or "company-ai-cli". */

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { ProviderLoadError } from "@chatbridge/core";
-import { resolveProvider } from "./resolve-provider";
+import { resolveProvider } from "./resolve-provider.js";
 
 // `bun test` runs with cwd = repo root, so build absolute paths from this
 // file's location instead of relying on the working directory.

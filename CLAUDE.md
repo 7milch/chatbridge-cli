@@ -14,7 +14,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Bun-workspaces monorepo. Commands:
 
 - `bun install` — install all workspace deps
-- `bun run check` — lint (Biome) + typecheck (tsc --build) + tests (bun test); required before every commit/PR
+- `bun run check` — lint (Biome) + build (tsc --build, emits dist/) + tests (bun test); required before every commit/PR
+- `bun run build` — emit JS + d.ts into each package's dist/ (tests import cross-package code from dist, so run this after editing another package)
 - `bun test packages/<name>` — run one package's tests
 - `./packages/runtime/node_modules/.bin/playwright install chromium` — one-time browser install for E2E
 

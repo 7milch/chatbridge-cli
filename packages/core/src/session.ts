@@ -4,7 +4,7 @@ import {
   AuthExpiredError,
   AuthRequiredError,
   ResponseTimeoutError,
-} from "./errors";
+} from "./errors.js";
 
 export interface OneShotOptions {
   provider: Provider;

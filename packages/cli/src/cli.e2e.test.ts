@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { AuthStore, BrowserRuntime } from "@chatbridge/core";
 import { createDummyProvider } from "@chatbridge/example-dummy-chat/provider";
 import { startDummyChat } from "@chatbridge/example-dummy-chat/server";
-import { createCli } from "./create-cli";
+import { createCli } from "./create-cli.js";
 
 const cleanups: Array<() => unknown> = [];
 afterEach(async () => {

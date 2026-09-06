@@ -1,2 +1,2 @@
-export * from "./auth-store";
-export * from "./browser-runtime";
+export * from "./auth-store.js";
+export * from "./browser-runtime.js";

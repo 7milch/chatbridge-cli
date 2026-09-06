@@ -5,7 +5,7 @@ import {
   ChatBridgeError,
   ProviderLoadError,
   ResponseTimeoutError,
-} from "./errors";
+} from "./errors.js";
 
 describe("error hierarchy", () => {
   test("subclasses extend ChatBridgeError with stable codes", () => {

@@ -2,8 +2,15 @@
   "name": "chatbridge",
   "version": "0.0.0",
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
-  "bin": { "chatbridge": "./src/bin.ts" },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "chatbridge": "./dist/bin.js"
+  },
   "dependencies": {
     "@chatbridge/core": "workspace:*"
   },

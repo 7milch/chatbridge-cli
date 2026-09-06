@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { type Provider, defineProvider } from "@chatbridge/core";
 
-import { createCli } from "./create-cli";
+import { createCli } from "./create-cli.js";
 
 /** Provider stub whose methods must never be reached: argument validation
  * happens before any browser is launched. */

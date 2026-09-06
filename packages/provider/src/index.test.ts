@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type Provider, defineProvider } from "./index";
+import { type Provider, defineProvider } from "./index.js";
 
 describe("defineProvider", () => {
   test("returns the same provider object", () => {
