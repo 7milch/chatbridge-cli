@@ -20,7 +20,7 @@ Bun-workspaces monorepo. Commands:
 - `./packages/runtime/node_modules/.bin/playwright install chromium` — one-time browser install for E2E
 
 Dependency direction is one-way: `cli → core → runtime → provider`. Never import in reverse.
-Spec for the current milestone: `docs/superpowers/specs/2026-09-05-oneshot-vertical-slice-design.md`.
+Spec for the current milestone: `docs/superpowers/specs/2026-09-07-hardening-publishability-design.md`.
 
 ## Purpose
 
@@ -80,6 +80,6 @@ provisional until the interactive-mode milestone.
   - **Opus** — implementation tasks with integration risk or multi-file judgment (browser runtime, session flows, CLI wiring), task reviews of those diffs, and fix-loop escalation rounds 4–5.
   - **Sonnet** — mechanical/transcription implementation tasks where the plan contains the full code (scaffolding, type definitions, error classes, file stores, dummy fixtures, CI/docs), and task reviews of those small diffs.
 - TDD; `bun run check` must pass before every commit.
-- Current milestone plan: `docs/superpowers/plans/2026-09-05-oneshot-vertical-slice.md`
+- Current milestone plan: `docs/superpowers/plans/2026-09-07-hardening-publishability.md`
 
 Roadmap across milestones: `docs/ROADMAP.md`.
