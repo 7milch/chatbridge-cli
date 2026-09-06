@@ -2,8 +2,8 @@
 # Packs the four publishable packages into $1 (default: ./packs) in
 # dependency order and sanity-checks each tarball.
 set -euo pipefail
-out=$(cd "$(dirname "${1:-packs}")" && pwd)/$(basename "${1:-packs}")
-mkdir -p "$out"
+mkdir -p "${1:-packs}"
+out=$(cd "${1:-packs}" && pwd)
 for dir in packages/provider packages/runtime packages/core packages/cli; do
   (cd "$dir" && bun pm pack --destination "$out" --quiet)
 done
