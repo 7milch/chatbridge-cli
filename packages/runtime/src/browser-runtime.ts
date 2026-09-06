@@ -5,7 +5,7 @@ import {
   type Page,
   chromium,
 } from "playwright";
-import type { AuthStore } from "./auth-store";
+import type { AuthStore } from "./auth-store.js";
 
 export interface LaunchOptions {
   headless: boolean;

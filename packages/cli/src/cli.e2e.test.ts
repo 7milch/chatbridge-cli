@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { AuthStore, BrowserRuntime } from "@chatbridge/core";
 import { createDummyProvider } from "@chatbridge/example-dummy-chat/provider";
 import { startDummyChat } from "@chatbridge/example-dummy-chat/server";
-import { createCli } from "./create-cli";
+import { createCli } from "./create-cli.js";
 
 const cleanups: Array<() => unknown> = [];
 afterEach(async () => {
@@ -96,5 +96,28 @@ describe("createCli", () => {
     expect(store.has()).toBe(true);
     expect(await cli.run(["bun", "cli", "auth", "logout"])).toBe(0);
     expect(store.has()).toBe(false);
+  }, 60_000);
+
+  test("expired auth exits 3", async () => {
+    const server = await startDummyChat(0);
+    cleanups.push(server.stop);
+    const baseDir = setup();
+    const provider = await prepareAuth(baseDir, server.url);
+    server.invalidateSessions();
+    const cli = createCli({ name: "test-cli", provider, baseDir });
+    expect(await cli.run(["bun", "cli", "-p", "hello"])).toBe(3);
+  }, 60_000);
+
+  test("slow response exits 4 within the --timeout budget", async () => {
+    const server = await startDummyChat(0);
+    cleanups.push(server.stop);
+    const baseDir = setup();
+    const provider = await prepareAuth(baseDir, server.url);
+    server.setReplyDelayMs(5000);
+    const cli = createCli({ name: "test-cli", provider, baseDir });
+    const started = Date.now();
+    const code = await cli.run(["bun", "cli", "-p", "hello", "--timeout", "1"]);
+    expect(code).toBe(4);
+    expect(Date.now() - started).toBeLessThan(5000);
   }, 60_000);
 });

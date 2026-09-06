@@ -6,9 +6,7 @@ Service-specific behaviour (URLs, DOM selectors, login flows, response detection
 
 ## Status
 
-Milestone 1 (one-shot vertical slice) implemented: `auth login`,
-auth-state persistence, and `-p` one-shot round trips work against the
-bundled dummy chat. Interactive TUI is not built yet.
+Milestone 1 (one-shot vertical slice) and milestone 2 (hardening + publishability) are implemented. The packages are publishable to npm and the first release is still pending. The interactive TUI is not built yet.
 
 ## Planned features
 
@@ -47,10 +45,33 @@ bun packages/cli/src/bin.ts -p "hello" \
   --provider ./examples/dummy-chat/provider.ts  # → Echo: hello
 ```
 
+## Install (npm)
+
+```bash
+npm install -g chatbridge            # CLI (Node >= 20 or Bun)
+npm install @chatbridge/provider     # to write a provider
+```
+
+These commands apply from v0.1.0 onwards, once that release is published.
+
+Providers are loaded with `--provider <npm-package|./path>` or from
+`~/.config/chatbridge/config.json`:
+
+```json
+{ "defaultProvider": "@your-scope/your-provider" }
+```
+
+A globally installed CLI resolves an npm-package `defaultProvider` only if
+that provider is installed globally as well.
+
+Exit codes: 1 invalid argument or config, 2 not logged in, 3 auth expired,
+4 response timeout, 5 provider could not be loaded. Set `CHATBRIDGE_DEBUG=1`
+to print the underlying error.
+
 ## Authentication
 
 The framework never stores usernames or passwords. You log in yourself in a headful browser, and the resulting browser authentication state is saved and reused on subsequent runs.
 
 ## License
 
-TBD
+MIT — see [LICENSE](LICENSE).

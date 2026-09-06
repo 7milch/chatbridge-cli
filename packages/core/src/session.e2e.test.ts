@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { createDummyProvider } from "@chatbridge/example-dummy-chat/provider";
 import { startDummyChat } from "@chatbridge/example-dummy-chat/server";
 import { AuthStore, BrowserRuntime } from "@chatbridge/runtime";
-import { AuthRequiredError } from "./errors";
-import { runOneShot } from "./session";
+import { AuthRequiredError } from "./errors.js";
+import { runOneShot } from "./session.js";
 
 const cleanups: Array<() => unknown> = [];
 afterEach(async () => {

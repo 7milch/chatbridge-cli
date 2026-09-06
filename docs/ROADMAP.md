@@ -22,7 +22,7 @@ All three layers consume the same `Provider` contract from `@chatbridge/provider
 Headful `auth login`, `auth logout|status`, `createCli` factory for derived CLIs,
 dummy chat + reference provider, CI E2E on real Chromium. Bun + Playwright verified.
 
-### 2. Hardening + publishability (small)
+### 2. Hardening + publishability (small) — in progress (issue #3)
 
 Follow-ups deferred from milestone 1:
 

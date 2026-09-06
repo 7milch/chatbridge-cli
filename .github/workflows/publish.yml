@@ -1,0 +1,47 @@
+name: Publish
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@^11 # Trusted Publishing needs npm >= 11.5
+      - run: bun install --frozen-lockfile
+      - run: ./packages/runtime/node_modules/.bin/playwright install --with-deps chromium
+      - run: bun run check
+      - run: scripts/check-versions.sh "${GITHUB_REF_NAME#v}"
+      - run: scripts/pack-all.sh packs
+      - name: Publish in dependency order
+        run: |
+          set -euo pipefail
+          for name in chatbridge-provider chatbridge-runtime chatbridge-core chatbridge; do
+            # "<name>-<digit>..." so "chatbridge-" does not match "chatbridge-core-".
+            tgz=$(ls packs/${name}-[0-9]*.tgz)
+            # Idempotent across a partial failure: skip anything already on
+            # the registry, so a re-run of the tag resumes where it stopped.
+            manifest=$(tar -xOf "$tgz" package/package.json)
+            pkg=$(printf '%s' "$manifest" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const m=JSON.parse(s);process.stdout.write(m.name+"@"+m.version)})')
+            if npm view "$pkg" version >/dev/null 2>&1; then
+              echo "$pkg already published; skipping"
+              continue
+            fi
+            npm publish "$tgz" --provenance --access public
+          done

@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDummyProvider } from "@chatbridge/example-dummy-chat/provider";
 import { startDummyChat } from "@chatbridge/example-dummy-chat/server";
-import { AuthStore } from "./auth-store";
-import { BrowserRuntime } from "./browser-runtime";
+import { AuthStore } from "./auth-store.js";
+import { BrowserRuntime } from "./browser-runtime.js";
 
 const cleanups: Array<() => unknown> = [];
 afterEach(async () => {

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AuthStore } from "./auth-store";
+import { AuthStore } from "./auth-store.js";
 
 let dir: string;
 function makeStore(): AuthStore {
@@ -38,5 +38,16 @@ describe("AuthStore", () => {
   test("load throws when no state exists", async () => {
     const store = makeStore();
     await expect(store.load()).rejects.toThrow();
+  });
+
+  test("rejects a provider name that is not a safe file name", () => {
+    expect(
+      () =>
+        new AuthStore({
+          configDir: "chatbridge",
+          providerName: "../escape",
+          baseDir: tmpdir(),
+        }),
+    ).toThrow(RangeError);
   });
 });

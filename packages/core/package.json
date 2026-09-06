@@ -1,10 +1,21 @@
 {
   "name": "@chatbridge/core",
-  "version": "0.0.0",
-  "type": "module",
-  "exports": {
-    ".": "./src/index.ts"
+  "version": "0.1.0",
+  "description": "Core session flows and errors for chatbridge",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/7milch/chatbridge-cli.git",
+    "directory": "packages/core"
   },
+  "keywords": ["chatbridge", "playwright", "chat"],
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "publishConfig": { "access": "public" },
   "dependencies": {
     "@chatbridge/provider": "workspace:*",
     "@chatbridge/runtime": "workspace:*"
