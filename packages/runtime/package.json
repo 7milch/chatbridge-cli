@@ -1,13 +1,21 @@
 {
   "name": "@chatbridge/runtime",
-  "version": "0.0.0",
-  "type": "module",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
+  "version": "0.1.0",
+  "description": "Playwright runtime for chatbridge: browser lifecycle and auth-state persistence",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/7milch/chatbridge-cli.git",
+    "directory": "packages/runtime"
   },
+  "keywords": ["chatbridge", "playwright", "chat"],
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "publishConfig": { "access": "public" },
   "dependencies": {
     "playwright": "1.63.0",
     "@chatbridge/provider": "workspace:*"

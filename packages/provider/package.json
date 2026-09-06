@@ -1,14 +1,21 @@
 {
   "name": "@chatbridge/provider",
-  "version": "0.0.0",
-  "type": "module",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
+  "version": "0.1.0",
+  "description": "Provider contract for chatbridge: service-specific browser behaviour behind one interface",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/7milch/chatbridge-cli.git",
+    "directory": "packages/provider"
   },
-  "devDependencies": {
-    "playwright-core": "^1.48.0"
-  }
+  "keywords": ["chatbridge", "playwright", "chat", "provider"],
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "publishConfig": { "access": "public" },
+  "peerDependencies": { "playwright-core": ">=1.48 <2" },
+  "devDependencies": { "playwright-core": "1.63.0" }
 }

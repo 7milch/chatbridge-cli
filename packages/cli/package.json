@@ -1,16 +1,22 @@
 {
   "name": "chatbridge",
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "Drive browser-only web chat AI services from the command line",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/7milch/chatbridge-cli.git",
+    "directory": "packages/cli"
+  },
+  "keywords": ["chatbridge", "cli", "playwright", "chat", "ai"],
   "type": "module",
+  "engines": { "node": ">=20" },
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
   },
-  "bin": {
-    "chatbridge": "./dist/bin.js"
-  },
+  "bin": { "chatbridge": "./dist/bin.js" },
+  "files": ["dist", "README.md", "LICENSE"],
+  "publishConfig": { "access": "public" },
   "dependencies": {
     "@chatbridge/core": "workspace:*"
   },

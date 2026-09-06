@@ -53,4 +53,4 @@ The framework never stores usernames or passwords. You log in yourself in a head
 
 ## License
 
-TBD
+MIT — see [LICENSE](LICENSE).

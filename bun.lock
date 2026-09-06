@@ -16,10 +16,13 @@
       "dependencies": {
         "@chatbridge/provider": "workspace:*",
       },
+      "devDependencies": {
+        "playwright-core": "1.63.0",
+      },
     },
     "packages/cli": {
       "name": "chatbridge",
-      "version": "0.0.0",
+      "version": "0.1.0",
       "bin": {
         "chatbridge": "./src/bin.ts",
       },
@@ -32,7 +35,7 @@
     },
     "packages/core": {
       "name": "@chatbridge/core",
-      "version": "0.0.0",
+      "version": "0.1.0",
       "dependencies": {
         "@chatbridge/provider": "workspace:*",
         "@chatbridge/runtime": "workspace:*",
@@ -43,14 +46,17 @@
     },
     "packages/provider": {
       "name": "@chatbridge/provider",
-      "version": "0.0.0",
+      "version": "0.1.0",
       "devDependencies": {
-        "playwright-core": "^1.48.0",
+        "playwright-core": "1.63.0",
+      },
+      "peerDependencies": {
+        "playwright-core": ">=1.48 <2",
       },
     },
     "packages/runtime": {
       "name": "@chatbridge/runtime",
-      "version": "0.0.0",
+      "version": "0.1.0",
       "dependencies": {
         "@chatbridge/provider": "workspace:*",
         "playwright": "1.63.0",
