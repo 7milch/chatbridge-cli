@@ -1,5 +1,10 @@
 export * from "./errors.js";
-export * from "./session.js";
+export {
+  type LoginOptions,
+  type OneShotOptions,
+  runLogin,
+  runOneShot,
+} from "./session.js";
 export { createAuthStore } from "./create-auth-store.js";
 export {
   AuthStore,
