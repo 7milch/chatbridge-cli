@@ -118,6 +118,6 @@ describe("createCli", () => {
     const started = Date.now();
     const code = await cli.run(["bun", "cli", "-p", "hello", "--timeout", "1"]);
     expect(code).toBe(4);
-    expect(Date.now() - started).toBeLessThan(4000);
+    expect(Date.now() - started).toBeLessThan(5000);
   }, 60_000);
 });

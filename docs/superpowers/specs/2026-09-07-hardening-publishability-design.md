@@ -309,8 +309,9 @@ Trusted Publisher for each of the four packages (repository, workflow file
 name), cutting a release (bump versions in lockstep, tag `vX.Y.Z`, push),
 and the scope-fallback rename checklist. The first publish (`v0.1.0`) is
 triggered by the user after the npm-side setup is done; the code work in this
-milestone ends with the workflow merged and dry-run verified
-(`bun publish --dry-run` in CI on pull requests).
+milestone ends with the workflow merged and packing verified: PR CI runs
+`scripts/pack-all.sh`, which packs all four packages and checks tarball
+contents and `workspace:` rewriting — a stronger check than a dry run.
 
 ## Out of scope
 
