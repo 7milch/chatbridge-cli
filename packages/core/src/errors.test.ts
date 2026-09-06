@@ -3,6 +3,7 @@ import {
   AuthExpiredError,
   AuthRequiredError,
   ChatBridgeError,
+  InvalidProviderError,
   ProviderLoadError,
   ResponseTimeoutError,
 } from "./errors.js";
@@ -21,5 +22,19 @@ describe("error hierarchy", () => {
       expect(err.code).toBe(code);
       expect(err.message.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("cause", () => {
+  test("is carried through to Error.cause", () => {
+    const inner = new Error("root");
+    const err = new ResponseTimeoutError("timed out", { cause: inner });
+    expect(err.cause).toBe(inner);
+  });
+
+  test("InvalidProviderError maps to INVALID_PROVIDER", () => {
+    const err = new InvalidProviderError("bad name");
+    expect(err).toBeInstanceOf(ChatBridgeError);
+    expect(err.code).toBe("INVALID_PROVIDER");
   });
 });

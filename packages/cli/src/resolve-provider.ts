@@ -31,6 +31,7 @@ export async function resolveProvider(spec: string): Promise<Provider> {
   } catch (err) {
     throw new ProviderLoadError(
       `Could not load provider "${spec}": ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
     );
   }
   if (!isProvider(mod.default)) {

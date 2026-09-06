@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { validateProviderName } from "./provider-name.js";
 
 export interface AuthStoreOptions {
   /** Directory name under the base dir, e.g. "chatbridge" or "company-ai". */
@@ -19,6 +20,7 @@ export class AuthStore {
   private readonly file: string;
 
   constructor(opts: AuthStoreOptions) {
+    validateProviderName(opts.providerName);
     const base = opts.baseDir ?? join(homedir(), ".config");
     this.dir = join(base, opts.configDir, "auth");
     this.file = join(this.dir, `${opts.providerName}.json`);

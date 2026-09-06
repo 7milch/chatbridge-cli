@@ -39,4 +39,15 @@ describe("AuthStore", () => {
     const store = makeStore();
     await expect(store.load()).rejects.toThrow();
   });
+
+  test("rejects a provider name that is not a safe file name", () => {
+    expect(
+      () =>
+        new AuthStore({
+          configDir: "chatbridge",
+          providerName: "../escape",
+          baseDir: tmpdir(),
+        }),
+    ).toThrow(RangeError);
+  });
 });
