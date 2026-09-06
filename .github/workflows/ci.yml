@@ -19,3 +19,4 @@ jobs:
         with:
           node-version: 20
       - run: node packages/cli/dist/bin.js --help
+      - run: scripts/pack-all.sh packs
