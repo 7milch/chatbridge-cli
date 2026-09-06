@@ -1,30 +1,35 @@
 import { parseArgs } from "node:util";
 import {
-  AuthStore,
   ChatBridgeError,
   type Provider,
   ProviderLoadError,
+  createAuthStore,
   runLogin,
   runOneShot,
 } from "@chatbridge/core";
+import { configPath, loadConfig } from "./config.js";
 import { resolveProvider } from "./resolve-provider.js";
 
 export interface CreateCliOptions {
   /** CLI name shown in help and errors, e.g. "chatbridge" or "company-ai-cli". */
   name: string;
-  /** Pinned provider. When set, --provider is not accepted. */
+  /** Pinned provider. When set, --provider is rejected and config is not read. */
   provider?: Provider;
   /** Config directory name under ~/.config; defaults to `name`. */
   configDir?: string;
-  /** Test-only: overrides the auth-store base directory. */
+  /** Test-only: overrides the config/auth-store base directory. */
   baseDir?: string;
 }
 
+/** Single source of truth for `ChatBridgeError.code` → process exit code. */
 const EXIT_CODES: Record<string, number> = {
+  INVALID_ARGUMENT: 1,
+  INVALID_CONFIG: 1,
   AUTH_REQUIRED: 2,
   AUTH_EXPIRED: 3,
   RESPONSE_TIMEOUT: 4,
   PROVIDER_LOAD: 5,
+  INVALID_PROVIDER: 5,
 };
 
 const DEFAULT_TIMEOUT_SEC = 120;
@@ -42,8 +47,18 @@ function parseTimeoutMs(raw: string | undefined): number {
   return seconds * 1000;
 }
 
+function isParseArgsError(err: unknown): err is Error & { code: string } {
+  const code = (err as { code?: unknown } | null)?.code;
+  return (
+    err instanceof Error &&
+    typeof code === "string" &&
+    code.startsWith("ERR_PARSE_ARGS_")
+  );
+}
+
 export function createCli(opts: CreateCliOptions) {
   const configDir = opts.configDir ?? opts.name;
+  const location = { configDir, baseDir: opts.baseDir };
 
   function help(): string {
     const providerFlag = opts.provider ? "" : " [--provider <name|path>]";
@@ -55,6 +70,12 @@ export function createCli(opts: CreateCliOptions) {
       `  ${opts.name} auth status${providerFlag}`,
       "",
       "One-shot mode prints the AI response to stdout.",
+      ...(opts.provider
+        ? []
+        : [
+            "",
+            `Without --provider, "defaultProvider" from ${configPath(location)} is used.`,
+          ]),
     ].join("\n");
   }
 
@@ -64,14 +85,47 @@ export function createCli(opts: CreateCliOptions) {
     if (process.stderr.isTTY) process.stderr.write(`${message}\n`);
   }
 
+  /** Resolution order: pinned provider → --provider → config defaultProvider. */
   async function getProvider(flag: string | undefined): Promise<Provider> {
-    if (opts.provider) return opts.provider;
-    if (!flag) {
+    if (opts.provider) {
+      if (flag !== undefined) {
+        throw new ChatBridgeError(
+          "INVALID_ARGUMENT",
+          `${opts.name} has a fixed provider; --provider is not accepted`,
+        );
+      }
+      return opts.provider;
+    }
+    const spec = flag ?? (await loadConfig(location)).defaultProvider;
+    if (!spec) {
       throw new ProviderLoadError(
-        "No provider specified. Pass --provider <npm-package|./path>.",
+        `No provider specified. Pass --provider <npm-package|./path> or set "defaultProvider" in ${configPath(location)}.`,
       );
     }
-    return resolveProvider(flag);
+    return resolveProvider(spec);
+  }
+
+  function reportError(err: unknown): number {
+    if (isParseArgsError(err)) {
+      process.stderr.write(`${opts.name}: ${err.message}\n\n${help()}\n`);
+      return 1;
+    }
+    if (err instanceof ChatBridgeError) {
+      process.stderr.write(`${opts.name}: ${err.message}\n`);
+      if (process.env.CHATBRIDGE_DEBUG === "1" && err.cause !== undefined) {
+        const cause = err.cause;
+        const detail =
+          cause instanceof Error
+            ? (cause.stack ?? cause.message)
+            : String(cause);
+        process.stderr.write(`Caused by: ${detail}\n`);
+      }
+      return EXIT_CODES[err.code] ?? 1;
+    }
+    process.stderr.write(
+      `${opts.name}: unexpected error: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    return 1;
   }
 
   async function run(argv: string[]): Promise<number> {
@@ -100,7 +154,7 @@ export function createCli(opts: CreateCliOptions) {
         (sub === "login" || sub === "logout" || sub === "status")
       ) {
         const provider = await getProvider(values.provider);
-        const authStore = new AuthStore({
+        const authStore = createAuthStore({
           configDir,
           providerName: provider.name,
           baseDir: opts.baseDir,
@@ -125,7 +179,7 @@ export function createCli(opts: CreateCliOptions) {
       if (typeof values.prompt === "string") {
         const timeoutMs = parseTimeoutMs(values.timeout);
         const provider = await getProvider(values.provider);
-        const authStore = new AuthStore({
+        const authStore = createAuthStore({
           configDir,
           providerName: provider.name,
           baseDir: opts.baseDir,
@@ -146,14 +200,7 @@ export function createCli(opts: CreateCliOptions) {
       console.log(help());
       return cmd === undefined ? 0 : 1;
     } catch (err) {
-      if (err instanceof ChatBridgeError) {
-        process.stderr.write(`${opts.name}: ${err.message}\n`);
-        return EXIT_CODES[err.code] ?? 1;
-      }
-      process.stderr.write(
-        `${opts.name}: unexpected error: ${err instanceof Error ? err.message : String(err)}\n`,
-      );
-      return 1;
+      return reportError(err);
     }
   }
 
