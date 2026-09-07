@@ -1,6 +1,6 @@
 import type { Provider } from "@chatbridge/provider";
 import { type AuthStore, BrowserRuntime } from "@chatbridge/runtime";
-import { AuthExpiredError, AuthRequiredError } from "./errors.js";
+import { ChatSession } from "./chat-session.js";
 import { runStep } from "./run-step.js";
 export { runStep };
 
@@ -14,44 +14,13 @@ export interface OneShotOptions {
   onProgress?: (message: string) => void;
 }
 
-/** One-shot flow: restore auth -> new chat -> send -> wait -> return text. */
+/** One-shot flow: one ChatSession turn, then close. */
 export async function runOneShot(opts: OneShotOptions): Promise<string> {
-  const { provider, authStore, onProgress, timeoutMs } = opts;
-  if (!authStore.has()) {
-    throw new AuthRequiredError(
-      `No saved auth state for provider "${provider.name}". Run \`auth login\` first.`,
-    );
-  }
-  onProgress?.("Opening browser...");
-  const rt = await BrowserRuntime.launch({
-    headless: opts.headless,
-    provider,
-    authStore,
-  });
+  const session = await ChatSession.open(opts);
   try {
-    rt.page.setDefaultTimeout(timeoutMs);
-    await runStep("goto", timeoutMs, () => rt.page.goto(provider.chatUrl));
-    const loggedIn = await runStep("isLoggedIn", timeoutMs, () =>
-      provider.isLoggedIn(rt.page),
-    );
-    if (!loggedIn) {
-      throw new AuthExpiredError(
-        `Auth state for "${provider.name}" is no longer valid. Run \`auth login\` again.`,
-      );
-    }
-    await runStep("startNewChat", timeoutMs, () =>
-      provider.startNewChat(rt.page),
-    );
-    onProgress?.("Sending prompt...");
-    await runStep("sendMessage", timeoutMs, () =>
-      provider.sendMessage(rt.page, opts.prompt),
-    );
-    onProgress?.("Waiting for response...");
-    return await runStep("waitForResponse", timeoutMs, () =>
-      provider.waitForResponse(rt.page),
-    );
+    return await session.send(opts.prompt);
   } finally {
-    await rt.close();
+    await session.close();
   }
 }
 

@@ -16,9 +16,12 @@ export interface Provider {
   isLoggedIn(page: Page): Promise<boolean>;
   /** Bring the page to a state where a new chat can start. */
   startNewChat(page: Page): Promise<void>;
-  /** Submit the prompt. */
+  /** Submit the prompt. Called once per turn on the same `Page` for a
+   * multi-turn conversation. */
   sendMessage(page: Page, prompt: string): Promise<void>;
-  /** Wait for response completion and return the response text. */
+  /** Wait for response completion and return the response text. Must
+   * return the response to the most recent `sendMessage` only, never an
+   * earlier turn's. */
   waitForResponse(page: Page): Promise<string>;
 }
 

@@ -1,7 +1,8 @@
 /** Minimal dummy web chat used for E2E verification of the framework.
  * Not a real service: fixed echo responses, cookie-based fake login.
- * Test hooks: invalidateSessions() (simulates an expired login) and
- * setReplyDelayMs() (simulates a slow response). */
+ * Test hooks: invalidateSessions() (simulates an expired login),
+ * setReplyDelayMs() (simulates a slow response), and a message starting
+ * with "slow:" (that one reply takes 5 s regardless of the delay). */
 
 const LOGIN_HTML = `<!doctype html>
 <title>Dummy Chat — Login</title>
@@ -31,13 +32,14 @@ function chatHtml(replyDelayMs: number): string {
     you.textContent = text;
     log.appendChild(you);
     log.dataset.state = "busy";
+    const wait = text.startsWith("slow:") ? 5000 : delay;
     setTimeout(() => {
       const reply = document.createElement("div");
       reply.className = "message assistant";
       reply.textContent = "Echo: " + text;
       log.appendChild(reply);
       log.dataset.state = "idle";
-    }, delay);
+    }, wait);
   });
 </script>`;
 }

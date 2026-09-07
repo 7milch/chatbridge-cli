@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDummyProvider } from "@chatbridge/example-dummy-chat/provider";
 import { startDummyChat } from "@chatbridge/example-dummy-chat/server";
+import type { Provider } from "@chatbridge/provider";
 import { AuthStore, BrowserRuntime } from "@chatbridge/runtime";
-import { AuthRequiredError } from "./errors.js";
+import { ChatSession } from "./chat-session.js";
+import { AuthRequiredError, ResponseTimeoutError } from "./errors.js";
 import { runOneShot } from "./session.js";
 
 const cleanups: Array<() => unknown> = [];
@@ -30,6 +32,23 @@ function tempStore(name: string): AuthStore {
   });
 }
 
+/** Drives the dummy login once so the store holds a valid session. */
+async function prepareAuth(
+  provider: Provider,
+  store: AuthStore,
+): Promise<void> {
+  const rt = await BrowserRuntime.launch({
+    headless: true,
+    provider,
+    authStore: store,
+  });
+  await provider.navigateToLogin(rt.page);
+  await rt.page.locator("#login-button").click();
+  await rt.page.waitForURL("**/chat");
+  await rt.saveAuthState();
+  await rt.close();
+}
+
 describe("runOneShot", () => {
   test("throws AuthRequiredError when no auth state exists", async () => {
     const server = await startDummyChat(0);
@@ -52,18 +71,7 @@ describe("runOneShot", () => {
     const provider = createDummyProvider(server.url);
     const store = tempStore(provider.name);
 
-    // Prepare auth state by driving the login directly (login-flow UX is
-    // covered by the CLI E2E in Task 8).
-    const rt = await BrowserRuntime.launch({
-      headless: true,
-      provider,
-      authStore: store,
-    });
-    await provider.navigateToLogin(rt.page);
-    await rt.page.locator("#login-button").click();
-    await rt.page.waitForURL("**/chat");
-    await rt.saveAuthState();
-    await rt.close();
+    await prepareAuth(provider, store);
 
     const reply = await runOneShot({
       provider,
@@ -73,5 +81,46 @@ describe("runOneShot", () => {
       timeoutMs: 30_000,
     });
     expect(reply).toBe("Echo: ping");
+  }, 60_000);
+});
+
+describe("ChatSession", () => {
+  test("carries a conversation across two turns", async () => {
+    const server = await startDummyChat(0);
+    cleanups.push(server.stop);
+    const provider = createDummyProvider(server.url);
+    const store = tempStore(provider.name);
+    await prepareAuth(provider, store);
+
+    const session = await ChatSession.open({
+      provider,
+      authStore: store,
+      headless: true,
+      timeoutMs: 30_000,
+    });
+    cleanups.push(() => session.close());
+    expect(await session.send("first")).toBe("Echo: first");
+    expect(await session.send("second")).toBe("Echo: second");
+  }, 60_000);
+
+  test("a response timeout leaves the session usable", async () => {
+    const server = await startDummyChat(0);
+    cleanups.push(server.stop);
+    const provider = createDummyProvider(server.url);
+    const store = tempStore(provider.name);
+    await prepareAuth(provider, store);
+
+    const session = await ChatSession.open({
+      provider,
+      authStore: store,
+      headless: true,
+      timeoutMs: 2_000,
+    });
+    cleanups.push(() => session.close());
+    // "slow:" makes the dummy chat answer after 5 s, past the 2 s budget.
+    await expect(session.send("slow:one")).rejects.toBeInstanceOf(
+      ResponseTimeoutError,
+    );
+    expect(await session.send("two")).toBe("Echo: two");
   }, 60_000);
 });
