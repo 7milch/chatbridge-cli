@@ -34,7 +34,7 @@ Follow-ups deferred from milestone 1:
 - Widen Playwright `TimeoutError` mapping beyond `waitForResponse`; carry `cause`
 - Confirm or rename the `@chatbridge` npm scope; first publish
 
-### 3a. Interactive TUI (OpenTUI), non-streaming — in progress (issue #7)
+### 3a. Interactive TUI (OpenTUI), non-streaming — done (PR #8, 2026-09-07)
 
 Claude Code–style chat UI: history, multi-line input, send, loading state,
 error and status display. Core gains `ChatSession` (browser stays open across
