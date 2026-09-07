@@ -48,7 +48,7 @@ bun packages/cli/src/bin.ts -p "hello" \
 ## Install (npm)
 
 ```bash
-npm install -g chatbridge            # CLI (Node >= 20 or Bun)
+npm install -g @chatbridge/cli      # CLI (Node >= 20 or Bun)
 npm install @chatbridge/provider     # to write a provider
 ```
 

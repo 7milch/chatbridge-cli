@@ -1,7 +1,7 @@
 # Publishing
 
 Packages: `@chatbridge/provider`, `@chatbridge/runtime`, `@chatbridge/core`,
-`chatbridge`. Versions move in lockstep.
+`@chatbridge/cli`. Versions move in lockstep.
 
 ## One-time setup (npm side, done by a maintainer)
 
@@ -16,7 +16,7 @@ Packages: `@chatbridge/provider`, `@chatbridge/runtime`, `@chatbridge/core`,
    Packages that do not exist yet cannot be configured; the very first
    publish of each package therefore happens once by hand. Run
    `bun run build` first — the pack script does not build:
-   `bun run build && scripts/pack-all.sh packs && for t in packs/chatbridge-provider-* packs/chatbridge-runtime-* packs/chatbridge-core-* packs/chatbridge-[0-9]*; do npm publish "$t" --access public; done`
+   `bun run build && scripts/pack-all.sh packs && for t in packs/chatbridge-provider-* packs/chatbridge-runtime-* packs/chatbridge-core-* packs/chatbridge-cli-*; do npm publish "$t" --access public; done`
    (in dependency order, with a granular access token). After that,
    register the trusted publisher and use the workflow.
 
@@ -38,7 +38,7 @@ If `@chatbridge` is unavailable, rename in one commit:
 | `@chatbridge/provider` | `@chatbridge-cli/provider` |
 | `@chatbridge/runtime` | `@chatbridge-cli/runtime` |
 | `@chatbridge/core` | `@chatbridge-cli/core` |
-| `chatbridge` | `chatbridge-cli` |
+| `@chatbridge/cli` | `@chatbridge-cli/cli` |
 
 Checklist: every `package.json` (`name`, `dependencies`, `devDependencies`,
 `peerDependencies`), all `import` specifiers under `packages/` and
