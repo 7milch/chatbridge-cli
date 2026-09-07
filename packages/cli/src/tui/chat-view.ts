@@ -7,7 +7,8 @@ import {
 } from "@opentui/core";
 import type { ChatModel, Message, Role } from "./chat-model.js";
 
-export const GUIDE = "Enter send · Shift+Enter / Ctrl+J newline · Ctrl+C quit";
+export const GUIDE =
+  "Enter send · Shift+Enter (or Ctrl+J) newline · Ctrl+C quit";
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const SPINNER_INTERVAL_MS = 80;
 const LABELS: Record<Role, string> = {
@@ -71,10 +72,11 @@ export class ChatView {
       keyBindings: [
         { name: "return", action: "submit" },
         { name: "kpenter", action: "submit" },
-        // Shift+Enter needs the kitty keyboard protocol; Ctrl+J arrives
-        // as a linefeed byte on every terminal.
+        // Shift+Enter needs the kitty keyboard protocol. Ctrl+J arrives as
+        // a linefeed byte on legacy terminals and as ctrl+j under kitty.
         { name: "return", shift: true, action: "newline" },
         { name: "linefeed", action: "newline" },
+        { name: "j", ctrl: true, action: "newline" },
       ],
     });
     inputBox.add(this.input);
