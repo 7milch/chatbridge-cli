@@ -4,6 +4,7 @@ import {
   AuthRequiredError,
   ChatBridgeError,
   InvalidProviderError,
+  InvalidStateError,
   ProviderLoadError,
   ResponseTimeoutError,
 } from "./errors.js";
@@ -15,6 +16,7 @@ describe("error hierarchy", () => {
       [new AuthExpiredError("expired"), "AUTH_EXPIRED"],
       [new ResponseTimeoutError("timed out"), "RESPONSE_TIMEOUT"],
       [new ProviderLoadError("bad provider"), "PROVIDER_LOAD"],
+      [new InvalidStateError("busy"), "INVALID_STATE"],
     ];
     for (const [err, code] of cases) {
       expect(err).toBeInstanceOf(ChatBridgeError);

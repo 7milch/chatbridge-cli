@@ -30,6 +30,7 @@ const EXIT_CODES: Record<string, number> = {
   RESPONSE_TIMEOUT: 4,
   PROVIDER_LOAD: 5,
   INVALID_PROVIDER: 5,
+  INVALID_STATE: 1,
 };
 
 const DEFAULT_TIMEOUT_SEC = 120;

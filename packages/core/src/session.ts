@@ -1,10 +1,8 @@
 import type { Provider } from "@chatbridge/provider";
 import { type AuthStore, BrowserRuntime } from "@chatbridge/runtime";
-import {
-  AuthExpiredError,
-  AuthRequiredError,
-  ResponseTimeoutError,
-} from "./errors.js";
+import { AuthExpiredError, AuthRequiredError } from "./errors.js";
+import { runStep } from "./run-step.js";
+export { runStep };
 
 export interface OneShotOptions {
   provider: Provider;
@@ -14,26 +12,6 @@ export interface OneShotOptions {
   timeoutMs: number;
   /** Progress messages (stderr in the CLI). Never receives auth content. */
   onProgress?: (message: string) => void;
-}
-
-/** Runs one browser step; a Playwright TimeoutError becomes a framework
- * ResponseTimeoutError that names the step and keeps the original as cause. */
-export async function runStep<T>(
-  name: string,
-  timeoutMs: number,
-  fn: () => Promise<T>,
-): Promise<T> {
-  try {
-    return await fn();
-  } catch (err) {
-    if (err instanceof Error && err.name === "TimeoutError") {
-      throw new ResponseTimeoutError(
-        `Timed out during ${name} after ${timeoutMs} ms.`,
-        { cause: err },
-      );
-    }
-    throw err;
-  }
 }
 
 /** One-shot flow: restore auth -> new chat -> send -> wait -> return text. */
