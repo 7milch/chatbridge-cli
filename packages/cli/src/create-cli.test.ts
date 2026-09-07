@@ -158,6 +158,31 @@ describe("provider resolution (exit 5)", () => {
   });
 });
 
+describe("interactive mode gate", () => {
+  test("bare invocation without a terminal exits 1 with a hint", async () => {
+    captureStderr();
+    const cli = createCli({
+      name: "test-cli",
+      provider: stubProvider(),
+      isTerminal: false,
+    });
+    expect(await cli.run(["bun", "cli"])).toBe(1);
+    expect(stderrChunks.join("")).toContain("use -p <prompt>");
+  });
+
+  test("bare invocation with a terminal but no auth exits 2 before any UI", async () => {
+    captureStderr();
+    const cli = createCli({
+      name: "test-cli",
+      provider: stubProvider(),
+      baseDir: setup(),
+      isTerminal: true,
+    });
+    expect(await cli.run(["bun", "cli"])).toBe(2);
+    expect(stderrChunks.join("")).toContain("auth login");
+  });
+});
+
 describe("CHATBRIDGE_DEBUG", () => {
   test("prints the cause when set", async () => {
     captureStderr();

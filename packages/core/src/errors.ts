@@ -41,3 +41,12 @@ export class InvalidProviderError extends ChatBridgeError {
     super("INVALID_PROVIDER", message, options);
   }
 }
+
+/** A ChatSession method was called in a state that does not allow it
+ * (send while a send is pending, or after close). Caller bug, not a user
+ * condition. */
+export class InvalidStateError extends ChatBridgeError {
+  constructor(message: string, options?: ErrorOptions) {
+    super("INVALID_STATE", message, options);
+  }
+}

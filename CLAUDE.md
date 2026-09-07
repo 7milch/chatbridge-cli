@@ -18,9 +18,10 @@ Bun-workspaces monorepo. Commands:
 - `bun run build` — emit JS + d.ts into each package's dist/ (tests import cross-package code from dist, so run this after editing another package)
 - `bun test packages/<name>` — run one package's tests
 - `./packages/runtime/node_modules/.bin/playwright install chromium` — one-time browser install for E2E
+- Interactive mode (`chatbridge` with no `-p`) needs Bun >= 1.3 or Node >= 26.4; `@opentui/core` is loaded lazily and lives only in `packages/cli/src/tui/`
 
 Dependency direction is one-way: `cli → core → runtime → provider`. Never import in reverse.
-Spec for the current milestone: `docs/superpowers/specs/2026-09-07-hardening-publishability-design.md`.
+Spec for the current milestone: `docs/superpowers/specs/2026-09-07-interactive-tui-design.md`.
 
 ## Purpose
 
@@ -80,6 +81,6 @@ provisional until the interactive-mode milestone.
   - **Opus** — implementation tasks with integration risk or multi-file judgment (browser runtime, session flows, CLI wiring), task reviews of those diffs, and fix-loop escalation rounds 4–5.
   - **Sonnet** — mechanical/transcription implementation tasks where the plan contains the full code (scaffolding, type definitions, error classes, file stores, dummy fixtures, CI/docs), and task reviews of those small diffs.
 - TDD; `bun run check` must pass before every commit.
-- Current milestone plan: `docs/superpowers/plans/2026-09-07-hardening-publishability.md`
+- Current milestone plan: `docs/superpowers/plans/2026-09-07-interactive-tui.md`
 
 Roadmap across milestones: `docs/ROADMAP.md`.

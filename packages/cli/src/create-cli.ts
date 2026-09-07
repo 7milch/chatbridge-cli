@@ -9,6 +9,7 @@ import {
 } from "@chatbridge/core";
 import { configPath, loadConfig } from "./config.js";
 import { resolveProvider } from "./resolve-provider.js";
+import { supportsInteractive } from "./tui/runtime-check.js";
 
 export interface CreateCliOptions {
   /** CLI name shown in help and errors, e.g. "chatbridge" or "company-ai-cli". */
@@ -19,6 +20,8 @@ export interface CreateCliOptions {
   configDir?: string;
   /** Test-only: overrides the config/auth-store base directory. */
   baseDir?: string;
+  /** Test-only: overrides "stdin and stdout are a TTY". */
+  isTerminal?: boolean;
 }
 
 /** Single source of truth for `ChatBridgeError.code` → process exit code. */
@@ -30,6 +33,7 @@ const EXIT_CODES: Record<string, number> = {
   RESPONSE_TIMEOUT: 4,
   PROVIDER_LOAD: 5,
   INVALID_PROVIDER: 5,
+  INVALID_STATE: 1,
 };
 
 const DEFAULT_TIMEOUT_SEC = 120;
@@ -64,11 +68,13 @@ export function createCli(opts: CreateCliOptions) {
     const providerFlag = opts.provider ? "" : " [--provider <name|path>]";
     return [
       "Usage:",
+      `  ${opts.name}${providerFlag} [--headful] [--timeout <sec>]`,
       `  ${opts.name} -p <prompt>${providerFlag} [--headful] [--timeout <sec>]`,
       `  ${opts.name} auth login${providerFlag}`,
       `  ${opts.name} auth logout${providerFlag}`,
       `  ${opts.name} auth status${providerFlag}`,
       "",
+      "Without -p, an interactive chat opens (needs a terminal and Bun >= 1.3 or Node >= 26.4).",
       "One-shot mode prints the AI response to stdout.",
       ...(opts.provider
         ? []
@@ -176,6 +182,47 @@ export function createCli(opts: CreateCliOptions) {
         return 0;
       }
 
+      if (cmd === undefined && values.prompt === undefined) {
+        const isTerminal =
+          opts.isTerminal ??
+          (process.stdin.isTTY === true && process.stdout.isTTY === true);
+        if (!isTerminal) {
+          throw new ChatBridgeError(
+            "INVALID_ARGUMENT",
+            "interactive mode needs a terminal; use -p <prompt> for one-shot",
+          );
+        }
+        if (
+          !supportsInteractive({
+            bun: process.versions.bun,
+            node: process.versions.node,
+          })
+        ) {
+          throw new ChatBridgeError(
+            "INVALID_ARGUMENT",
+            "interactive mode needs Bun >= 1.3 or Node >= 26.4; use -p <prompt> on this runtime",
+          );
+        }
+        const timeoutMs = parseTimeoutMs(values.timeout);
+        const provider = await getProvider(values.provider);
+        const authStore = createAuthStore({
+          configDir,
+          providerName: provider.name,
+          baseDir: opts.baseDir,
+        });
+        // Loaded lazily so one-shot and auth never evaluate @opentui/core.
+        const { runInteractive } = await import("./tui/run-interactive.js");
+        const result = await runInteractive({
+          title: opts.name,
+          provider,
+          authStore,
+          headless: !values.headful,
+          timeoutMs,
+          onProgress: progress,
+        });
+        return result.fatal === undefined ? 0 : reportError(result.fatal);
+      }
+
       if (typeof values.prompt === "string") {
         const timeoutMs = parseTimeoutMs(values.timeout);
         const provider = await getProvider(values.provider);
@@ -198,7 +245,7 @@ export function createCli(opts: CreateCliOptions) {
       }
 
       console.log(help());
-      return cmd === undefined ? 0 : 1;
+      return 1;
     } catch (err) {
       return reportError(err);
     }
