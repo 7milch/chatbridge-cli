@@ -88,7 +88,15 @@ export class ChatView {
 
     this.input.onSubmit = () => {
       const text = this.input.plainText;
-      if (!text.trim() || this.model.status === "busy") return;
+      // Mirrors every case ChatModel.submit drops, so the textarea is never
+      // cleared for input the model is going to ignore.
+      if (
+        !text.trim() ||
+        this.model.status === "busy" ||
+        this.model.fatal !== undefined
+      ) {
+        return;
+      }
       this.input.clear();
       void this.model.submit(text);
     };
@@ -116,6 +124,8 @@ export class ChatView {
 
   destroy(): void {
     this.destroyed = true;
+    // Deliberately severs the model→view link: a turn still in flight must
+    // not reach renderables the renderer is about to tear down.
     this.model.onChange = () => {};
     this.stopSpinner();
   }

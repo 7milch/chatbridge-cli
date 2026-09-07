@@ -21,13 +21,19 @@ afterEach(() => {
   teardown = undefined;
 });
 
-async function setup(opts: { kittyKeyboard?: boolean; delayMs?: number } = {}) {
+async function setup(
+  opts: {
+    kittyKeyboard?: boolean;
+    delayMs?: number;
+    session?: ChatSessionLike;
+  } = {},
+) {
   const t = await createTestRenderer({
     width: 60,
     height: 20,
     kittyKeyboard: opts.kittyKeyboard ?? false,
   });
-  const model = new ChatModel(echoSession(opts.delayMs ?? 100));
+  const model = new ChatModel(opts.session ?? echoSession(opts.delayMs ?? 100));
   const view = new ChatView(t.renderer, model, {
     title: "test-cli",
     providerName: "dummy-chat",
@@ -126,6 +132,49 @@ describe("ChatView", () => {
     const frame = t.captureCharFrame();
     expect(frame).toContain("Error");
     expect(frame).toContain("page closed");
+  });
+
+  test("destroy() during a turn does not touch torn-down renderables", async () => {
+    const t = await setup({ delayMs: 200 });
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    await t.renderOnce();
+    expect(t.model.status).toBe("busy");
+    // Teardown mid-turn: the reply lands after the renderer is gone.
+    t.view.destroy();
+    t.renderer.destroy();
+    teardown = undefined;
+    await sleep(400);
+    expect(t.model.status).toBe("idle");
+    expect(t.model.messages.map((m) => m.text)).toEqual([
+      "hello",
+      "Echo: hello",
+    ]);
+  });
+
+  test("Enter after a fatal error keeps the typed text", async () => {
+    const t = await setup({
+      session: {
+        async send() {
+          throw new Error("page closed");
+        },
+        async close() {},
+      },
+    });
+    await t.mockInput.typeText("first");
+    t.mockInput.pressEnter();
+    await t.frameWith("page closed");
+    expect(t.model.fatal).toBeDefined();
+
+    await t.mockInput.typeText("second");
+    t.mockInput.pressEnter();
+    await t.renderOnce();
+    // The model would have dropped it, so the view must not clear the box.
+    expect(t.model.messages.map((m) => m.text)).toEqual([
+      "first",
+      "page closed",
+    ]);
+    expect(t.captureCharFrame()).toContain("second");
   });
 
   test("history scrolls and keeps the latest reply visible", async () => {
