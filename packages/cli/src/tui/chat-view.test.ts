@@ -177,6 +177,15 @@ describe("ChatView", () => {
     expect(t.captureCharFrame()).toContain("second");
   });
 
+  test("setStatus replaces the guide on the status line", async () => {
+    const t = await setup();
+    t.view.setStatus("Closing browser...");
+    await t.renderOnce();
+    const frame = t.captureCharFrame();
+    expect(frame).toContain("Closing browser...");
+    expect(frame).not.toContain(GUIDE);
+  });
+
   test("history scrolls and keeps the latest reply visible", async () => {
     const t = await setup({ delayMs: 10 });
     for (let i = 0; i < 12; i++) {

@@ -137,7 +137,9 @@ Three units, each testable alone:
   export class ChatModel {
     readonly messages: Message[];
     status: Status;
-    constructor(session: ChatSessionLike, onChange: () => void);
+    constructor(session: ChatSessionLike);
+    /** Settable; called after every state change. */
+    onChange: () => void;
     /** Ignores empty/whitespace input and input while busy. */
     submit(text: string): Promise<void>;
     /** Set when submit hit an unrecoverable error; the app must exit. */
@@ -157,19 +159,32 @@ Three units, each testable alone:
   `Enter send · Shift+Enter / Ctrl+J newline · Ctrl+C quit`.
   Key bindings: `return` / `kpenter` → submit; `return`+shift and
   `linefeed` → newline. Textarea is cleared on submit and keeps focus.
-- **`run-interactive.ts`** — `runInteractive(opts): Promise<number>`.
+- **`run-interactive.ts`** — `runInteractive(opts): Promise<{ fatal?: unknown }>`.
   Opens the `ChatSession` with progress to stderr (same messages as
   one-shot), then creates the renderer (`exitOnCtrlC: false`, Ctrl+C is
   handled explicitly so cleanup runs), builds the view, and resolves when
-  the user quits or `fatal` is set. `finally` closes the session (bounded
-  by a 5 s timeout) and destroys the renderer, in that order.
+  the user quits or `fatal` is set. If renderer creation fails, the
+  already-open session is closed before the error propagates.
+  The exported `waitForQuit(renderer, model)` resolves on three events:
+  Ctrl+C, `model.fatal` being set, and the renderer's `"destroy"` event —
+  OpenTUI installs its own SIGINT/SIGTERM/SIGHUP handlers that destroy the
+  renderer without exiting the process, so without the third the promise
+  would stay pending and the browser would keep the process alive.
+  Teardown order in `finally`: pin `Closing browser...` on the status line
+  → `closeWithTimeout(session, 5000)` (close errors swallowed) →
+  `view.destroy()` → `renderer.destroy()`. If the close timed out, the
+  Playwright connection would keep the event loop alive, so the runner
+  writes `browser did not close within 5 s; exiting` to stderr and calls
+  `process.exit(1)`; the terminal is already restored, and interactive
+  mode has no pending stdout to drop.
 
 ### `createCli` changes
 
 One new branch before the help fallback: if `cmd === undefined` and no
 `-p`, resolve provider and auth store exactly as one-shot does, then call
-`runInteractive`. Errors thrown before the renderer exists go through the
-existing `reportError`; errors after it are already on screen, so the
+`runInteractive` and map its result through `reportError` (exit 0 when
+`fatal` is undefined). Errors thrown before the renderer exists go through
+the same `reportError`; errors after it are already on screen, so the
 runner prints only a one-line summary to stderr (plus `Caused by:` when
 `CHATBRIDGE_DEBUG=1`) after the terminal is restored.
 
@@ -181,7 +196,8 @@ runner prints only a one-line summary to stderr (plus `Caused by:` when
 | Non-TTY without `-p` | stderr message | 1 |
 | `ResponseTimeoutError` during `send` | shown in history, input resumes | — |
 | Any other error during `send` | shown in history, TUI closes | 1 |
-| Ctrl+C (idle or busy) | close session, restore terminal | 0 |
+| Ctrl+C (idle or busy), or SIGTERM/SIGHUP destroying the renderer | close session, restore terminal | 0 |
+| Browser did not close within 5 s | stderr note after the terminal is restored, hard `process.exit` | 1 |
 
 Not handled in 3a: auth expiring mid-conversation. The contract has no
 way to detect it, so it surfaces as a timeout. Documented as a known gap.

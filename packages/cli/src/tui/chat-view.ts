@@ -31,6 +31,7 @@ export class ChatView {
   private spinner: ReturnType<typeof setInterval> | undefined;
   private frame = 0;
   private destroyed = false;
+  private statusPinned = false;
 
   constructor(
     private readonly renderer: CliRenderer,
@@ -114,12 +115,22 @@ export class ChatView {
       const message = this.model.messages[this.rendered];
       if (message) this.history.add(this.messageBox(message));
     }
+    if (this.statusPinned) return;
     if (this.model.status === "busy") {
       this.startSpinner();
     } else {
       this.stopSpinner();
       this.status.content = GUIDE;
     }
+  }
+
+  /** Pins a message on the status line (e.g. "Closing browser...") so the
+   * user sees that teardown started. Later model changes leave it alone. */
+  setStatus(text: string): void {
+    if (this.destroyed) return;
+    this.statusPinned = true;
+    this.stopSpinner();
+    this.status.content = text;
   }
 
   destroy(): void {
