@@ -2,7 +2,6 @@ import type { Provider } from "@chatbridge/provider";
 import { type AuthStore, BrowserRuntime } from "@chatbridge/runtime";
 import { ChatSession } from "./chat-session.js";
 import { runStep } from "./run-step.js";
-export { runStep };
 
 export interface OneShotOptions {
   provider: Provider;

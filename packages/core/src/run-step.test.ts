@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ResponseTimeoutError } from "./errors.js";
-import { runStep } from "./session.js";
+import { runStep } from "./run-step.js";
 
 function playwrightTimeout(): Error {
   const err = new Error("Timeout 1000ms exceeded.");
