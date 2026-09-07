@@ -34,13 +34,19 @@ Follow-ups deferred from milestone 1:
 - Widen Playwright `TimeoutError` mapping beyond `waitForResponse`; carry `cause`
 - Confirm or rename the `@chatbridge` npm scope; first publish
 
-### 3. Interactive TUI (OpenTUI) — in progress (issue #7)
+### 3a. Interactive TUI (OpenTUI), non-streaming — in progress (issue #7)
 
-Claude Code–style chat UI: history, multi-line input, send, streaming/loading state,
-error and status display. Designs conversation continuation (chat handle / resume) and
-streaming response capture in the Provider contract — deliberately left out of
-milestone 1 so they are shaped by real usage, not guessed. OpenTUI is provisional
-until this milestone proves it under Bun.
+Claude Code–style chat UI: history, multi-line input, send, loading state,
+error and status display. Core gains `ChatSession` (browser stays open across
+turns); the Provider contract documents multi-turn semantics without new
+methods. OpenTUI proven under Bun 1.4 (spike in the spec).
+
+### 3b. Streaming display
+
+Streaming response capture in the Provider contract and incremental display
+in the TUI. Also deferred here: Markdown rendering, cross-process conversation
+resume (chat handle), history persistence, and detecting auth expiry
+mid-conversation. Shaped after milestone 4 exposes a real service's DOM.
 
 ### 4. Public providers repository
 

@@ -6,11 +6,11 @@ Service-specific behaviour (URLs, DOM selectors, login flows, response detection
 
 ## Status
 
-Milestone 1 (one-shot vertical slice) and milestone 2 (hardening + publishability) are implemented. The packages are publishable to npm and the first release is still pending. The interactive TUI is not built yet.
+Milestones 1 (one-shot), 2 (hardening + publishability), and 3a (interactive TUI) are implemented. The first npm release is still pending. Streaming display (milestone 3b) is not built yet.
 
 ## Planned features
 
-- Interactive TUI, in the style of Claude Code
+- Interactive TUI, in the style of Claude Code (non-streaming; streaming display is planned)
 - Non-interactive one-shot execution (`-p "..."`) writing to stdout
 - Playwright-based browser automation runtime
 - Browser session and authentication-state management (save / restore / clear)
@@ -43,6 +43,8 @@ bun packages/cli/src/bin.ts auth login \
   --provider ./examples/dummy-chat/provider.ts  # click "Log in" in the opened browser
 bun packages/cli/src/bin.ts -p "hello" \
   --provider ./examples/dummy-chat/provider.ts  # → Echo: hello
+bun packages/cli/src/bin.ts \
+  --provider ./examples/dummy-chat/provider.ts  # interactive chat
 ```
 
 ## Install (npm)
@@ -67,6 +69,21 @@ that provider is installed globally as well.
 Exit codes: 1 invalid argument or config, 2 not logged in, 3 auth expired,
 4 response timeout, 5 provider could not be loaded. Set `CHATBRIDGE_DEBUG=1`
 to print the underlying error.
+
+## Interactive mode
+
+Run the CLI with no `-p` to open a chat in the terminal. The browser stays
+open for the whole conversation, so follow-up messages continue the same
+chat.
+
+- **Enter** sends. **Shift+Enter** inserts a newline on terminals that speak
+  the kitty keyboard protocol (iTerm2, kitty, WezTerm, Ghostty); **Ctrl+J**
+  inserts a newline everywhere. **Ctrl+C** quits.
+- A response timeout is shown in the history and you can keep chatting.
+  Any other failure closes the chat with exit code 1.
+- Interactive mode needs **Bun >= 1.3 or Node >= 26.4** (the TUI library's
+  requirement). One-shot mode and `auth` keep working on Node >= 20.
+- A terminal is required; in pipes and scripts use `-p`.
 
 ## Authentication
 
