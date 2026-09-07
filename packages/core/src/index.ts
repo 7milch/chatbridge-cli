@@ -5,6 +5,11 @@ export {
   runLogin,
   runOneShot,
 } from "./session.js";
+export {
+  ChatSession,
+  type ChatSessionOptions,
+  type RuntimeLike,
+} from "./chat-session.js";
 export { createAuthStore } from "./create-auth-store.js";
 export {
   AuthStore,
