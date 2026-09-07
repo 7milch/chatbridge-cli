@@ -87,7 +87,7 @@ Each published `package.json` gains: `description`, `license: "MIT"`,
 | `@chatbridge/provider` | yes | 0.1.0 |
 | `@chatbridge/runtime` | yes | 0.1.0 |
 | `@chatbridge/core` | yes | 0.1.0 |
-| `chatbridge` (CLI) | yes | 0.1.0 |
+| `@chatbridge/cli` (CLI; unscoped `chatbridge` was rejected by npm as too similar to `chat-bridge`) | yes | 0.1.0 |
 | `@chatbridge/example-dummy-chat` | no (`private: true`) | — |
 
 Versions are kept identical across the four packages (lockstep).
@@ -116,7 +116,7 @@ If `@chatbridge` cannot be obtained, rename before the first publish:
 | `@chatbridge/provider` | `@chatbridge-cli/provider` |
 | `@chatbridge/runtime` | `@chatbridge-cli/runtime` |
 | `@chatbridge/core` | `@chatbridge-cli/core` |
-| `chatbridge` | `chatbridge-cli` |
+| `@chatbridge/cli` | `@chatbridge-cli/cli` |
 
 Places that reference package names (rename checklist): every `package.json`
 (`name`, `dependencies`, `devDependencies`, `peerDependencies`), all `import`
