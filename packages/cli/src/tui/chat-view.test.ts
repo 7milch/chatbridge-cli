@@ -98,6 +98,17 @@ describe("ChatView", () => {
     expect(t.model.messages[0]).toEqual({ role: "user", text: "one\ntwo" });
   });
 
+  test("Ctrl+J inserts a newline on kitty terminals", async () => {
+    // With the kitty protocol Ctrl+J is reported as ctrl+j, not as a linefeed.
+    const t = await setup({ kittyKeyboard: true });
+    await t.mockInput.typeText("one");
+    t.mockInput.pressKey("j", { ctrl: true });
+    await t.mockInput.typeText("two");
+    t.mockInput.pressEnter();
+    await t.renderOnce();
+    expect(t.model.messages[0]).toEqual({ role: "user", text: "one\ntwo" });
+  });
+
   test("Enter while busy keeps the typed text", async () => {
     const t = await setup({ delayMs: 300 });
     await t.mockInput.typeText("first");

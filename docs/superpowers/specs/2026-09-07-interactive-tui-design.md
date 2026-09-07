@@ -37,8 +37,10 @@ Constraints carried into the design:
 
 1. **Shift+Enter is indistinguishable from Enter on legacy terminals.** Only
    terminals speaking the kitty keyboard protocol (iTerm2, kitty, WezTerm,
-   Ghostty, …) deliver the modifier. **Ctrl+J** (a linefeed byte) is bound
-   to newline as well and works everywhere; the on-screen guide names both.
+   Ghostty, …) deliver the modifier. **Ctrl+J** is bound to newline as well
+   and works everywhere: legacy terminals send it as a linefeed byte, kitty
+   terminals report it as `ctrl+j`, so both are bound. The on-screen guide
+   names both.
 2. The test renderer's `waitForFrame` does not advance real time. Tests
    with async work poll with `sleep → renderOnce → captureCharFrame`.
 3. `@opentui/core` needs **Bun ≥ 1.3 or Node ≥ 26.4**. See "Runtime
@@ -156,7 +158,7 @@ Three units, each testable alone:
   `Assistant` / `Error` labels, blank line between messages), bordered
   4-line textarea with placeholder, status line. Status line shows the
   spinner + `Waiting for response...` while busy, otherwise the guide
-  `Enter send · Shift+Enter / Ctrl+J newline · Ctrl+C quit`.
+  `Enter send · Shift+Enter (or Ctrl+J) newline · Ctrl+C quit`.
   Key bindings: `return` / `kpenter` → submit; `return`+shift and
   `linefeed` → newline. Textarea is cleared on submit and keeps focus.
 - **`run-interactive.ts`** — `runInteractive(opts): Promise<{ fatal?: unknown }>`.
@@ -236,7 +238,7 @@ still runs on Node 20. To keep one-shot users unaffected:
   with a short delay — typed text appears; Enter submits and clears the
   box; spinner text appears while busy; reply appears in history; twelve
   turns scroll the history and keep the latest visible; Shift+Enter (kitty
-  mode) and Ctrl+J (legacy mode) both insert a newline.
+  mode) and Ctrl+J (legacy and kitty modes) insert a newline.
 - **CLI (`create-cli.test.ts`)**: bare invocation with non-TTY stdio exits
   1 with the documented message.
 - **CI**: the first implementation task adds `@opentui/core` and runs a

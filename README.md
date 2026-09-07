@@ -76,9 +76,10 @@ Run the CLI with no `-p` to open a chat in the terminal. The browser stays
 open for the whole conversation, so follow-up messages continue the same
 chat.
 
-- **Enter** sends. **Shift+Enter** inserts a newline on terminals that speak
-  the kitty keyboard protocol (iTerm2, kitty, WezTerm, Ghostty); **Ctrl+J**
-  inserts a newline everywhere. **Ctrl+C** quits.
+- **Enter** sends. **Shift+Enter** (or **Ctrl+J**) inserts a newline;
+  Shift+Enter needs a terminal that speaks the kitty keyboard protocol
+  (iTerm2, kitty, WezTerm, Ghostty), Ctrl+J works everywhere. **Ctrl+C**
+  quits.
 - A response timeout is shown in the history and you can keep chatting.
   Any other failure closes the chat with exit code 1.
 - Interactive mode needs **Bun >= 1.3 or Node >= 26.4** (the TUI library's
