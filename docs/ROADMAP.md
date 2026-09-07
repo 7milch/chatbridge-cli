@@ -48,7 +48,11 @@ in the TUI. Also deferred here: Markdown rendering, cross-process conversation
 resume (chat handle), history persistence, and detecting auth expiry
 mid-conversation. Shaped after milestone 4 exposes a real service's DOM.
 
-### 4. Public providers repository
+### 4. Providers repository — in progress (issue #11)
+
+Taken up before 3b, which the roadmap shapes after a real service's DOM is seen here.
+Decision 2026-09-07: this repository will be private (the table above is updated
+during brainstorming).
 
 Create `chatbridge-providers` with the first real-service provider, using the
 `Provider` contract as published. Feedback from a real service (streaming DOM
