@@ -90,6 +90,17 @@ chat.
 
 The framework never stores usernames or passwords. You log in yourself in a headful browser, and the resulting browser authentication state is saved and reused on subsequent runs.
 
+## Scope: cooperative services only
+
+This project exists to drive company-internal and similarly cooperative
+web chat services. Services that deploy bot protection (Cloudflare
+challenges, browser fingerprinting at the identity provider) may block
+Playwright, especially headless; `--headful` sometimes helps, and that is
+as far as this project goes. Evading bot protection — stealth plugins,
+user-agent spoofing, attaching to a personal browser profile — is out of
+scope and will not be added. Public services are used here only as spike
+targets to validate the Provider contract (see `docs/spike-notes/`).
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

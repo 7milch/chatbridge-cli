@@ -1,0 +1,69 @@
+- main "ChatGPT" [ref=f5e3]:
+  - generic [ref=f5e5]:
+    - complementary "サイドバー" [ref=f5e6]:
+      - generic [ref=f5e7]:
+        - generic [ref=f5e8]:
+          - img "ChatGPT ロゴ" [ref=f5e9]
+          - button "サイドバーを閉じる" [expanded] [ref=f5e12] [cursor=pointer]
+        - link "新しいチャット" [ref=f5e16] [cursor=pointer]:
+          - /url: /
+        - navigation "サイドバー" [ref=f5e23]:
+          - generic [ref=f5e24]:
+            - button "チャットを検索" [ref=f5e25] [cursor=pointer]
+            - link "画像" [ref=f5e31] [cursor=pointer]:
+              - /url: https://chatgpt.com/images
+            - link "プラグイン" [ref=f5e37] [cursor=pointer]:
+              - /url: https://chatgpt.com/plugins
+            - button "Deep Research" [ref=f5e43] [cursor=pointer]
+          - generic [ref=f5e49]:
+            - link "プランと料金を見る" [ref=f5e50] [cursor=pointer]:
+              - /url: https://openai.com/chatgpt/pricing/
+            - button "設定" [ref=f5e59] [cursor=pointer]
+            - link "OpenAI ヘルプ" [ref=f5e65] [cursor=pointer]:
+              - /url: https://help.openai.com/ja-jp/collections/3742473-chatgpt
+              - generic [ref=f5e66]: ヘルプ
+        - region [ref=f5e74]:
+          - heading "自分に合った回答を得る" [level=2] [ref=f5e75]
+          - paragraph [ref=f5e76]: ログインすると、保存済みチャットに基づく回答に加えて、画像作成やファイルのアップロードも利用できます。
+          - button "ログイン" [ref=f5e77] [cursor=pointer]
+    - generic [ref=f5e79]:
+      - generic [ref=f5e80]:
+        - generic [ref=f5e81]: ChatGPT
+        - generic [ref=f5e87]:
+          - button "ログイン" [ref=f5e88] [cursor=pointer]
+          - button "無料で新規登録" [ref=f5e90] [cursor=pointer]
+      - region "会話" [ref=f5e92]:
+        - region "会話 chat-17e03a35-d1c8-4fc3-90ef-04b2e702655d" [ref=f5e93]:
+          - generic [ref=f5e95]:
+            - list "会話 chat-17e03a35-d1c8-4fc3-90ef-04b2e702655d"
+      - generic:
+        - generic:
+          - generic [ref=f5e97]:
+            - heading "どこから始めますか？" [level=1] [ref=f5e98]
+            - generic [ref=f5e100]:
+              - button [aria-hidden] [ref=f5e101]
+              - button [aria-hidden] [ref=f5e102]
+              - button [aria-hidden] [ref=f5e103]
+              - generic [ref=f5e105]:
+                - button "ファイルなどを追加" [ref=f5e107] [cursor=pointer]
+                - generic [ref=f5e111]:
+                  - generic [ref=f5e112]: ChatGPT とチャット
+                  - textbox "ChatGPT とチャット" [ref=f5e114]:
+                    - /placeholder: ChatGPT に聞く
+                  - status [ref=f5e115]
+              - generic [ref=f5e116]:
+                - button "音声入力を開始" [ref=f5e117] [cursor=pointer]
+                - button "メッセージを送信します" [disabled] [ref=f5e121]
+            - button "何ができますか？" [ref=f5e126] [cursor=pointer]
+          - paragraph [ref=f5e130]:
+            - generic [ref=f5e131]:
+              - text: ChatGPT は AI です。ChatGPT を利用することで、当社の
+              - link "利用規約" [ref=f5e132] [cursor=pointer]:
+                - /url: https://openai.com/terms
+              - text: および
+              - link "プライバシーポリシー" [ref=f5e133] [cursor=pointer]:
+                - /url: https://openai.com/privacy
+              - text: に同意したとみなされます。チャット内容は確認され、AI モデルの改善に使用される場合があります。
+              - 'link "詳細はこちら: AI モデルの改善にデータがどのように使用されるかについて" [ref=f5e134] [cursor=pointer]':
+                - /url: https://help.openai.com/en/articles/5722486-how-your-data-is-used-to-improve-model-performance
+                - text: 詳細はこちら

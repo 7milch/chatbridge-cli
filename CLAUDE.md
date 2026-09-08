@@ -58,6 +58,14 @@ This repository is public. Never bring company-specific material into it:
 
 Those live in a separate company repository that consumes this project as a dependency. Sample providers must target public services or dummies only.
 
+## Bot protection is out of scope
+
+The intended targets are company-internal and cooperative chat services.
+When a public service blocks automation (Cloudflare challenge in headless,
+an IdP refusing the automated browser), record it and suggest `--headful`;
+never add evasion (stealth plugins, UA spoofing, CDP attach to a personal
+Chrome profile). Decided in milestone 4.5 (`docs/spike-notes/2026-09-08-chatgpt.md`).
+
 ## Auth state handling
 
 - Saved state contains session cookies. Keep it out of git, restrict file permissions, and never write it to logs.
