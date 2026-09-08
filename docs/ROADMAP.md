@@ -52,10 +52,18 @@ appends to one element; completion is signalled by the send button returning).
 Follow-ups shipped in 0.2.1–0.2.2: the auth state is re-saved when a session
 closes (services rotate tokens), and release checks catch a stale `bun.lock`.
 
+### 4.4. Skill: scaffold a vendor provider repo — done (issue #20, 2026-09-08)
+
+A repo skill (`creating-provider-repo`) that captures the milestone 4
+procedure for standing up a separate vendor repo with one Provider and a
+derived CLI on the published packages: layout, DOM discovery notes, login
+signal pitfalls (guest mode, off-origin login page), gated real-service E2E,
+dependency hygiene. Written while the experience is fresh; 4.5 dogfoods it.
+
 ### 4.5. Second public service spike: ChatGPT
 
 A time-boxed spike (about a day, nothing kept) driving chatgpt.com through
-the published packages, to expose what one sample could not: bot / headless
+the published packages with the 4.4 skill, to expose what one sample could not: bot / headless
 detection, a `contenteditable` composer, lazy login redirects, rate-limit and
 error banners, and whether the streaming DOM is appended or replaced. Output
 is a findings note plus issues for any runtime gaps; no provider is kept.

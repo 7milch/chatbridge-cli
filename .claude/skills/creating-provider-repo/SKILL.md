@@ -1,0 +1,90 @@
+---
+name: creating-provider-repo
+description: Use when standing up a new vendor-specific chatbridge Provider with its own CLI in a separate repository — a new web chat service, a spike against a public service, or a company-internal provider consuming the published @chatbridge/* packages.
+---
+
+# Creating a Provider Repo
+
+One repo per vendor: one `Provider`, one derived CLI via `createCli`, on the
+published `@chatbridge/*` packages. Selectors come from observing the real
+DOM, never from guessing. Nothing vendor-specific ever enters `chatbridge-cli`.
+
+## Rules that do not bend
+
+- Dependencies come from npm: `@chatbridge/cli`, `@chatbridge/core`,
+  `@chatbridge/provider` pinned to one exact version (the latest published:
+  `npm view @chatbridge/cli version`), plus `playwright-core` pinned to the
+  version `@chatbridge/runtime` uses. `@chatbridge/runtime` is transitive;
+  do not list it. Never `file:`, `link:`, or a checkout of `chatbridge-cli`.
+- After `bun install`, run `find node_modules -path '*@chatbridge/*/node_modules/@chatbridge*'`.
+  Any hit means a nested older copy is shadowing the runtime: fix the
+  versions, `rm -rf node_modules bun.lock`, reinstall.
+- The framework owns auth state (cookies, localStorage, IndexedDB, re-saved
+  on every session close). The repo never stores, logs, or reads credentials
+  or tokens. No `.env`, no `.env.example`.
+- `bun run check` (lint + build + smoke tests) passes before every commit.
+
+## Layout
+
+Names: repo and package `chatbridge-<vendor>`, bin `<vendor>` (for example
+`chatbridge-rakuten-ai` / `rakuten-ai`); `private: true`.
+
+```
+package.json          bin: { "<vendor>": "./dist/bin.js" }; deps as in Rules
+.gitignore            node_modules/, dist/, *.tsbuildinfo, *.log, storage-state*.json, .auth/, .superpowers/
+src/selectors.ts      every URL and selector as a named constant; each cites a docs/dom-notes.md section
+src/provider.ts       defineProvider({ name, chatUrl, five methods }); default export
+src/bin.ts            process.exitCode = await createCli({ name, provider }).run(process.argv)
+src/selectors.test.ts smoke: every export is a non-empty string
+src/provider.test.ts  smoke: shape (name, https chatUrl on the vendor host, five functions)
+src/provider.e2e.test.ts  real service; skipped unless <NAME>_E2E=1 and the auth store has a file
+docs/dom-notes.md     findings, with observation date (sections: Login, Chat page, New chat, Composer, Messages, Generation indicator, Errors and rate limits, Streaming behaviour)
+README.md, CLAUDE.md  English; usage, gated E2E, manual checklist
+```
+
+Copy `tsconfig.json` from `chatbridge-cli/packages/cli` (drop `composite`
+and `references`) and `biome.json` from the `chatbridge-cli` root.
+No CI workflow: real-service tests need a human login.
+
+Before discovery, each `dom-notes.md` section holds one line:
+`Not yet observed.` A section is done when it names a locator that matched
+exactly one element on the observation date.
+
+## Procedure
+
+1. **Scaffold** the layout with empty selector strings and the smoke tests
+   asserting only `typeof === "string"`. Install, `bun run check`, commit.
+2. **Discover the DOM** in a real browser (Playwright MCP or headful
+   Playwright) with the user logging in by hand. Record every item in
+   `docs/dom-notes.md` before writing a selector. Prefer `data-*`, ARIA
+   roles and labels; class names from CSS-in-JS are not stable. Note whether
+   labels are localized.
+3. **Fill selectors and the provider**, add the non-empty assertion, `--help`
+   must print without `--provider`.
+4. **Verify by hand**: `auth login` → `-p "Reply with the single word: ping"`
+   → gated E2E (two turns, second answer differs) → interactive mode →
+   `auth logout` / `auth status`.
+5. **Feed gaps back**: anything the provider cannot solve (browser launch,
+   auth-state contents, session lifecycle) is a `chatbridge-cli` issue, fixed
+   there, released, then the version is bumped here.
+
+## Provider method contract
+
+| Method | Must |
+|---|---|
+| `navigateToLogin` | `goto` the vendor's entry URL; the user completes login by hand. |
+| `isLoggedIn` | Called every second during `auth login` and once at startup. In order: (1) `page.url()` origin differs from `chatUrl`'s → return `false` without touching the DOM (the IdP page); (2) inside one `try`: wait, bounded to 10 s, for either the sign-in control or the account control to be visible; (3) return account control present AND sign-in control absent; (4) `catch` → `false`. |
+| `startNewChat` | Navigate or click, then wait for the composer visible and empty. |
+| `sendMessage` | Record the assistant-message count (module-level `WeakMap<Page, number>`), fill, submit, then wait briefly for the "generating" state to begin (ignore timeout). |
+| `waitForResponse` | Wait for the count to exceed the recorded one, wait for the done signal, then read the newest message with `innerText` until two reads 500 ms apart agree. Never return an earlier turn. |
+
+## Traps seen in the wild
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Composer exists without login; one-shot returns a sign-in promo | Service offers guest chat | Login signal = account menu present AND sign-in control absent |
+| `auth login` saved a state that restores as logged out | Session lives in IndexedDB, or state captured on the IdP origin | Framework ≥ 0.2.0 saves IndexedDB; `isLoggedIn` returns false off-origin |
+| Saved state dies about an hour after login | Token rotation, state never re-saved | Framework ≥ 0.2.2 re-saves on close; keep versions current |
+| CLI ignores a framework fix | Nested older `@chatbridge/*` copy under `node_modules` | Flat install (see Rules) |
+| Partial answer returned | Done signal fired before the new turn existed | Count-before + stability read (see contract) |
+| No "generating" element | Send button swapped for a stop button | Done = send button visible again |
