@@ -60,7 +60,7 @@ derived CLI on the published packages: layout, DOM discovery notes, login
 signal pitfalls (guest mode, off-origin login page), gated real-service E2E,
 dependency hygiene. Written while the experience is fresh; 4.5 dogfoods it.
 
-### 4.5. Second public service spike: ChatGPT
+### 4.5. Second public service spike: ChatGPT — in progress (issue #22)
 
 A time-boxed spike (about a day, nothing kept) driving chatgpt.com through
 the published packages with the 4.4 skill, to expose what one sample could not: bot / headless
