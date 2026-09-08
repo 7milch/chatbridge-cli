@@ -31,6 +31,8 @@ interface Harness {
   sent: string[];
   replies: Array<ReturnType<typeof deferred<string>>>;
   closed: number;
+  saved: number;
+  saveShouldFail: boolean;
   launch: () => Promise<RuntimeLike>;
   loggedIn: boolean;
 }
@@ -40,6 +42,8 @@ function harness(): Harness {
     sent: [],
     replies: [],
     closed: 0,
+    saved: 0,
+    saveShouldFail: false,
     loggedIn: true,
     provider: undefined as unknown as Provider,
     launch: undefined as unknown as Harness["launch"],
@@ -63,6 +67,10 @@ function harness(): Harness {
   };
   h.launch = async () => ({
     page: fakePage(),
+    saveAuthState: async () => {
+      if (h.saveShouldFail) throw new Error("disk full");
+      h.saved++;
+    },
     close: async () => {
       h.closed++;
     },
@@ -184,6 +192,55 @@ describe("ChatSession.close", () => {
     const session = await ChatSession.open(opts(h));
     await session.close();
     await session.close();
+    expect(h.closed).toBe(1);
+  });
+
+  test("saves auth state before closing the browser", async () => {
+    const h = harness();
+    const session = await ChatSession.open(opts(h));
+    await session.close();
+    expect(h.saved).toBe(1);
+    expect(h.closed).toBe(1);
+    await session.close();
+    expect(h.saved).toBe(1);
+  });
+
+  test("still closes when saving fails and reports it via onProgress", async () => {
+    const h = harness();
+    const progress: string[] = [];
+    const session = await ChatSession.open({
+      ...opts(h),
+      onProgress: (m) => progress.push(m),
+    });
+    h.saveShouldFail = true;
+    await session.close();
+    expect(h.closed).toBe(1);
+    expect(
+      progress.filter((m) => m.includes("Could not save auth state")),
+    ).toHaveLength(1);
+  });
+
+  test("does not save when the session is no longer logged in", async () => {
+    const h = harness();
+    const progress: string[] = [];
+    const session = await ChatSession.open({
+      ...opts(h),
+      onProgress: (m) => progress.push(m),
+    });
+    h.loggedIn = false;
+    await session.close();
+    expect(h.saved).toBe(0);
+    expect(h.closed).toBe(1);
+    expect(progress.filter((m) => m.includes("not saved"))).toHaveLength(1);
+  });
+
+  test("does not save when open fails", async () => {
+    const h = harness();
+    h.loggedIn = false;
+    await expect(ChatSession.open(opts(h))).rejects.toBeInstanceOf(
+      AuthExpiredError,
+    );
+    expect(h.saved).toBe(0);
     expect(h.closed).toBe(1);
   });
 });
