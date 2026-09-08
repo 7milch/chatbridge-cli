@@ -42,6 +42,7 @@ export class BrowserRuntime {
 
   async saveAuthState(): Promise<void> {
     // Services may keep the session in IndexedDB; the default state excludes it.
+    // Playwright throws if a service stores values it cannot serialise (e.g. Blobs).
     await this.authStore.save(
       await this.context.storageState({ indexedDB: true }),
     );
