@@ -60,7 +60,7 @@ derived CLI on the published packages: layout, DOM discovery notes, login
 signal pitfalls (guest mode, off-origin login page), gated real-service E2E,
 dependency hygiene. Written while the experience is fresh; 4.5 dogfoods it.
 
-### 4.5. Second public service spike: ChatGPT — in progress (issue #22)
+### 4.5. Second public service spike: ChatGPT — done (issue #22, 2026-09-08)
 
 A time-boxed spike (about a day, nothing kept) driving chatgpt.com through
 the published packages with the 4.4 skill, to expose what one sample could not: bot / headless
@@ -68,6 +68,9 @@ detection, a `contenteditable` composer, lazy login redirects, rate-limit and
 error banners, and whether the streaming DOM is appended or replaced. Output
 is a findings note plus issues for any runtime gaps; no provider is kept.
 Runs before 3b so the streaming design rests on two observed services.
+Outcome: `docs/spike-notes/2026-09-08-chatgpt.md`. Headless is blocked by
+Cloudflare and evasion was ruled out of scope; headful one-shot worked
+unchanged; both observed services append the streaming DOM in place.
 
 ### 3b. Streaming display
 
