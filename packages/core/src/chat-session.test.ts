@@ -40,6 +40,7 @@ interface Harness {
   /** When set, the provider gains detectBlock returning this value. */
   block: string | undefined;
   hasDetectBlock: boolean;
+  detectBlockCalls: number;
 }
 
 function harness(): Harness {
@@ -52,6 +53,7 @@ function harness(): Harness {
     loggedIn: true,
     block: undefined,
     hasDetectBlock: false,
+    detectBlockCalls: 0,
     provider: undefined as unknown as Provider,
     launch: undefined as unknown as Harness["launch"],
   };
@@ -74,7 +76,12 @@ function harness(): Harness {
   };
   Object.defineProperty(h.provider, "detectBlock", {
     get() {
-      return h.hasDetectBlock ? async () => h.block : undefined;
+      return h.hasDetectBlock
+        ? async () => {
+            h.detectBlockCalls++;
+            return h.block;
+          }
+        : undefined;
     },
   });
   h.launch = async () => ({
@@ -163,6 +170,7 @@ describe("ChatSession.open", () => {
     expect(err.message).toBe(
       'Blocked by "fake": challenge page. Try --headful.',
     );
+    expect(h.detectBlockCalls).toBe(1);
     expect(h.closed).toBe(1);
   });
 
@@ -183,6 +191,7 @@ describe("ChatSession.open", () => {
     h.block = "challenge page";
     const session = await ChatSession.open(opts(h));
     await session.close();
+    expect(h.detectBlockCalls).toBe(0);
   });
 });
 

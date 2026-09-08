@@ -226,7 +226,7 @@ describe("ChatView", () => {
     await t.mockInput.typeText("hello");
     t.mockInput.pressEnter();
     const first = (await t.frameWith("Thinking…")).match(/[●○]{3}/)?.[0];
-    const seen = new Set<string>([first ?? ""]);
+    const seen = new Set<string>(first ? [first] : []);
     for (let i = 0; i < 10 && seen.size < 2; i++) {
       await sleep(60);
       await t.renderOnce();

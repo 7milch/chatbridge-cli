@@ -192,9 +192,10 @@ lists it with the others.
 
 ## 6. Documentation and roadmap
 
-- `README.md`: exit code 6 in the exit-code table; `detectBlock` in the
-  provider section with the Cloudflare example; the interactive-mode
-  section describes the indicator.
+- `README.md`: exit code 6 in the exit-code table; a one-sentence pointer
+  to `detectBlock` in the Scope section; the interactive-mode section
+  describes the indicator. `packages/provider/README.md`: `detectBlock`
+  with the Cloudflare example (the npm consumer's entry point).
 - `.claude/skills/creating-provider-repo/SKILL.md`: one row in the trap
   table pointing the headless-challenge trap at `detectBlock`, with a
   `document.title === "Just a moment..."` example.
