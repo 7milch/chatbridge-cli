@@ -5,6 +5,7 @@ import { ChatSession, type RuntimeLike } from "./chat-session.js";
 import {
   AuthExpiredError,
   AuthRequiredError,
+  BlockedError,
   InvalidStateError,
 } from "./errors.js";
 
@@ -35,6 +36,9 @@ interface Harness {
   saveShouldFail: boolean;
   launch: () => Promise<RuntimeLike>;
   loggedIn: boolean;
+  /** When set, the provider gains detectBlock returning this value. */
+  block: string | undefined;
+  hasDetectBlock: boolean;
 }
 
 function harness(): Harness {
@@ -45,6 +49,8 @@ function harness(): Harness {
     saved: 0,
     saveShouldFail: false,
     loggedIn: true,
+    block: undefined,
+    hasDetectBlock: false,
     provider: undefined as unknown as Provider,
     launch: undefined as unknown as Harness["launch"],
   };
@@ -65,6 +71,11 @@ function harness(): Harness {
       return d.promise;
     },
   };
+  Object.defineProperty(h.provider, "detectBlock", {
+    get() {
+      return h.hasDetectBlock ? async () => h.block : undefined;
+    },
+  });
   h.launch = async () => ({
     page: fakePage(),
     saveAuthState: async () => {
@@ -138,6 +149,38 @@ describe("ChatSession.open", () => {
       "Sending prompt...",
       "Waiting for response...",
     ]);
+    await session.close();
+  });
+
+  test("throws BlockedError with the documented message when detectBlock reports a block", async () => {
+    const h = harness();
+    h.loggedIn = false;
+    h.hasDetectBlock = true;
+    h.block = "challenge page";
+    const err = await ChatSession.open(opts(h)).catch((e) => e);
+    expect(err).toBeInstanceOf(BlockedError);
+    expect(err.message).toBe(
+      'Blocked by "fake": challenge page. Try --headful.',
+    );
+    expect(h.closed).toBe(1);
+  });
+
+  test("throws AuthExpiredError when detectBlock returns undefined", async () => {
+    const h = harness();
+    h.loggedIn = false;
+    h.hasDetectBlock = true;
+    h.block = undefined;
+    await expect(ChatSession.open(opts(h))).rejects.toBeInstanceOf(
+      AuthExpiredError,
+    );
+    expect(h.closed).toBe(1);
+  });
+
+  test("does not call detectBlock while logged in", async () => {
+    const h = harness();
+    h.hasDetectBlock = true;
+    h.block = "challenge page";
+    const session = await ChatSession.open(opts(h));
     await session.close();
   });
 });
