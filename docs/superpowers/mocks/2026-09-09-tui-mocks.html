@@ -1,0 +1,542 @@
+<title>chatbridge TUI Competition</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root{
+  --bg:#F5F4F0;--fg:#1E2024;--muted:#6A6E76;--rule:#D9D7D0;--accent:#3E6C9B;--card:#FFFFFF;
+  --t-bg:#1B1D21;--t-fg:#D6D8DD;--t-dim:#6F747C;--t-user:#8CC3E6;--t-asst:#A3CB93;--t-err:#E88A8A;
+  --t-warn:#E4C17A;--t-sel-bg:#3A4D66;--t-sel-fg:#FFFFFF;--t-border:#4A4F58;--t-frame:#2B2E34;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){--bg:#141518;--fg:#E4E5E8;--muted:#9A9EA6;--rule:#2A2C31;--accent:#8DB4DF;--card:#1C1E22;}
+}
+:root[data-theme="dark"]{--bg:#141518;--fg:#E4E5E8;--muted:#9A9EA6;--rule:#2A2C31;--accent:#8DB4DF;--card:#1C1E22;}
+body{background:var(--bg);color:var(--fg);font-family:"IBM Plex Sans",system-ui,sans-serif;font-size:15px;line-height:1.5}
+main{max-width:1400px;margin:0 auto;padding:40px 32px 80px}
+h1{font-size:28px;font-weight:600;margin:0 0 6px;text-wrap:balance}
+.lead{color:var(--muted);max-width:65ch;margin:0 0 8px}
+.rules{display:flex;flex-wrap:wrap;gap:8px 20px;color:var(--muted);font-size:13px;margin:0 0 40px;padding:0;list-style:none}
+.rules li::before{content:"▪ ";color:var(--accent)}
+section{border-top:1px solid var(--rule);padding:28px 0 12px}
+.head{display:grid;grid-template-columns:1fr auto;gap:24px;align-items:end;margin-bottom:16px}
+.head h2{font-size:20px;font-weight:600;margin:0}
+.head .num{font-family:"JetBrains Mono",monospace;color:var(--accent);font-weight:700;margin-right:10px}
+.head p{color:var(--muted);margin:4px 0 0;max-width:70ch}
+.traits{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.traits span{font-size:12px;letter-spacing:.03em;padding:2px 8px;border:1px solid var(--rule);border-radius:3px;color:var(--muted);background:var(--card)}
+.row{display:flex;gap:20px;overflow-x:auto;padding:4px 0 16px}
+.shot{flex:0 0 auto}
+.shot .cap{font-size:12px;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;margin:0 0 6px;font-weight:500}
+.term{margin:0;background:var(--t-bg);color:var(--t-fg);font-family:"JetBrains Mono",ui-monospace,Menlo,monospace;font-size:12.5px;line-height:1.45;width:80ch;padding:10px 12px;border-radius:6px;border:1px solid var(--t-frame);white-space:pre;box-shadow:0 1px 0 rgba(0,0,0,.25);font-variant-numeric:tabular-nums}
+.u{color:var(--t-user)}.a{color:var(--t-asst)}.e{color:var(--t-err)}.d{color:var(--t-dim)}.w{color:var(--t-warn)}
+.b{font-weight:700}.bd{color:var(--t-border)}
+.sel{background:var(--t-sel-bg);color:var(--t-sel-fg)}
+.inv{background:var(--t-fg);color:var(--t-bg)}
+.cur{background:var(--t-fg);color:var(--t-bg)}
+@media (prefers-reduced-motion:no-preference){.blink{animation:bl 1.1s steps(1) infinite}@keyframes bl{50%{background:transparent;color:inherit}}}
+</style>
+<main>
+<h1>chatbridge TUI Competition</h1>
+<p class="lead">Four visual directions for the interactive mode, each shown in the same three states with the same conversation. Everything drawn here uses only what OpenTUI can render: cell colours, bold, inverse, box borders. No images, no proportional fonts.</p>
+<ul class="rules">
+  <li>80 × 24 cells, dark terminal</li>
+  <li>State 1: waiting for a reply (spinner + elapsed / budget)</li>
+  <li>State 2: <code>@</code> file popup open</li>
+  <li>State 3: mention error, input kept</li>
+</ul>
+
+<!-- ===================== 5. Pick: 2 with 1's input ===================== -->
+<section>
+<div class="head">
+  <div><h2><span class="num">5</span>Pick · Codex labels + Claude Code input</h2>
+  <p>Direction 2's header badge and bold role names, with direction 1's input: a bare <code>&gt;</code> between two hairlines. The popup follows the input's idiom and opens below it, as a plain indented list. Saves two rows against the rounded box.</p></div>
+  <div class="traits"><span>badge header</span><span>bold role labels</span><span>hairline input</span><span>popup below</span><span>vendor banner</span></div>
+</div>
+<div class="row">
+
+<div class="shot"><p class="cap">0 · startup, vendor banner</p><pre class="term"><span class="inv"> acme-ai </span> <span class="d">acme-chat · headless · 120s budget</span>
+
+
+
+          <span class="u b">   ___   ____ __  __ ____      ___    ____</span>
+          <span class="u b">  / _ | / ___/  |/  / __/     / _ |  /  _/</span>
+          <span class="u b"> / __ |/ /__/ /|_/ / _/      / __ | _/ /  </span>
+          <span class="u b">/_/ |_|\___/_/  /_/___/     /_/ |_|/___/  </span>
+
+          <span class="d">Acme internal assistant · v2.4.0</span>
+          <span class="d">Ask about the codebase, or @ a file to attach it.</span>
+          <span class="d">Conversations are not stored by this CLI.</span>
+
+
+
+
+
+
+
+<span class="d">────────────────────────────────────────────────────────────────────────────</span>
+<span class="d">&gt;</span> <span class="d">Type a message</span><span class="cur blink"> </span>
+<span class="d">────────────────────────────────────────────────────────────────────────────</span>
+<span class="d">  Enter send · Shift+Enter newline · @ file · Ctrl+C quit</span>
+</pre></div>
+
+<div class="shot"><p class="cap">0 · startup, default (no banner set)</p><pre class="term"><span class="inv"> chatbridge </span> <span class="d">dummy-chat · headless · 120s budget</span>
+
+
+
+
+          <span class="b">chatbridge</span> <span class="d">v0.3.0</span>
+          <span class="d">Connected to dummy-chat. Type a message, or @ to attach a file.</span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<span class="d">────────────────────────────────────────────────────────────────────────────</span>
+<span class="d">&gt;</span> <span class="d">Type a message</span><span class="cur blink"> </span>
+<span class="d">────────────────────────────────────────────────────────────────────────────</span>
+<span class="d">  Enter send · Shift+Enter newline · @ file · Ctrl+C quit</span>
+</pre></div>
+
+<div class="shot"><p class="cap">1 · waiting</p><pre class="term"><span class="inv"> chatbridge </span> <span class="d">dummy-chat · headless · 120s budget</span>
+
+<span class="u b">user</span>
+Explain the retry loop in @src/runtime/launch.ts
+<span class="d">📎 src/runtime/launch.ts (2.1 KB)</span>
+
+<span class="a b">assistant</span>
+The loop wraps launchBrowser in three attempts. Each failure waits
+250 ms × attempt before retrying, and only BrowserLaunchError is retried;
+anything else propagates immediately.
+
+<span class="u b">user</span>
+Why not use exponential backoff there?
+
+<span class="w">●○○</span> <span class="d">Thinking…  34s / 120s</span>
+
+
+
+
+<span class="d">────────────────────────────────────────────────────────────────────────────</span>
+<span class="d">&gt;</span> <span class="d">Type a message</span>
+<span class="d">────────────────────────────────────────────────────────────────────────────</span>
+<span class="d">  Enter send · Shift+Enter newline · @ file · Ctrl+C quit</span>
+</pre></div>
+
+<div class="shot"><p class="cap">2 · @ popup</p><pre class="term"><span class="inv"> chatbridge </span> <span class="d">dummy-chat · headless · 120s budget</span>
+
+<span class="u b">user</span>
+Explain the retry loop in @src/runtime/launch.ts
+<span class="d">📎 src/runtime/launch.ts (2.1 KB)</span>
+
+<span class="a b">assistant</span>
+The loop wraps launchBrowser in three attempts. Each failure waits
+250 ms × attempt before retrying, and only BrowserLaunchError is retried;
+anything else propagates immediately.
+
+<span class="u b">user</span>
+Why not use exponential backoff there?
+
+<span class="a b">assistant</span>
+Three attempts over 750 ms is short enough that linear spacing is fine;
+backoff would only matter if the launch were rate-limited upstream.
+
+<span class="d">────────────────────────────────────────────────────────────────────────────</span>
+<span class="d">&gt;</span> Compare it with @src/run<span class="cur blink"> </span>
+<span class="d">────────────────────────────────────────────────────────────────────────────</span>
+  <span class="sel"> src/runtime/launch.ts                    </span>
+   <span class="d">src/runtime/</span>run-step.ts
+   <span class="d">src/cli/</span>run-one-shot.ts
+   <span class="d">src/tui/</span>run-interactive.ts
+<span class="d">  ↑↓ select · Tab/Enter accept · Esc close</span>
+</pre></div>
+
+<div class="shot"><p class="cap">3 · mention error</p><pre class="term"><span class="inv"> chatbridge </span> <span class="d">dummy-chat · headless · 120s budget</span>
+
+<span class="u b">user</span>
+Explain the retry loop in @src/runtime/launch.ts
+<span class="d">📎 src/runtime/launch.ts (2.1 KB)</span>
+
+<span class="a b">assistant</span>
+The loop wraps launchBrowser in three attempts. Each failure waits
+250 ms × attempt before retrying, and only BrowserLaunchError is retried;
+anything else propagates immediately.
+
+<span class="e b">error</span>
+<span class="e">@src/runtime/lauch.ts: not found</span>
+
+
+
+
+
+<span class="d">────────────────────────────────────────────────────────────────────────────</span>
+<span class="d">&gt;</span> Compare it with @src/runtime/lauch.ts<span class="cur blink"> </span>
+<span class="d">────────────────────────────────────────────────────────────────────────────</span>
+<span class="d">  Enter send · Shift+Enter newline · @ file · Ctrl+C quit</span>
+</pre></div>
+
+<div class="shot"><p class="cap">4 · multi-line input, grows 1 → 5 rows</p><pre class="term"><span class="inv"> chatbridge </span> <span class="d">dummy-chat · headless · 120s budget</span>
+
+<span class="u b">user</span>
+Explain the retry loop in @src/runtime/launch.ts
+<span class="d">📎 src/runtime/launch.ts (2.1 KB)</span>
+
+<span class="a b">assistant</span>
+The loop wraps launchBrowser in three attempts. Each failure waits
+250 ms × attempt before retrying, and only BrowserLaunchError is retried;
+anything else propagates immediately.
+
+
+
+
+<span class="d">────────────────────────────────────────────────────────────────────────────</span>
+<span class="d">&gt;</span> Rewrite it so that:
+  - the delay is configurable
+  - BrowserLaunchError carries the attempt count
+  - the last error is rethrown unchanged
+  Keep the tests in @src/runtime/launch.test.ts passing.<span class="cur blink"> </span>
+<span class="d">────────────────────────────────────────────────────────────────────────────</span>
+<span class="d">  Enter send · Shift+Enter newline · @ file · Ctrl+C quit</span>
+</pre></div>
+</div>
+<p class="lead" style="margin-top:4px">Input height: one row when empty, growing with each newline up to five rows; beyond that the textarea scrolls internally. The history shrinks to make room and the hairlines move with it, as in Claude Code.</p>
+<p class="lead" style="margin-top:4px">Banner wiring: <code>createCli({ name, provider, banner })</code> where <code>banner</code> is an array of lines (optionally <code>{ text, color }</code> per line) or a function of the terminal width. Rendered centred in the empty history and removed when the first message arrives. Default when unset: name, version, and the one-line hint above.</p>
+</section>
+
+<!-- ===================== 1. Claude Code style ===================== -->
+<section>
+<div class="head">
+  <div><h2><span class="num">1</span>Prompt-first (Claude Code)</h2>
+  <p>Messages flow as one column with a glyph per role. The input is a bare <code>&gt;</code> between two hairlines; the popup opens <em>below</em> the input, Claude Code style. Colour does the work; there are no labels.</p></div>
+  <div class="traits"><span>glyph per role</span><span>hairline input</span><span>popup below</span><span>quiet header</span></div>
+</div>
+<div class="row">
+
+<div class="shot"><p class="cap">1 · waiting</p><pre class="term"><span class="w">✻</span> <span class="b">chatbridge</span> <span class="d">· dummy-chat · headless</span>
+
+<span class="d">&gt;</span> <span class="b">Explain the retry loop in @src/runtime/launch.ts</span>
+  <span class="d">📎 src/runtime/launch.ts (2.1 KB)</span>
+
+<span class="a">⏺</span> The loop wraps <span class="u">launchBrowser</span> in three attempts. Each failure waits
+  250 ms × attempt before retrying, and only <span class="u">BrowserLaunchError</span> is
+  retried; anything else propagates immediately.
+
+<span class="d">&gt;</span> <span class="b">Why not use exponential backoff there?</span>
+
+<span class="w">●○○</span> <span class="d">Thinking…  34s / 120s</span>
+
+
+
+
+<span class="d">────────────────────────────────────────────────────────────────────────────</span>
+<span class="d">&gt;</span> <span class="d">Type a message</span>
+<span class="d">────────────────────────────────────────────────────────────────────────────</span>
+  <span class="d">Enter send · Shift+Enter newline · @ file · Ctrl+C quit</span>
+</pre></div>
+
+<div class="shot"><p class="cap">2 · @ popup</p><pre class="term"><span class="w">✻</span> <span class="b">chatbridge</span> <span class="d">· dummy-chat · headless</span>
+
+<span class="d">&gt;</span> <span class="b">Explain the retry loop in @src/runtime/launch.ts</span>
+  <span class="d">📎 src/runtime/launch.ts (2.1 KB)</span>
+
+<span class="a">⏺</span> The loop wraps <span class="u">launchBrowser</span> in three attempts. Each failure waits
+  250 ms × attempt before retrying, and only <span class="u">BrowserLaunchError</span> is
+  retried; anything else propagates immediately.
+
+<span class="d">&gt;</span> <span class="b">Why not use exponential backoff there?</span>
+
+<span class="a">⏺</span> Three attempts over 750 ms is short enough that linear spacing is fine;
+  backoff would only matter if the launch were rate-limited upstream.
+
+<span class="d">────────────────────────────────────────────────────────────────────────────</span>
+<span class="d">&gt;</span> Compare it with @src/run<span class="cur blink"> </span>
+<span class="d">────────────────────────────────────────────────────────────────────────────</span>
+  <span class="sel"> src/runtime/launch.ts                    </span>
+   <span class="d">src/runtime/</span>run-step.ts
+   <span class="d">src/cli/</span>run-one-shot.ts
+   <span class="d">src/tui/</span>run-interactive.ts
+  <span class="d">↑↓ select · Tab/Enter accept · Esc close</span>
+</pre></div>
+
+<div class="shot"><p class="cap">3 · mention error</p><pre class="term"><span class="w">✻</span> <span class="b">chatbridge</span> <span class="d">· dummy-chat · headless</span>
+
+<span class="d">&gt;</span> <span class="b">Explain the retry loop in @src/runtime/launch.ts</span>
+  <span class="d">📎 src/runtime/launch.ts (2.1 KB)</span>
+
+<span class="a">⏺</span> The loop wraps <span class="u">launchBrowser</span> in three attempts. Each failure waits
+  250 ms × attempt before retrying, and only <span class="u">BrowserLaunchError</span> is
+  retried; anything else propagates immediately.
+
+<span class="e">⏺ @src/runtime/lauch.ts: not found</span>
+
+
+
+
+<span class="d">────────────────────────────────────────────────────────────────────────────</span>
+<span class="d">&gt;</span> Compare it with @src/runtime/lauch.ts<span class="cur blink"> </span>
+<span class="d">────────────────────────────────────────────────────────────────────────────</span>
+  <span class="d">Enter send · Shift+Enter newline · @ file · Ctrl+C quit</span>
+</pre></div>
+</div>
+</section>
+
+<!-- ===================== 2. Codex style ===================== -->
+<section>
+<div class="head">
+  <div><h2><span class="num">2</span>Rounded box (Codex CLI)</h2>
+  <p>Bold coloured role names, a rounded double-line-free input box, and a header badge for provider and budget. The popup floats above the input inside its own rounded frame. Feels like a product, at the cost of a few rows.</p></div>
+  <div class="traits"><span>bold role labels</span><span>rounded input box</span><span>badge header</span><span>popup above</span></div>
+</div>
+<div class="row">
+
+<div class="shot"><p class="cap">1 · waiting</p><pre class="term"><span class="inv"> chatbridge </span> <span class="d">dummy-chat · headless · 120s budget</span>
+
+<span class="u b">user</span>
+Explain the retry loop in @src/runtime/launch.ts
+<span class="d">📎 src/runtime/launch.ts (2.1 KB)</span>
+
+<span class="a b">assistant</span>
+The loop wraps launchBrowser in three attempts. Each failure waits
+250 ms × attempt before retrying, and only BrowserLaunchError is retried;
+anything else propagates immediately.
+
+<span class="u b">user</span>
+Why not use exponential backoff there?
+
+<span class="w">●○○</span> <span class="d">Thinking…  34s / 120s</span>
+
+
+<span class="bd">╭──────────────────────────────────────────────────────────────────────────╮</span>
+<span class="bd">│</span> <span class="d">Type a message</span>                                                           <span class="bd">│</span>
+<span class="bd">│</span>                                                                          <span class="bd">│</span>
+<span class="bd">╰──────────────────────────────────────────────────────────────────────────╯</span>
+<span class="d">  Enter send · Shift+Enter newline · @ file · Ctrl+C quit</span>
+</pre></div>
+
+<div class="shot"><p class="cap">2 · @ popup</p><pre class="term"><span class="inv"> chatbridge </span> <span class="d">dummy-chat · headless · 120s budget</span>
+
+<span class="u b">user</span>
+Explain the retry loop in @src/runtime/launch.ts
+<span class="d">📎 src/runtime/launch.ts (2.1 KB)</span>
+
+<span class="a b">assistant</span>
+The loop wraps launchBrowser in three attempts. Each failure waits
+250 ms × attempt before retrying, and only BrowserLaunchError is retried;
+anything else propagates immediately.
+
+<span class="bd">╭─ @ file ─────────────────────────────────╮</span>
+<span class="bd">│</span><span class="sel"> src/runtime/launch.ts                    </span><span class="bd">│</span>
+<span class="bd">│</span> src/runtime/run-step.ts                  <span class="bd">│</span>
+<span class="bd">│</span> src/cli/run-one-shot.ts                  <span class="bd">│</span>
+<span class="bd">│</span> src/tui/run-interactive.ts               <span class="bd">│</span>
+<span class="bd">╰──────────────────────────────────────────╯</span>
+<span class="bd">╭──────────────────────────────────────────────────────────────────────────╮</span>
+<span class="bd">│</span> Compare it with @src/run<span class="cur blink"> </span>                                                 <span class="bd">│</span>
+<span class="bd">│</span>                                                                          <span class="bd">│</span>
+<span class="bd">╰──────────────────────────────────────────────────────────────────────────╯</span>
+<span class="d">  ↑↓ select · Tab/Enter accept · Esc close</span>
+</pre></div>
+
+<div class="shot"><p class="cap">3 · mention error</p><pre class="term"><span class="inv"> chatbridge </span> <span class="d">dummy-chat · headless · 120s budget</span>
+
+<span class="u b">user</span>
+Explain the retry loop in @src/runtime/launch.ts
+<span class="d">📎 src/runtime/launch.ts (2.1 KB)</span>
+
+<span class="a b">assistant</span>
+The loop wraps launchBrowser in three attempts. Each failure waits
+250 ms × attempt before retrying, and only BrowserLaunchError is retried;
+anything else propagates immediately.
+
+<span class="e b">error</span>
+<span class="e">@src/runtime/lauch.ts: not found</span>
+
+
+
+
+<span class="bd">╭──────────────────────────────────────────────────────────────────────────╮</span>
+<span class="bd">│</span> Compare it with @src/runtime/lauch.ts<span class="cur blink"> </span>                                    <span class="bd">│</span>
+<span class="bd">│</span>                                                                          <span class="bd">│</span>
+<span class="bd">╰──────────────────────────────────────────────────────────────────────────╯</span>
+<span class="d">  Enter send · Shift+Enter newline · @ file · Ctrl+C quit</span>
+</pre></div>
+</div>
+</section>
+
+<!-- ===================== 3. Minimal ===================== -->
+<section>
+<div class="head">
+  <div><h2><span class="num">3</span>Minimal</h2>
+  <p>The current layout, tuned: lowercase dim labels, one-space indent for bodies, no borders anywhere. The input is marked by a single <code>›</code>. Popup rows are just indented text under the input. Maximum rows for history.</p></div>
+  <div class="traits"><span>no borders</span><span>dim labels</span><span>most history rows</span><span>popup below</span></div>
+</div>
+<div class="row">
+
+<div class="shot"><p class="cap">1 · waiting</p><pre class="term"><span class="d">chatbridge  dummy-chat</span>
+
+<span class="u">you</span>
+ Explain the retry loop in @src/runtime/launch.ts
+ <span class="d">📎 src/runtime/launch.ts (2.1 KB)</span>
+
+<span class="a">assistant</span>
+ The loop wraps launchBrowser in three attempts. Each failure waits
+ 250 ms × attempt before retrying, and only BrowserLaunchError is retried;
+ anything else propagates immediately.
+
+<span class="u">you</span>
+ Why not use exponential backoff there?
+
+<span class="d">●○○ thinking  34s / 120s</span>
+
+
+
+
+
+<span class="d">›</span> <span class="d">Type a message</span>
+
+
+<span class="d">enter send · shift+enter newline · @ file · ctrl+c quit</span>
+</pre></div>
+
+<div class="shot"><p class="cap">2 · @ popup</p><pre class="term"><span class="d">chatbridge  dummy-chat</span>
+
+<span class="u">you</span>
+ Explain the retry loop in @src/runtime/launch.ts
+ <span class="d">📎 src/runtime/launch.ts (2.1 KB)</span>
+
+<span class="a">assistant</span>
+ The loop wraps launchBrowser in three attempts. Each failure waits
+ 250 ms × attempt before retrying, and only BrowserLaunchError is retried;
+ anything else propagates immediately.
+
+<span class="u">you</span>
+ Why not use exponential backoff there?
+
+<span class="a">assistant</span>
+ Three attempts over 750 ms is short enough that linear spacing is fine;
+ backoff would only matter if the launch were rate-limited upstream.
+
+<span class="d">›</span> Compare it with @src/run<span class="cur blink"> </span>
+  <span class="sel"> src/runtime/launch.ts      </span>
+   src/runtime/run-step.ts
+   src/cli/run-one-shot.ts
+   src/tui/run-interactive.ts
+<span class="d">↑↓ select · tab/enter accept · esc close</span>
+</pre></div>
+
+<div class="shot"><p class="cap">3 · mention error</p><pre class="term"><span class="d">chatbridge  dummy-chat</span>
+
+<span class="u">you</span>
+ Explain the retry loop in @src/runtime/launch.ts
+ <span class="d">📎 src/runtime/launch.ts (2.1 KB)</span>
+
+<span class="a">assistant</span>
+ The loop wraps launchBrowser in three attempts. Each failure waits
+ 250 ms × attempt before retrying, and only BrowserLaunchError is retried;
+ anything else propagates immediately.
+
+<span class="e">error</span>
+ <span class="e">@src/runtime/lauch.ts: not found</span>
+
+
+
+
+
+
+<span class="d">›</span> Compare it with @src/runtime/lauch.ts<span class="cur blink"> </span>
+
+
+<span class="d">enter send · shift+enter newline · @ file · ctrl+c quit</span>
+</pre></div>
+</div>
+</section>
+
+<!-- ===================== 4. Panel ===================== -->
+<section>
+<div class="head">
+  <div><h2><span class="num">4</span>Panel</h2>
+  <p>An inverse session bar on top carrying provider, mode, and turn count. Each message is a card with a coloured left rail. The status row is split: hints on the left, a cell-based progress gauge on the right. The popup is a bordered panel above the input.</p></div>
+  <div class="traits"><span>session bar</span><span>left-rail cards</span><span>progress gauge</span><span>popup above</span></div>
+</div>
+<div class="row">
+
+<div class="shot"><p class="cap">1 · waiting</p><pre class="term"><span class="inv"> chatbridge   dummy-chat   headless   turn 2                                   </span>
+
+<span class="u">▎</span><span class="u b">You</span>
+<span class="u">▎</span> Explain the retry loop in @src/runtime/launch.ts
+<span class="u">▎</span> <span class="d">📎 src/runtime/launch.ts (2.1 KB)</span>
+
+<span class="a">▎</span><span class="a b">Assistant</span>
+<span class="a">▎</span> The loop wraps launchBrowser in three attempts. Each failure waits
+<span class="a">▎</span> 250 ms × attempt before retrying, and only BrowserLaunchError is
+<span class="a">▎</span> retried; anything else propagates immediately.
+
+<span class="u">▎</span><span class="u b">You</span>
+<span class="u">▎</span> Why not use exponential backoff there?
+
+
+
+
+<span class="bd">┌──────────────────────────────────────────────────────────────────────────┐</span>
+<span class="bd">│</span> <span class="d">Type a message</span>                                                           <span class="bd">│</span>
+<span class="bd">│</span>                                                                          <span class="bd">│</span>
+<span class="bd">└──────────────────────────────────────────────────────────────────────────┘</span>
+<span class="w">●○○</span> <span class="d">Thinking…</span>                                      <span class="w">▰▰▰▰▰</span><span class="d">▱▱▱▱▱▱▱▱▱▱▱▱▱</span>  34s / 120s
+</pre></div>
+
+<div class="shot"><p class="cap">2 · @ popup</p><pre class="term"><span class="inv"> chatbridge   dummy-chat   headless   turn 2                                   </span>
+
+<span class="u">▎</span><span class="u b">You</span>
+<span class="u">▎</span> Explain the retry loop in @src/runtime/launch.ts
+<span class="u">▎</span> <span class="d">📎 src/runtime/launch.ts (2.1 KB)</span>
+
+<span class="a">▎</span><span class="a b">Assistant</span>
+<span class="a">▎</span> The loop wraps launchBrowser in three attempts. Each failure waits
+<span class="a">▎</span> 250 ms × attempt before retrying, and only BrowserLaunchError is
+<span class="a">▎</span> retried; anything else propagates immediately.
+
+<span class="bd">┌ @ file ──────────────────────────────────┐</span>
+<span class="bd">│</span><span class="sel"> src/runtime/launch.ts                    </span><span class="bd">│</span>
+<span class="bd">│</span> src/runtime/run-step.ts                  <span class="bd">│</span>
+<span class="bd">│</span> src/cli/run-one-shot.ts                  <span class="bd">│</span>
+<span class="bd">│</span> src/tui/run-interactive.ts               <span class="bd">│</span>
+<span class="bd">└──────────────────────────────────────────┘</span>
+<span class="bd">┌──────────────────────────────────────────────────────────────────────────┐</span>
+<span class="bd">│</span> Compare it with @src/run<span class="cur blink"> </span>                                                 <span class="bd">│</span>
+<span class="bd">│</span>                                                                          <span class="bd">│</span>
+<span class="bd">└──────────────────────────────────────────────────────────────────────────┘</span>
+<span class="d">↑↓ select · Tab/Enter accept · Esc close</span>
+</pre></div>
+
+<div class="shot"><p class="cap">3 · mention error</p><pre class="term"><span class="inv"> chatbridge   dummy-chat   headless   turn 2                                   </span>
+
+<span class="u">▎</span><span class="u b">You</span>
+<span class="u">▎</span> Explain the retry loop in @src/runtime/launch.ts
+<span class="u">▎</span> <span class="d">📎 src/runtime/launch.ts (2.1 KB)</span>
+
+<span class="a">▎</span><span class="a b">Assistant</span>
+<span class="a">▎</span> The loop wraps launchBrowser in three attempts. Each failure waits
+<span class="a">▎</span> 250 ms × attempt before retrying, and only BrowserLaunchError is
+<span class="a">▎</span> retried; anything else propagates immediately.
+
+<span class="e">▎</span><span class="e b">Error</span>
+<span class="e">▎</span> @src/runtime/lauch.ts: not found
+
+
+
+
+<span class="bd">┌──────────────────────────────────────────────────────────────────────────┐</span>
+<span class="bd">│</span> Compare it with @src/runtime/lauch.ts<span class="cur blink"> </span>                                    <span class="bd">│</span>
+<span class="bd">│</span>                                                                          <span class="bd">│</span>
+<span class="bd">└──────────────────────────────────────────────────────────────────────────┘</span>
+<span class="d">Enter send · Shift+Enter newline · @ file · Ctrl+C quit</span>
+</pre></div>
+</div>
+</section>
+</main>
