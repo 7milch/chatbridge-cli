@@ -23,7 +23,11 @@ Packages: `@chatbridge/provider`, `@chatbridge/runtime`, `@chatbridge/core`,
 ## Cutting a release
 
 1. On `main`, bump `version` in the four `package.json` files to the same
-   value. Commit: `chore: release vX.Y.Z`.
+   value, then run `rm bun.lock && bun install` and commit the regenerated
+   lock together with the bump. This is required because `bun pm pack`
+   resolves sibling `workspace:*` dependencies to the version recorded in
+   `bun.lock`, not to the version in `package.json`, so a stale lock ships
+   manifests pinned to the previous release. Commit: `chore: release vX.Y.Z`.
 2. `git tag vX.Y.Z && git push origin main vX.Y.Z`.
 3. The `Publish` workflow runs `bun run check`, verifies the tag matches
    every package version, packs with `bun pm pack` (rewrites `workspace:*`),

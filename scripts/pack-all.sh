@@ -23,5 +23,20 @@ for tgz in "$out"/*.tgz; do
   case "$manifest" in
     *workspace:*) echo "$tgz: unresolved workspace: dependency" >&2; exit 1 ;;
   esac
+  echo "$manifest" | node -e '
+    let input = "";
+    process.stdin.on("data", (chunk) => { input += chunk; });
+    process.stdin.on("end", () => {
+      const manifest = JSON.parse(input);
+      const version = manifest.version;
+      const deps = Object.assign({}, manifest.dependencies, manifest.peerDependencies);
+      for (const [name, spec] of Object.entries(deps)) {
+        if (name.startsWith("@chatbridge/") && spec !== version) {
+          console.error(`${process.argv[1]}: depends on ${name}@${spec} but the release is ${version} (stale bun.lock? run rm bun.lock && bun install)`);
+          process.exit(1);
+        }
+      }
+    });
+  ' "$tgz"
 done
 ls -1 "$out"
