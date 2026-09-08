@@ -100,14 +100,24 @@ export class ChatSession {
     }
   }
 
-  /** Saves the current storage state (services rotate tokens, so the state
-   * saved at login goes stale) and then closes the browser. A failed save is
-   * reported via onProgress and never blocks the close. Idempotent. */
+  /** Closes the browser, first saving the current storage state when the page
+   * is still logged in (services rotate tokens, so the state saved at login
+   * goes stale). A lost login or a failed save is reported via onProgress and
+   * never blocks the close. Idempotent. */
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
     try {
-      await this.rt.saveAuthState();
+      const ok = await runStep("isLoggedIn", this.timeoutMs, () =>
+        this.provider.isLoggedIn(this.rt.page),
+      );
+      if (ok) {
+        await this.rt.saveAuthState();
+      } else {
+        this.onProgress?.(
+          "Session is no longer logged in; auth state not saved.",
+        );
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.onProgress?.(`Could not save auth state: ${message}`);

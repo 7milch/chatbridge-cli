@@ -220,6 +220,20 @@ describe("ChatSession.close", () => {
     ).toHaveLength(1);
   });
 
+  test("does not save when the session is no longer logged in", async () => {
+    const h = harness();
+    const progress: string[] = [];
+    const session = await ChatSession.open({
+      ...opts(h),
+      onProgress: (m) => progress.push(m),
+    });
+    h.loggedIn = false;
+    await session.close();
+    expect(h.saved).toBe(0);
+    expect(h.closed).toBe(1);
+    expect(progress.filter((m) => m.includes("not saved"))).toHaveLength(1);
+  });
+
   test("does not save when open fails", async () => {
     const h = harness();
     h.loggedIn = false;
