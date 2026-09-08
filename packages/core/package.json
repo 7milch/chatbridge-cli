@@ -1,6 +1,6 @@
 {
   "name": "@chatbridge/core",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Core session flows and errors for chatbridge",
   "license": "MIT",
   "repository": {

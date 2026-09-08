@@ -67,8 +67,10 @@ A globally installed CLI resolves an npm-package `defaultProvider` only if
 that provider is installed globally as well.
 
 Exit codes: 1 invalid argument or config, 2 not logged in, 3 auth expired,
-4 response timeout, 5 provider could not be loaded. Set `CHATBRIDGE_DEBUG=1`
-to print the underlying error.
+4 response timeout, 5 provider could not be loaded, 6 blocked by the
+service (a bot challenge or an IdP refusing the automated browser; try
+`--headful`). A timeout that coincides with a lost login is reported as 3
+or 6 rather than 4. Set `CHATBRIDGE_DEBUG=1` to print the underlying error.
 
 ## Interactive mode
 
@@ -80,8 +82,12 @@ chat.
   Shift+Enter needs a terminal that speaks the kitty keyboard protocol
   (iTerm2, kitty, WezTerm, Ghostty), Ctrl+J works everywhere. **Ctrl+C**
   quits.
+- While a reply is pending the status line shows an activity indicator
+  with the elapsed time against the `--timeout` budget, e.g.
+  `○●○ Thinking…  12s / 120s`.
 - A response timeout is shown in the history and you can keep chatting.
-  Any other failure closes the chat with exit code 1.
+  If the timeout turns out to be a lost login or a block, the chat closes
+  with exit code 3 or 6; any other failure closes it with exit code 1.
 - Interactive mode needs **Bun >= 1.3 or Node >= 26.4** (the TUI library's
   requirement). One-shot mode and `auth` keep working on Node >= 20.
 - A terminal is required; in pipes and scripts use `-p`.
@@ -96,7 +102,10 @@ This project exists to drive company-internal and similarly cooperative
 web chat services. Services that deploy bot protection (Cloudflare
 challenges, browser fingerprinting at the identity provider) may block
 Playwright, especially headless; `--headful` sometimes helps, and that is
-as far as this project goes. Evading bot protection — stealth plugins,
+as far as this project goes. A provider can recognise such a page with the
+optional `detectBlock` method (see `@chatbridge/provider`) so the CLI exits
+6 and suggests `--headful` instead of reporting an expired login. Evading
+bot protection — stealth plugins,
 user-agent spoofing, attaching to a personal browser profile — is out of
 scope and will not be added. Public services are used here only as spike
 targets to validate the Provider contract (see `docs/spike-notes/`).

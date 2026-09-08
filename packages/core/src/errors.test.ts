@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   AuthExpiredError,
   AuthRequiredError,
+  BlockedError,
   ChatBridgeError,
   InvalidProviderError,
   InvalidStateError,
@@ -24,6 +25,13 @@ describe("error hierarchy", () => {
       expect(err.code).toBe(code);
       expect(err.message.length).toBeGreaterThan(0);
     }
+  });
+
+  test("BlockedError has code BLOCKED", () => {
+    const err = new BlockedError("blocked");
+    expect(err.code).toBe("BLOCKED");
+    expect(err.name).toBe("BlockedError");
+    expect(err).toBeInstanceOf(ChatBridgeError);
   });
 });
 

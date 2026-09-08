@@ -50,3 +50,12 @@ export class InvalidStateError extends ChatBridgeError {
     super("INVALID_STATE", message, options);
   }
 }
+
+/** The service blocked the automated browser (bot challenge, IdP refusing
+ * automation); logging in again would not help. The message suggests
+ * --headful. */
+export class BlockedError extends ChatBridgeError {
+  constructor(message: string, options?: ErrorOptions) {
+    super("BLOCKED", message, options);
+  }
+}

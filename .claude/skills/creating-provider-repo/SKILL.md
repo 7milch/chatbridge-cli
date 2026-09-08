@@ -80,6 +80,7 @@ exactly one element on the observation date.
 | `startNewChat` | Navigate or click, then wait for the composer visible and empty. |
 | `sendMessage` | Record the assistant-message count (module-level `WeakMap<Page, number>`), fill (`fill()` works on `contenteditable` composers too), submit, then wait briefly for the "generating" state to begin (ignore timeout). |
 | `waitForResponse` | Wait for the done signal, then for the count to exceed the recorded one, then read the newest message with `innerText` until two reads 500 ms apart agree. Never return an earlier turn. Done signal first: some services insert a placeholder turn that is removed before the real one. |
+| `detectBlock` (optional) | Called only after `isLoggedIn` returned false. Return a short description when the page is a bot challenge or an IdP refusal (title, a known interstitial element); return `undefined` for a normal logged-out page. Must not throw. |
 
 ## Traps seen in the wild
 
@@ -92,5 +93,5 @@ exactly one element on the observation date.
 | Partial answer returned | Done signal fired before the new turn existed | Count-before + stability read (see contract) |
 | No "generating" element | Send button swapped for a stop button | Done = stop button gone. Do not wait for the send button to return: ChatGPT renders it only while the composer is non-empty |
 | `waitForResponse` returns "…" or an ellipsis | A placeholder assistant element (ChatGPT: `data-message-id="request-…"`) appears, is removed ~2 s later, then the real one is inserted | Wait for the done signal before the count check; stability read |
-| Page title "Just a moment..." and `isLoggedIn` false; CLI says auth expired | Cloudflare challenge in headless Chromium (both headless modes) | Verify with `--headful`. Bot-protection evasion is out of scope (`CLAUDE.md`); record it and move on |
+| Page title "Just a moment..." and `isLoggedIn` false; CLI says auth expired | Cloudflare challenge in headless Chromium (both headless modes) | Implement `detectBlock` (framework ≥ 0.3.0): return `"challenge page"` when `document.title === "Just a moment..."`, so the CLI exits 6 and says `Try --headful`. Bot-protection evasion is out of scope (`CLAUDE.md`); record it and move on |
 | Google (or another IdP) refuses the automated browser even headful | IdP fingerprints the browser | Log in with email + password / emailed code; note it in `dom-notes.md` §Login |

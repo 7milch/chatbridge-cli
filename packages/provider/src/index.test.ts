@@ -14,4 +14,18 @@ describe("defineProvider", () => {
     };
     expect(defineProvider(p)).toBe(p);
   });
+
+  test("accepts the optional detectBlock method", () => {
+    const p: Provider = {
+      name: "test",
+      chatUrl: "http://localhost:1/chat",
+      navigateToLogin: async () => {},
+      isLoggedIn: async () => false,
+      startNewChat: async () => {},
+      sendMessage: async () => {},
+      waitForResponse: async () => "reply",
+      detectBlock: async () => "challenge page",
+    };
+    expect(defineProvider(p).detectBlock).toBe(p.detectBlock);
+  });
 });

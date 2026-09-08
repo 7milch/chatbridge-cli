@@ -38,6 +38,14 @@ export function createDummyProvider(baseUrl: string): Provider {
       const text = await log.locator(".message.assistant").last().textContent();
       return text ?? "";
     },
+
+    async detectBlock(page) {
+      // The challenge page has no chat controls, so isLoggedIn is false;
+      // the title tells the two apart.
+      return (await page.title()) === "Just a moment..."
+        ? "challenge page"
+        : undefined;
+    },
   });
 }
 

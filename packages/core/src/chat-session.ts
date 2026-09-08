@@ -7,7 +7,9 @@ import {
 import {
   AuthExpiredError,
   AuthRequiredError,
+  BlockedError,
   InvalidStateError,
+  ResponseTimeoutError,
 } from "./errors.js";
 import { runStep } from "./run-step.js";
 
@@ -42,6 +44,34 @@ export class ChatSession {
     private readonly onProgress?: (message: string) => void,
   ) {}
 
+  /** isLoggedIn → true: return. false: ask detectBlock (when the provider
+   * has it); a description means BlockedError, otherwise AuthExpiredError.
+   * Both provider calls run under runStep so a hang maps to a timeout. */
+  private static async assertLoggedIn(
+    provider: Provider,
+    page: Page,
+    timeoutMs: number,
+  ): Promise<void> {
+    const loggedIn = await runStep("isLoggedIn", timeoutMs, () =>
+      provider.isLoggedIn(page),
+    );
+    if (loggedIn) return;
+    const detectBlock = provider.detectBlock;
+    const block = detectBlock
+      ? await runStep("detectBlock", timeoutMs, () =>
+          detectBlock.call(provider, page),
+        )
+      : undefined;
+    if (block !== undefined) {
+      throw new BlockedError(
+        `Blocked by "${provider.name}": ${block}. Try --headful.`,
+      );
+    }
+    throw new AuthExpiredError(
+      `Auth state for "${provider.name}" is no longer valid. Run \`auth login\` again.`,
+    );
+  }
+
   /** authStore.has() → launch → goto chatUrl → isLoggedIn → startNewChat.
    * If any step after launch fails, the browser is closed first. */
   static async open(opts: ChatSessionOptions): Promise<ChatSession> {
@@ -58,14 +88,7 @@ export class ChatSession {
     try {
       rt.page.setDefaultTimeout(timeoutMs);
       await runStep("goto", timeoutMs, () => rt.page.goto(provider.chatUrl));
-      const loggedIn = await runStep("isLoggedIn", timeoutMs, () =>
-        provider.isLoggedIn(rt.page),
-      );
-      if (!loggedIn) {
-        throw new AuthExpiredError(
-          `Auth state for "${provider.name}" is no longer valid. Run \`auth login\` again.`,
-        );
-      }
+      await ChatSession.assertLoggedIn(provider, rt.page, timeoutMs);
       await runStep("startNewChat", timeoutMs, () =>
         provider.startNewChat(rt.page),
       );
@@ -95,8 +118,31 @@ export class ChatSession {
       return await runStep("waitForResponse", this.timeoutMs, () =>
         this.provider.waitForResponse(this.rt.page),
       );
+    } catch (err) {
+      if (err instanceof ResponseTimeoutError) await this.diagnoseTimeout();
+      throw err;
     } finally {
       this.pending = false;
+    }
+  }
+
+  /** A timeout may really be a lost login. Throws AuthExpiredError or
+   * BlockedError when the page is no longer logged in; returns when it
+   * still is, or when the check itself fails (the caller then rethrows the
+   * original timeout, which stays the primary failure). */
+  private async diagnoseTimeout(): Promise<void> {
+    try {
+      await ChatSession.assertLoggedIn(
+        this.provider,
+        this.rt.page,
+        this.timeoutMs,
+      );
+    } catch (err) {
+      if (err instanceof AuthExpiredError || err instanceof BlockedError) {
+        throw err;
+      }
+      // Anything else (page gone, a second timeout): swallow; the caller
+      // rethrows the original ResponseTimeoutError.
     }
   }
 

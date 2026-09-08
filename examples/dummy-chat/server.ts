@@ -1,8 +1,9 @@
 /** Minimal dummy web chat used for E2E verification of the framework.
  * Not a real service: fixed echo responses, cookie-based fake login.
  * Test hooks: invalidateSessions() (simulates an expired login),
- * setReplyDelayMs() (simulates a slow response), and a message starting
- * with "slow:" (that one reply takes 5 s regardless of the delay). */
+ * setReplyDelayMs() (simulates a slow response), setBlocked() (serves a
+ * challenge page instead of the chat), and a message starting with
+ * "slow:" (that one reply takes 5 s regardless of the delay). */
 
 const LOGIN_HTML = `<!doctype html>
 <title>Dummy Chat — Login</title>
@@ -10,6 +11,12 @@ const LOGIN_HTML = `<!doctype html>
 <form method="post" action="/do-login">
   <button id="login-button" type="submit">Log in</button>
 </form>`;
+
+/** Stand-in for a bot-protection interstitial: same title Cloudflare uses,
+ * no chat controls, served regardless of session. */
+const CHALLENGE_HTML = `<!doctype html>
+<title>Just a moment...</title>
+<h1>Checking your browser</h1>`;
 
 function chatHtml(replyDelayMs: number): string {
   return `<!doctype html>
@@ -51,11 +58,14 @@ export interface DummyChat {
   invalidateSessions(): void;
   /** Delay between send and the assistant reply; default 300 ms. */
   setReplyDelayMs(ms: number): void;
+  /** While true, /chat serves a challenge page instead of the chat. */
+  setBlocked(blocked: boolean): void;
 }
 
 export async function startDummyChat(port = 8735): Promise<DummyChat> {
   let sessionsValid = true;
   let replyDelayMs = 300;
+  let blocked = false;
 
   function hasSession(req: Request): boolean {
     return (
@@ -83,6 +93,11 @@ export async function startDummyChat(port = 8735): Promise<DummyChat> {
         });
       }
       if (pathname === "/chat") {
+        if (blocked) {
+          return new Response(CHALLENGE_HTML, {
+            headers: { "content-type": "text/html" },
+          });
+        }
         if (!hasSession(req)) {
           return new Response(null, {
             status: 302,
@@ -104,6 +119,9 @@ export async function startDummyChat(port = 8735): Promise<DummyChat> {
     },
     setReplyDelayMs: (ms: number) => {
       replyDelayMs = ms;
+    },
+    setBlocked: (value: boolean) => {
+      blocked = value;
     },
   };
 }

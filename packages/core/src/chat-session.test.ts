@@ -5,7 +5,9 @@ import { ChatSession, type RuntimeLike } from "./chat-session.js";
 import {
   AuthExpiredError,
   AuthRequiredError,
+  BlockedError,
   InvalidStateError,
+  ResponseTimeoutError,
 } from "./errors.js";
 
 /** Deferred promise so a test can decide when waitForResponse resolves. */
@@ -35,6 +37,10 @@ interface Harness {
   saveShouldFail: boolean;
   launch: () => Promise<RuntimeLike>;
   loggedIn: boolean;
+  /** When set, the provider gains detectBlock returning this value. */
+  block: string | undefined;
+  hasDetectBlock: boolean;
+  detectBlockCalls: number;
 }
 
 function harness(): Harness {
@@ -45,6 +51,9 @@ function harness(): Harness {
     saved: 0,
     saveShouldFail: false,
     loggedIn: true,
+    block: undefined,
+    hasDetectBlock: false,
+    detectBlockCalls: 0,
     provider: undefined as unknown as Provider,
     launch: undefined as unknown as Harness["launch"],
   };
@@ -65,6 +74,16 @@ function harness(): Harness {
       return d.promise;
     },
   };
+  Object.defineProperty(h.provider, "detectBlock", {
+    get() {
+      return h.hasDetectBlock
+        ? async () => {
+            h.detectBlockCalls++;
+            return h.block;
+          }
+        : undefined;
+    },
+  });
   h.launch = async () => ({
     page: fakePage(),
     saveAuthState: async () => {
@@ -140,6 +159,40 @@ describe("ChatSession.open", () => {
     ]);
     await session.close();
   });
+
+  test("throws BlockedError with the documented message when detectBlock reports a block", async () => {
+    const h = harness();
+    h.loggedIn = false;
+    h.hasDetectBlock = true;
+    h.block = "challenge page";
+    const err = await ChatSession.open(opts(h)).catch((e) => e);
+    expect(err).toBeInstanceOf(BlockedError);
+    expect(err.message).toBe(
+      'Blocked by "fake": challenge page. Try --headful.',
+    );
+    expect(h.detectBlockCalls).toBe(1);
+    expect(h.closed).toBe(1);
+  });
+
+  test("throws AuthExpiredError when detectBlock returns undefined", async () => {
+    const h = harness();
+    h.loggedIn = false;
+    h.hasDetectBlock = true;
+    h.block = undefined;
+    await expect(ChatSession.open(opts(h))).rejects.toBeInstanceOf(
+      AuthExpiredError,
+    );
+    expect(h.closed).toBe(1);
+  });
+
+  test("does not call detectBlock while logged in", async () => {
+    const h = harness();
+    h.hasDetectBlock = true;
+    h.block = "challenge page";
+    const session = await ChatSession.open(opts(h));
+    await session.close();
+    expect(h.detectBlockCalls).toBe(0);
+  });
 });
 
 describe("ChatSession.send", () => {
@@ -182,6 +235,79 @@ describe("ChatSession.send", () => {
     const second = session.send("two");
     (await replyOf(h, 1)).resolve("Echo: two");
     expect(await second).toBe("Echo: two");
+    await session.close();
+  });
+});
+
+describe("ChatSession.send timeout diagnosis", () => {
+  const timeout = () =>
+    new ResponseTimeoutError("Timed out during waitForResponse after 1000 ms.");
+
+  test("rethrows the timeout and stays usable while still logged in", async () => {
+    const h = harness();
+    const session = await ChatSession.open(opts(h));
+    const first = session.send("one");
+    (await replyOf(h, 0)).reject(timeout());
+    await expect(first).rejects.toBeInstanceOf(ResponseTimeoutError);
+    const second = session.send("two");
+    (await replyOf(h, 1)).resolve("Echo: two");
+    expect(await second).toBe("Echo: two");
+    await session.close();
+  });
+
+  test("turns the timeout into AuthExpiredError when the page is logged out", async () => {
+    const h = harness();
+    const session = await ChatSession.open(opts(h));
+    const first = session.send("one");
+    h.loggedIn = false;
+    (await replyOf(h, 0)).reject(timeout());
+    await expect(first).rejects.toBeInstanceOf(AuthExpiredError);
+    await session.close();
+  });
+
+  test("turns the timeout into BlockedError when detectBlock reports a block", async () => {
+    const h = harness();
+    h.hasDetectBlock = true;
+    const session = await ChatSession.open(opts(h));
+    const first = session.send("one");
+    h.loggedIn = false;
+    h.block = "challenge page";
+    (await replyOf(h, 0)).reject(timeout());
+    const err = await first.catch((e) => e);
+    expect(err).toBeInstanceOf(BlockedError);
+    expect(err.message).toBe(
+      'Blocked by "fake": challenge page. Try --headful.',
+    );
+    await session.close();
+  });
+
+  test("keeps the original timeout when the diagnosis itself fails", async () => {
+    const h = harness();
+    const session = await ChatSession.open(opts(h));
+    const first = session.send("one");
+    h.provider.isLoggedIn = async () => {
+      throw new Error("page closed");
+    };
+    const original = timeout();
+    (await replyOf(h, 0)).reject(original);
+    const err = await first.catch((e) => e);
+    expect(err).toBe(original);
+    // close() still runs isLoggedIn; let it fail softly.
+    await session.close();
+  });
+
+  test("a non-timeout error is not diagnosed", async () => {
+    const h = harness();
+    let checks = 0;
+    const session = await ChatSession.open(opts(h));
+    h.provider.isLoggedIn = async () => {
+      checks++;
+      return true;
+    };
+    const first = session.send("one");
+    (await replyOf(h, 0)).reject(new Error("boom"));
+    await expect(first).rejects.toThrow("boom");
+    expect(checks).toBe(0);
     await session.close();
   });
 });

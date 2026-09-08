@@ -87,6 +87,7 @@ export async function runInteractive(
     view = new ChatView(renderer, model, {
       title: opts.title,
       providerName: opts.provider.name,
+      timeoutMs: opts.timeoutMs,
     });
     const quit = waitForQuit(renderer, model);
     renderer.start();

@@ -14,3 +14,6 @@ packs/
 .DS_Store
 *.log
 *.tsbuildinfo
+
+# Playwright MCP session snapshots
+.playwright-mcp/
