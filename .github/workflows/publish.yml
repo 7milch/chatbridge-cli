@@ -34,7 +34,7 @@ jobs:
           set -euo pipefail
           for name in chatbridge-provider chatbridge-runtime chatbridge-core chatbridge-cli; do
             # "<name>-<digit>..." so "chatbridge-" does not match "chatbridge-core-".
-            tgz=$(ls packs/${name}-[0-9]*.tgz)
+            tgz=$(ls packs/${name}-[0-9]*.tgz) # published as "./$tgz": a bare "packs/x.tgz" is parsed by npm as a GitHub owner/repo shorthand
             # Idempotent across a partial failure: skip anything already on
             # the registry, so a re-run of the tag resumes where it stopped.
             manifest=$(tar -xOf "$tgz" package/package.json)
@@ -43,5 +43,5 @@ jobs:
               echo "$pkg already published; skipping"
               continue
             fi
-            npm publish "$tgz" --provenance --access public
+            npm publish "./$tgz" --provenance --access public
           done
