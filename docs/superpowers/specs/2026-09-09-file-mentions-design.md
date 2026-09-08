@@ -84,8 +84,9 @@ export interface Mention { path: string; start: number; end: number; }
  * whitespace. A bare `@` yields nothing. Order of appearance, duplicates
  * kept (expandMentions dedupes). */
 export function parseMentions(text: string): Mention[];
-/** The mention whose range contains `cursor` (cursor may sit at `end`),
- * for the popup query. */
+/** The mention the cursor is typing into (`start < cursor <= end`), for
+ * the popup query. Unlike parseMentions, a bare `@` counts here with an
+ * empty path, so the popup opens as soon as `@` is typed. */
 export function mentionAtCursor(text: string, cursor: number): Mention | undefined;
 ```
 
@@ -182,7 +183,9 @@ export interface ChatModelOptions {
 
 ```typescript
 export class MentionPopup {
-  constructor(renderer: CliRenderer, parent: BoxRenderable);
+  /** `parent` is the view's root box; `bottom` is the height of everything
+   * below the history area (input box + status line). */
+  constructor(renderer: CliRenderer, parent: BoxRenderable, opts: { bottom: number });
   show(candidates: string[]): void;   // resets selection to 0; hides when empty
   hide(): void;
   readonly visible: boolean;
@@ -214,6 +217,11 @@ implementation of key handling:
 
 The spike records its findings in the plan and picks the mechanism; the
 spec above is written so either outcome fits.
+
+Resolved 2026-09-09 (see "Spike findings" in the plan): a `keypress`
+listener on `renderer.keyInput` runs first and `preventDefault()` stops the
+textarea, so no `keyBindings` swap is needed; `onContentChange` and
+`onCursorChange` exist and drive the popup refresh.
 
 ## 4. Testing
 
