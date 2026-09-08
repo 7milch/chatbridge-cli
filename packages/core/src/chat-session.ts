@@ -14,6 +14,7 @@ import { runStep } from "./run-step.js";
 /** The part of BrowserRuntime a session needs; lets tests inject a fake. */
 export interface RuntimeLike {
   readonly page: Page;
+  saveAuthState(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -99,10 +100,19 @@ export class ChatSession {
     }
   }
 
-  /** Closes the browser. Idempotent. */
+  /** Saves the current storage state (services rotate tokens, so the state
+   * saved at login goes stale) and then closes the browser. A failed save is
+   * reported via onProgress and never blocks the close. Idempotent. */
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    await this.rt.close();
+    try {
+      await this.rt.saveAuthState();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.onProgress?.(`Could not save auth state: ${message}`);
+    } finally {
+      await this.rt.close();
+    }
   }
 }
