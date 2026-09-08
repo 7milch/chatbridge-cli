@@ -34,6 +34,7 @@ const EXIT_CODES: Record<string, number> = {
   PROVIDER_LOAD: 5,
   INVALID_PROVIDER: 5,
   INVALID_STATE: 1,
+  BLOCKED: 6,
 };
 
 const DEFAULT_TIMEOUT_SEC = 120;
@@ -76,6 +77,7 @@ export function createCli(opts: CreateCliOptions) {
       "",
       "Without -p, an interactive chat opens (needs a terminal and Bun >= 1.3 or Node >= 26.4).",
       "One-shot mode prints the AI response to stdout.",
+      "Exit codes: 1 usage/config, 2 not logged in, 3 auth expired, 4 timeout, 5 provider load, 6 blocked by the service (try --headful).",
       ...(opts.provider
         ? []
         : [

@@ -67,8 +67,10 @@ A globally installed CLI resolves an npm-package `defaultProvider` only if
 that provider is installed globally as well.
 
 Exit codes: 1 invalid argument or config, 2 not logged in, 3 auth expired,
-4 response timeout, 5 provider could not be loaded. Set `CHATBRIDGE_DEBUG=1`
-to print the underlying error.
+4 response timeout, 5 provider could not be loaded, 6 blocked by the
+service (a bot challenge or an IdP refusing the automated browser; try
+`--headful`). A timeout that coincides with a lost login is reported as 3
+or 6 rather than 4. Set `CHATBRIDGE_DEBUG=1` to print the underlying error.
 
 ## Interactive mode
 

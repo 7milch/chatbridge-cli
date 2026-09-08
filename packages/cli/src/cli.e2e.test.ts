@@ -120,4 +120,29 @@ describe("createCli", () => {
     expect(code).toBe(4);
     expect(Date.now() - started).toBeLessThan(5000);
   }, 60_000);
+
+  test("challenge page exits 6 and suggests --headful", async () => {
+    const server = await startDummyChat(0);
+    cleanups.push(server.stop);
+    const baseDir = setup();
+    const provider = await prepareAuth(baseDir, server.url);
+    server.setBlocked(true);
+    const cli = createCli({ name: "test-cli", provider, baseDir });
+
+    const chunks: string[] = [];
+    const original = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string) => {
+      chunks.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    cleanups.push(() => {
+      process.stderr.write = original;
+    });
+
+    const code = await cli.run(["bun", "cli", "-p", "hello"]);
+    expect(code).toBe(6);
+    expect(chunks.join("")).toContain(
+      'Blocked by "dummy-chat": challenge page. Try --headful.',
+    );
+  }, 60_000);
 });
