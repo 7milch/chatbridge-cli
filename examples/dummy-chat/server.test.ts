@@ -49,4 +49,25 @@ describe("dummy chat server", () => {
     });
     expect(await chat.text()).toContain('name="reply-delay" content="1500"');
   });
+
+  test("serves the challenge page on /chat while blocked", async () => {
+    const server = await startDummyChat(0);
+    try {
+      server.setBlocked(true);
+      const res = await fetch(`${server.url}/chat`, {
+        headers: { cookie: "session=ok" },
+      });
+      const html = await res.text();
+      expect(res.status).toBe(200);
+      expect(html).toContain("<title>Just a moment...</title>");
+      expect(html).not.toContain("message-input");
+      server.setBlocked(false);
+      const back = await fetch(`${server.url}/chat`, {
+        headers: { cookie: "session=ok" },
+      });
+      expect(await back.text()).toContain("message-input");
+    } finally {
+      server.stop();
+    }
+  });
 });

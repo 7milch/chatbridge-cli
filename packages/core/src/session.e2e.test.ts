@@ -7,7 +7,11 @@ import { startDummyChat } from "@chatbridge/example-dummy-chat/server";
 import type { Provider } from "@chatbridge/provider";
 import { AuthStore, BrowserRuntime } from "@chatbridge/runtime";
 import { ChatSession } from "./chat-session.js";
-import { AuthRequiredError, ResponseTimeoutError } from "./errors.js";
+import {
+  AuthRequiredError,
+  BlockedError,
+  ResponseTimeoutError,
+} from "./errors.js";
 import { runOneShot } from "./session.js";
 
 const cleanups: Array<() => unknown> = [];
@@ -122,5 +126,25 @@ describe("ChatSession", () => {
       ResponseTimeoutError,
     );
     expect(await session.send("two")).toBe("Echo: two");
+  }, 60_000);
+
+  test("open reports a challenge page as BlockedError, not an expired login", async () => {
+    const server = await startDummyChat(0);
+    cleanups.push(server.stop);
+    const provider = createDummyProvider(server.url);
+    const store = tempStore(provider.name);
+    await prepareAuth(provider, store);
+
+    server.setBlocked(true);
+    const err = await ChatSession.open({
+      provider,
+      authStore: store,
+      headless: true,
+      timeoutMs: 30_000,
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(BlockedError);
+    expect(err.message).toBe(
+      'Blocked by "dummy-chat": challenge page. Try --headful.',
+    );
   }, 60_000);
 });
