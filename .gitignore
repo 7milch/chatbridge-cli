@@ -1,7 +1,10 @@
 # Local-only design notes (Japanese source document)
 INIT.md
 
-# Browser authentication state — contains session cookies
+# Local SDD ledgers and review packages
+.superpowers/
+
+# Browser authentication state — contains cookies, localStorage and IndexedDB
 .auth/
 storage-state*.json
 

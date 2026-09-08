@@ -9,7 +9,7 @@ across sessions.
 | Repository | Holds | Visibility |
 |---|---|---|
 | `chatbridge-cli` (this repo) | Service-independent skeleton only: Provider API, Playwright runtime, auth-state management, core session flows, CLI + (later) TUI, bundled dummy chat for E2E | Public OSS |
-| `chatbridge-providers` (planned) | Providers for public web chat services (ChatGPT, Claude.ai, Gemini, …). Breaks when those UIs change without affecting the skeleton's quality signal | Public OSS |
+| `chatbridge-rakuten-ai` (local only) | One provider for Rakuten AI plus a derived `rakuten-ai` CLI via `createCli`. Consumes the published packages; rehearses milestone 5 | Private, no remote |
 | Company repository | Company-internal provider (URLs, selectors, login detection, config). Never enters either OSS repo | Private |
 
 All three layers consume the same `Provider` contract from `@chatbridge/provider`.
@@ -48,11 +48,14 @@ in the TUI. Also deferred here: Markdown rendering, cross-process conversation
 resume (chat handle), history persistence, and detecting auth expiry
 mid-conversation. Shaped after milestone 4 exposes a real service's DOM.
 
-### 4. Public providers repository
+### 4. Rakuten AI provider (private repo) — in progress (issue #11)
 
-Create `chatbridge-providers` with the first real-service provider, using the
-`Provider` contract as published. Feedback from a real service (streaming DOM
-replacement, lazy login redirects, rate limits) flows back into the contract here.
+A local-only repo `chatbridge-rakuten-ai` builds a `rakuten-ai` CLI on the
+published packages. Findings from the real service flow back into the shared
+runtime here: the saved auth state now includes IndexedDB (the service keeps
+its session there), and the `Provider` contract itself needed no change.
+Taken up before 3b, which is shaped by what this milestone exposed (streaming
+appends to one element; completion is signalled by the send button returning).
 
 ### 5. Company adoption
 

@@ -14,7 +14,8 @@ export interface AuthStoreOptions {
 }
 
 /** Persists Playwright storageState JSON with restrictive permissions.
- * The content is sensitive (session cookies): never log it. */
+ * The content is sensitive — it holds cookies, localStorage and IndexedDB
+ * contents: never log it. */
 export class AuthStore {
   private readonly dir: string;
   private readonly file: string;
