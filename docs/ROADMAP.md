@@ -41,13 +41,6 @@ error and status display. Core gains `ChatSession` (browser stays open across
 turns); the Provider contract documents multi-turn semantics without new
 methods. OpenTUI proven under Bun 1.4 (spike in the spec).
 
-### 3b. Streaming display
-
-Streaming response capture in the Provider contract and incremental display
-in the TUI. Also deferred here: Markdown rendering, cross-process conversation
-resume (chat handle), history persistence, and detecting auth expiry
-mid-conversation. Shaped after milestone 4 exposes a real service's DOM.
-
 ### 4. Rakuten AI provider (private repo) — done (issue #11, PR #12, v0.2.0, 2026-09-08)
 
 A local-only repo `chatbridge-rakuten-ai` builds a `rakuten-ai` CLI on the
@@ -56,6 +49,25 @@ runtime here: the saved auth state now includes IndexedDB (the service keeps
 its session there), and the `Provider` contract itself needed no change.
 Taken up before 3b, which is shaped by what this milestone exposed (streaming
 appends to one element; completion is signalled by the send button returning).
+Follow-ups shipped in 0.2.1–0.2.2: the auth state is re-saved when a session
+closes (services rotate tokens), and release checks catch a stale `bun.lock`.
+
+### 4.5. Second public service spike: ChatGPT
+
+A time-boxed spike (about a day, nothing kept) driving chatgpt.com through
+the published packages, to expose what one sample could not: bot / headless
+detection, a `contenteditable` composer, lazy login redirects, rate-limit and
+error banners, and whether the streaming DOM is appended or replaced. Output
+is a findings note plus issues for any runtime gaps; no provider is kept.
+Runs before 3b so the streaming design rests on two observed services.
+
+### 3b. Streaming display
+
+Streaming response capture in the Provider contract and incremental display
+in the TUI. Also deferred here: Markdown rendering, cross-process conversation
+resume (chat handle), history persistence, and detecting auth expiry
+mid-conversation. Shaped by the DOM observations from milestones 4 and 4.5, so it
+follows them in execution order.
 
 ### 5. Company adoption
 
