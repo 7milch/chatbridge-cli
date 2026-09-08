@@ -9,6 +9,7 @@ import {
   AuthRequiredError,
   BlockedError,
   InvalidStateError,
+  ResponseTimeoutError,
 } from "./errors.js";
 import { runStep } from "./run-step.js";
 
@@ -117,8 +118,31 @@ export class ChatSession {
       return await runStep("waitForResponse", this.timeoutMs, () =>
         this.provider.waitForResponse(this.rt.page),
       );
+    } catch (err) {
+      if (err instanceof ResponseTimeoutError) await this.diagnoseTimeout();
+      throw err;
     } finally {
       this.pending = false;
+    }
+  }
+
+  /** A timeout may really be a lost login. Throws AuthExpiredError or
+   * BlockedError when the page is no longer logged in; returns when it
+   * still is, or when the check itself fails (the caller then rethrows the
+   * original timeout, which stays the primary failure). */
+  private async diagnoseTimeout(): Promise<void> {
+    try {
+      await ChatSession.assertLoggedIn(
+        this.provider,
+        this.rt.page,
+        this.timeoutMs,
+      );
+    } catch (err) {
+      if (err instanceof AuthExpiredError || err instanceof BlockedError) {
+        throw err;
+      }
+      // Anything else (page gone, a second timeout): swallow; the caller
+      // rethrows the original ResponseTimeoutError.
     }
   }
 

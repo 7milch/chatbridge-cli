@@ -7,6 +7,7 @@ import {
   AuthRequiredError,
   BlockedError,
   InvalidStateError,
+  ResponseTimeoutError,
 } from "./errors.js";
 
 /** Deferred promise so a test can decide when waitForResponse resolves. */
@@ -225,6 +226,79 @@ describe("ChatSession.send", () => {
     const second = session.send("two");
     (await replyOf(h, 1)).resolve("Echo: two");
     expect(await second).toBe("Echo: two");
+    await session.close();
+  });
+});
+
+describe("ChatSession.send timeout diagnosis", () => {
+  const timeout = () =>
+    new ResponseTimeoutError("Timed out during waitForResponse after 1000 ms.");
+
+  test("rethrows the timeout and stays usable while still logged in", async () => {
+    const h = harness();
+    const session = await ChatSession.open(opts(h));
+    const first = session.send("one");
+    (await replyOf(h, 0)).reject(timeout());
+    await expect(first).rejects.toBeInstanceOf(ResponseTimeoutError);
+    const second = session.send("two");
+    (await replyOf(h, 1)).resolve("Echo: two");
+    expect(await second).toBe("Echo: two");
+    await session.close();
+  });
+
+  test("turns the timeout into AuthExpiredError when the page is logged out", async () => {
+    const h = harness();
+    const session = await ChatSession.open(opts(h));
+    const first = session.send("one");
+    h.loggedIn = false;
+    (await replyOf(h, 0)).reject(timeout());
+    await expect(first).rejects.toBeInstanceOf(AuthExpiredError);
+    await session.close();
+  });
+
+  test("turns the timeout into BlockedError when detectBlock reports a block", async () => {
+    const h = harness();
+    h.hasDetectBlock = true;
+    const session = await ChatSession.open(opts(h));
+    const first = session.send("one");
+    h.loggedIn = false;
+    h.block = "challenge page";
+    (await replyOf(h, 0)).reject(timeout());
+    const err = await first.catch((e) => e);
+    expect(err).toBeInstanceOf(BlockedError);
+    expect(err.message).toBe(
+      'Blocked by "fake": challenge page. Try --headful.',
+    );
+    await session.close();
+  });
+
+  test("keeps the original timeout when the diagnosis itself fails", async () => {
+    const h = harness();
+    const session = await ChatSession.open(opts(h));
+    const first = session.send("one");
+    h.provider.isLoggedIn = async () => {
+      throw new Error("page closed");
+    };
+    const original = timeout();
+    (await replyOf(h, 0)).reject(original);
+    const err = await first.catch((e) => e);
+    expect(err).toBe(original);
+    // close() still runs isLoggedIn; let it fail softly.
+    await session.close();
+  });
+
+  test("a non-timeout error is not diagnosed", async () => {
+    const h = harness();
+    let checks = 0;
+    const session = await ChatSession.open(opts(h));
+    h.provider.isLoggedIn = async () => {
+      checks++;
+      return true;
+    };
+    const first = session.send("one");
+    (await replyOf(h, 0)).reject(new Error("boom"));
+    await expect(first).rejects.toThrow("boom");
+    expect(checks).toBe(0);
     await session.close();
   });
 });
