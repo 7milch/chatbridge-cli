@@ -48,7 +48,7 @@ in the TUI. Also deferred here: Markdown rendering, cross-process conversation
 resume (chat handle), history persistence, and detecting auth expiry
 mid-conversation. Shaped after milestone 4 exposes a real service's DOM.
 
-### 4. Rakuten AI provider (private repo) — in progress (issue #11)
+### 4. Rakuten AI provider (private repo) — done (issue #11, PR #12, v0.2.0, 2026-09-08)
 
 A local-only repo `chatbridge-rakuten-ai` builds a `rakuten-ai` CLI on the
 published packages. Findings from the real service flow back into the shared
