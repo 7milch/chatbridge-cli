@@ -23,6 +23,12 @@ export interface Provider {
    * return the response to the most recent `sendMessage` only, never an
    * earlier turn's. */
   waitForResponse(page: Page): Promise<string>;
+  /** Optional. When the page shows a block that logging in again would not
+   * clear (a bot challenge interstitial, an IdP refusing the automated
+   * browser), return a short description of it; otherwise undefined. The
+   * core calls this only after `isLoggedIn` returned false. Must not throw
+   * on an ordinary logged-out page. */
+  detectBlock?(page: Page): Promise<string | undefined>;
 }
 
 /** Identity helper: gives provider authors type inference and a future
