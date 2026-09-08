@@ -58,4 +58,50 @@ describe("BrowserRuntime (headless Chromium on Bun)", () => {
     const reply = await provider.waitForResponse(rt2.page);
     expect(reply).toBe("Echo: hello");
   }, 60_000);
+
+  test("saved auth state includes IndexedDB databases", async () => {
+    const server = await startDummyChat(0);
+    cleanups.push(server.stop);
+    const provider = createDummyProvider(server.url);
+    const store = tempStore(provider.name);
+
+    const rt = await BrowserRuntime.launch({
+      headless: true,
+      provider,
+      authStore: store,
+    });
+    cleanups.push(() => rt.close());
+    await provider.navigateToLogin(rt.page);
+
+    // Some services keep their session in IndexedDB, not cookies/localStorage.
+    await rt.page.evaluate(async () => {
+      await new Promise<void>((resolve, reject) => {
+        const req = indexedDB.open("test-db", 1);
+        req.onupgradeneeded = () => {
+          req.result.createObjectStore("kv", { keyPath: "id" });
+        };
+        req.onerror = () => reject(req.error);
+        req.onsuccess = () => {
+          const db = req.result;
+          const tx = db.transaction("kv", "readwrite");
+          tx.objectStore("kv").put({ id: "k", v: "v" });
+          tx.oncomplete = () => {
+            db.close();
+            resolve();
+          };
+          tx.onerror = () => reject(tx.error);
+        };
+      });
+    });
+
+    await rt.saveAuthState();
+
+    const state = (await store.load()) as {
+      origins: Array<{ indexedDB?: Array<{ name: string }> }>;
+    };
+    const names = state.origins.flatMap((o) =>
+      (o.indexedDB ?? []).map((db) => db.name),
+    );
+    expect(names).toContain("test-db");
+  }, 60_000);
 });

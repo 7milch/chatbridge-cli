@@ -16,6 +16,6 @@
   },
   "files": ["dist", "README.md", "LICENSE"],
   "publishConfig": { "access": "public" },
-  "peerDependencies": { "playwright-core": ">=1.48 <2" },
+  "peerDependencies": { "playwright-core": ">=1.51 <2" },
   "devDependencies": { "playwright-core": "1.63.0" }
 }
