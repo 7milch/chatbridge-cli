@@ -58,7 +58,10 @@ exactly one element on the observation date.
    Playwright) with the user logging in by hand. Record every item in
    `docs/dom-notes.md` before writing a selector. Prefer `data-*`, ARIA
    roles and labels; class names from CSS-in-JS are not stable. Note whether
-   labels are localized.
+   labels are localized. Discover in the **logged-in** app: a guest page can
+   be a different DOM (ChatGPT serves a separate shell to guests). Playwright
+   MCP is headless and cannot take a human login; when the service blocks
+   headless, discover through the derived CLI's `auth login` window instead.
 3. **Fill selectors and the provider**, add the non-empty assertion, `--help`
    must print without `--provider`.
 4. **Verify by hand**: `auth login` → `-p "Reply with the single word: ping"`
@@ -73,10 +76,10 @@ exactly one element on the observation date.
 | Method | Must |
 |---|---|
 | `navigateToLogin` | `goto` the vendor's entry URL; the user completes login by hand. |
-| `isLoggedIn` | Called every second during `auth login` and once at startup. In order: (1) `page.url()` origin differs from `chatUrl`'s → return `false` without touching the DOM (the IdP page); (2) inside one `try`: wait, bounded to 10 s, for either the sign-in control or the account control to be visible; (3) return account control present AND sign-in control absent; (4) `catch` → `false`. |
+| `isLoggedIn` | Called every second during `auth login` and once at startup. In order: (1) `page.url()` origin differs from `chatUrl`'s → return `false` without touching the DOM (the IdP page); (2) inside one `try`: wait, bounded to 10 s, for either the sign-in control or the account control to be visible; (3) return account control present AND sign-in control absent; (4) `catch` → `false`. Every locator in the `.or()` must match only visible elements: `.first()` picks DOM order, and a hidden match (ChatGPT keeps a hidden `<textarea>`) makes the wait time out on every poll. |
 | `startNewChat` | Navigate or click, then wait for the composer visible and empty. |
-| `sendMessage` | Record the assistant-message count (module-level `WeakMap<Page, number>`), fill, submit, then wait briefly for the "generating" state to begin (ignore timeout). |
-| `waitForResponse` | Wait for the count to exceed the recorded one, wait for the done signal, then read the newest message with `innerText` until two reads 500 ms apart agree. Never return an earlier turn. |
+| `sendMessage` | Record the assistant-message count (module-level `WeakMap<Page, number>`), fill (`fill()` works on `contenteditable` composers too), submit, then wait briefly for the "generating" state to begin (ignore timeout). |
+| `waitForResponse` | Wait for the done signal, then for the count to exceed the recorded one, then read the newest message with `innerText` until two reads 500 ms apart agree. Never return an earlier turn. Done signal first: some services insert a placeholder turn that is removed before the real one. |
 
 ## Traps seen in the wild
 
@@ -87,4 +90,7 @@ exactly one element on the observation date.
 | Saved state dies about an hour after login | Token rotation, state never re-saved | Framework ≥ 0.2.2 re-saves on close; keep versions current |
 | CLI ignores a framework fix | Nested older `@chatbridge/*` copy under `node_modules` | Flat install (see Rules) |
 | Partial answer returned | Done signal fired before the new turn existed | Count-before + stability read (see contract) |
-| No "generating" element | Send button swapped for a stop button | Done = send button visible again |
+| No "generating" element | Send button swapped for a stop button | Done = stop button gone. Do not wait for the send button to return: ChatGPT renders it only while the composer is non-empty |
+| `waitForResponse` returns "…" or an ellipsis | A placeholder assistant element (ChatGPT: `data-message-id="request-…"`) appears, is removed ~2 s later, then the real one is inserted | Wait for the done signal before the count check; stability read |
+| Page title "Just a moment..." and `isLoggedIn` false; CLI says auth expired | Cloudflare challenge in headless Chromium (both headless modes) | Verify with `--headful`. Bot-protection evasion is out of scope (`CLAUDE.md`); record it and move on |
+| Google (or another IdP) refuses the automated browser even headful | IdP fingerprints the browser | Log in with email + password / emailed code; note it in `dom-notes.md` §Login |
