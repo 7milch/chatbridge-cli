@@ -72,7 +72,7 @@ Outcome: `docs/spike-notes/2026-09-08-chatgpt.md`. Headless is blocked by
 Cloudflare and evasion was ruled out of scope; headful one-shot worked
 unchanged; both observed services append the streaming DOM in place.
 
-### 3b. Timeout diagnosis, block detection, activity indicator — in progress (issue #25)
+### 3b. Timeout diagnosis, block detection, activity indicator — done (issue #25, 2026-09-08)
 
 Closes the gaps milestones 4 and 4.5 exposed without changing response
 capture: a response timeout mid-conversation is diagnosed (`isLoggedIn`
