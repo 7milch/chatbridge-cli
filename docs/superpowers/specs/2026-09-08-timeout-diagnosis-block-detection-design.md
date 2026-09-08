@@ -54,10 +54,12 @@ The five existing methods are unchanged. `defineProvider` accepts the new
 member with no runtime change.
 
 The dummy chat gains a way to serve a block page so the path is covered by
-E2E: `POST /admin/block` toggles a flag; while set, `/chat` responds with a
-page titled `Just a moment...` that has no `#message-input`. The dummy
-provider's `detectBlock` returns `"challenge page"` when `document.title`
-is that string.
+E2E: an in-process hook `setBlocked(boolean)` (next to the existing
+`invalidateSessions` / `setReplyDelayMs` hooks); while set, `/chat`
+responds with a page titled `Just a moment...` that has no
+`#message-input`, regardless of session. The dummy provider's
+`detectBlock` returns `"challenge page"` when `document.title` is that
+string.
 
 ## 2. Core
 
