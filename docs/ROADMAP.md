@@ -72,7 +72,7 @@ Outcome: `docs/spike-notes/2026-09-08-chatgpt.md`. Headless is blocked by
 Cloudflare and evasion was ruled out of scope; headful one-shot worked
 unchanged; both observed services append the streaming DOM in place.
 
-### 3b. Streaming display
+### 3b. Streaming display — in progress (issue #25)
 
 Streaming response capture in the Provider contract and incremental display
 in the TUI. Also deferred here: Markdown rendering, cross-process conversation
