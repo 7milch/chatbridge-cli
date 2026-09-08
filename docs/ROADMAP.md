@@ -52,7 +52,7 @@ appends to one element; completion is signalled by the send button returning).
 Follow-ups shipped in 0.2.1–0.2.2: the auth state is re-saved when a session
 closes (services rotate tokens), and release checks catch a stale `bun.lock`.
 
-### 4.4. Skill: scaffold a vendor provider repo — in progress (issue #20)
+### 4.4. Skill: scaffold a vendor provider repo — done (issue #20, 2026-09-08)
 
 A repo skill (`creating-provider-repo`) that captures the milestone 4
 procedure for standing up a separate vendor repo with one Provider and a
