@@ -82,8 +82,12 @@ chat.
   Shift+Enter needs a terminal that speaks the kitty keyboard protocol
   (iTerm2, kitty, WezTerm, Ghostty), Ctrl+J works everywhere. **Ctrl+C**
   quits.
+- While a reply is pending the status line shows an activity indicator
+  with the elapsed time against the `--timeout` budget, e.g.
+  `○●○ Thinking…  12s / 120s`.
 - A response timeout is shown in the history and you can keep chatting.
-  Any other failure closes the chat with exit code 1.
+  If the timeout turns out to be a lost login or a block, the chat closes
+  with exit code 3 or 6; any other failure closes it with exit code 1.
 - Interactive mode needs **Bun >= 1.3 or Node >= 26.4** (the TUI library's
   requirement). One-shot mode and `auth` keep working on Node >= 20.
 - A terminal is required; in pipes and scripts use `-p`.

@@ -37,6 +37,7 @@ async function setup(
   const view = new ChatView(t.renderer, model, {
     title: "test-cli",
     providerName: "dummy-chat",
+    timeoutMs: 2_000,
   });
   teardown = () => {
     view.destroy();
@@ -70,7 +71,7 @@ describe("ChatView", () => {
     t.mockInput.pressEnter();
     await t.renderOnce();
     expect(t.model.messages[0]).toEqual({ role: "user", text: "hello" });
-    const busy = await t.frameWith("Waiting for response...");
+    const busy = await t.frameWith("Thinking…");
     expect(busy).toContain("You");
     expect(busy).not.toContain(GUIDE);
     const done = await t.frameWith("Echo: hello");
@@ -113,7 +114,7 @@ describe("ChatView", () => {
     const t = await setup({ delayMs: 300 });
     await t.mockInput.typeText("first");
     t.mockInput.pressEnter();
-    await t.frameWith("Waiting for response...");
+    await t.frameWith("Thinking…");
     await t.mockInput.typeText("second");
     t.mockInput.pressEnter();
     await t.renderOnce();
@@ -133,6 +134,7 @@ describe("ChatView", () => {
     const view = new ChatView(t.renderer, model, {
       title: "test-cli",
       providerName: "dummy-chat",
+      timeoutMs: 2_000,
     });
     teardown = () => {
       view.destroy();
@@ -207,5 +209,31 @@ describe("ChatView", () => {
     const frame = t.captureCharFrame();
     expect(frame).toContain("Echo: msg 11");
     expect(frame).not.toContain("Echo: msg 0 ");
+  });
+
+  test("shows elapsed time against the timeout budget while busy", async () => {
+    const t = await setup({ delayMs: 400 });
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    const busy = await t.frameWith("Thinking…");
+    expect(busy).toMatch(/[●○]{3} Thinking… {2}\ds \/ 2s/);
+    await t.frameWith("Echo: hello");
+    expect(t.captureCharFrame()).toContain(GUIDE);
+  });
+
+  test("the indicator animates", async () => {
+    const t = await setup({ delayMs: 600 });
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    const first = (await t.frameWith("Thinking…")).match(/[●○]{3}/)?.[0];
+    const seen = new Set<string>([first ?? ""]);
+    for (let i = 0; i < 10 && seen.size < 2; i++) {
+      await sleep(60);
+      await t.renderOnce();
+      const frame = t.captureCharFrame().match(/[●○]{3}/)?.[0];
+      if (frame) seen.add(frame);
+    }
+    expect(seen.size).toBeGreaterThanOrEqual(2);
+    await t.frameWith("Echo: hello");
   });
 });

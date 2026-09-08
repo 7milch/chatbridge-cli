@@ -46,6 +46,7 @@ describe("waitForQuit", () => {
     const view = new ChatView(t.renderer, model, {
       title: "test-cli",
       providerName: "dummy-chat",
+      timeoutMs: 1_000,
     });
     const quit = waitForQuit(t.renderer, model);
     view.destroy();

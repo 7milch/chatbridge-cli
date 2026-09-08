@@ -9,8 +9,9 @@ import type { ChatModel, Message, Role } from "./chat-model.js";
 
 export const GUIDE =
   "Enter send · Shift+Enter (or Ctrl+J) newline · Ctrl+C quit";
-const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const SPINNER_INTERVAL_MS = 80;
+/** Three fixed cells so legacy terminals keep the line aligned. */
+const FRAMES = ["●○○", "○●○", "○○●", "○●○"];
+const FRAME_INTERVAL_MS = 120;
 const LABELS: Record<Role, string> = {
   user: "You",
   assistant: "Assistant",
@@ -20,10 +21,14 @@ const LABELS: Record<Role, string> = {
 export interface ChatViewOptions {
   title: string;
   providerName: string;
+  /** Response timeout budget shown next to the elapsed time. */
+  timeoutMs: number;
 }
 
 /** Builds the OpenTUI tree for one ChatModel and mirrors its state.
- * Layout: header / scrolling history / 4-line textarea / status line. */
+ * Layout: header / scrolling history / 4-line textarea / status line.
+ * Status line while busy: activity indicator with elapsed time against the
+ * timeout budget. */
 export class ChatView {
   private readonly history: ScrollBoxRenderable;
   private readonly input: TextareaRenderable;
@@ -31,6 +36,8 @@ export class ChatView {
   private rendered = 0;
   private spinner: ReturnType<typeof setInterval> | undefined;
   private frame = 0;
+  private readonly budgetSec: number;
+  private startedAt = 0;
   private destroyed = false;
   private statusPinned = false;
 
@@ -39,6 +46,7 @@ export class ChatView {
     private readonly model: ChatModel,
     opts: ChatViewOptions,
   ) {
+    this.budgetSec = Math.round(opts.timeoutMs / 1000);
     const root = new BoxRenderable(renderer, {
       id: "root",
       flexDirection: "column",
@@ -162,12 +170,14 @@ export class ChatView {
 
   private startSpinner(): void {
     if (this.spinner) return;
+    this.startedAt = Date.now();
     const tick = () => {
-      this.frame = (this.frame + 1) % SPINNER.length;
-      this.status.content = `${SPINNER[this.frame]} Waiting for response...`;
+      this.frame = (this.frame + 1) % FRAMES.length;
+      const elapsed = Math.floor((Date.now() - this.startedAt) / 1000);
+      this.status.content = `${FRAMES[this.frame]} Thinking…  ${elapsed}s / ${this.budgetSec}s`;
     };
     tick();
-    this.spinner = setInterval(tick, SPINNER_INTERVAL_MS);
+    this.spinner = setInterval(tick, FRAME_INTERVAL_MS);
   }
 
   private stopSpinner(): void {
