@@ -72,18 +72,39 @@ Outcome: `docs/spike-notes/2026-09-08-chatgpt.md`. Headless is blocked by
 Cloudflare and evasion was ruled out of scope; headful one-shot worked
 unchanged; both observed services append the streaming DOM in place.
 
-### 3b. Streaming display — in progress (issue #25)
+### 3b. Timeout diagnosis, block detection, activity indicator — in progress (issue #25)
 
-Streaming response capture in the Provider contract and incremental display
-in the TUI. Also deferred here: Markdown rendering, cross-process conversation
-resume (chat handle), history persistence, and detecting auth expiry
-mid-conversation. Shaped by the DOM observations from milestones 4 and 4.5, so it
-follows them in execution order.
+Closes the gaps milestones 4 and 4.5 exposed without changing response
+capture: a response timeout mid-conversation is diagnosed (`isLoggedIn`
+after the timeout → `AuthExpiredError`), a provider can report a bot
+challenge or IdP refusal as "blocked, not logged out" through an optional
+`detectBlock` (#23; `BlockedError`, exit 6, suggests `--headful`), and the
+TUI shows elapsed time against the timeout budget while a turn is pending.
+Streaming display was rescoped to the backlog: both observed services
+already work with the completion-based contract, and incremental display
+is a UX feature rather than a provider need.
+Spec: `docs/superpowers/specs/2026-09-08-timeout-diagnosis-block-detection-design.md`.
 
 ### 5. Company adoption
 
 Company repository builds `company-ai-cli` via `createCli({ name, provider, configDir })`
 on top of the published packages. Nothing company-specific lands in this repo.
+
+## Backlog
+
+Not scheduled. Each item becomes a milestone when picked up.
+
+- **Streaming display.** Both observed services grow one assistant element
+  in place, so streaming can be a generic poll in the core over two
+  provider knobs (`streaming.responseText(page)` and
+  `streaming.isComplete(page)`), with `ChatSession.send(prompt, { onDelta })`
+  emitting deltas and still taking the final text from `waitForResponse`;
+  one-shot stays batch. Full sketch in the 3b spec's backlog note.
+- **Markdown rendering in the TUI history.** Wanted; needs an OpenTUI
+  rendering approach for code blocks and lists.
+- **Cross-process conversation resume (chat handle).** Provider would expose
+  the service's conversation id; the CLI would reopen it.
+- **History persistence.** Save the interactive transcript to disk.
 
 ## Standing design rules
 
