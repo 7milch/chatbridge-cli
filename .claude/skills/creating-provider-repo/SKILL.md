@@ -34,7 +34,7 @@ package.json          bin: { "<vendor>": "./dist/bin.js" }; deps as in Rules
 .gitignore            node_modules/, dist/, *.tsbuildinfo, *.log, storage-state*.json, .auth/, .superpowers/
 src/selectors.ts      every URL and selector as a named constant; each cites a docs/dom-notes.md section
 src/provider.ts       defineProvider({ name, chatUrl, five methods }); default export
-src/bin.ts            process.exitCode = await createCli({ name, provider }).run(process.argv)
+src/bin.ts            process.exitCode = await createCli({ name, version, provider, banner? }).run(process.argv) — see Derived CLI identity
 src/selectors.test.ts smoke: every export is a non-empty string
 src/provider.test.ts  smoke: shape (name, https chatUrl on the vendor host, five functions)
 src/provider.e2e.test.ts  real service; skipped unless <NAME>_E2E=1 and the auth store has a file
@@ -45,6 +45,37 @@ README.md, CLAUDE.md  English; usage, gated E2E, manual checklist
 Copy `tsconfig.json` from `chatbridge-cli/packages/cli` (drop `composite`
 and `references`) and `biome.json` from the `chatbridge-cli` root.
 No CI workflow: real-service tests need a human login.
+
+## Derived CLI identity (`@chatbridge/cli` ≥ 0.4.0)
+
+```ts
+// src/bin.ts
+import { createRequire } from "node:module";
+import { createCli } from "@chatbridge/cli";
+import provider from "./provider.js";
+
+// Read the vendor package's own version; "../package.json" resolves from
+// both src/ (bun) and dist/ (node), which sit one level under it.
+const { version } = createRequire(import.meta.url)("../package.json") as {
+  version: string;
+};
+
+process.exitCode = await createCli({
+  name: "<vendor>",
+  version, // `<vendor> --version` / `-V` prints "<vendor> vX.Y.Z"; also the default banner
+  provider,
+  // Optional `string[]`. Interactive-mode startup banner, one string per
+  // row, any row count, shown centred until the first message, all rows
+  // dim; rows wider than the terminal are cut on the right. Used verbatim:
+  // no placeholders, no colours. Omit for the default (name, version, hint).
+  banner: ["<Vendor> internal assistant", "Conversations are not stored by this CLI."],
+}).run(process.argv);
+```
+
+`version` and `banner` are the only vendor-facing TUI knobs; colours and
+layout are fixed by the framework.
+
+## DOM notes
 
 Before discovery, each `dom-notes.md` section holds one line:
 `Not yet observed.` A section is done when it names a locator that matched
@@ -64,9 +95,10 @@ exactly one element on the observation date.
    headless, discover through the derived CLI's `auth login` window instead.
 3. **Fill selectors and the provider**, add the non-empty assertion, `--help`
    must print without `--provider`.
-4. **Verify by hand**: `auth login` → `-p "Reply with the single word: ping"`
-   → gated E2E (two turns, second answer differs) → interactive mode →
-   `auth logout` / `auth status`.
+4. **Verify by hand**: `--version` prints the package version → `auth login`
+   → `-p "Reply with the single word: ping"` → gated E2E (two turns, second
+   answer differs) → interactive mode (banner shows until the first message)
+   → `auth logout` / `auth status`.
 5. **Feed gaps back**: anything the provider cannot solve (browser launch,
    auth-state contents, session lifecycle) is a `chatbridge-cli` issue, fixed
    there, released, then the version is bumped here.
