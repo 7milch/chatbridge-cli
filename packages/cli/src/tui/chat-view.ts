@@ -48,10 +48,9 @@ interface KeypressSource {
 }
 
 /** Builds the OpenTUI tree for one ChatModel and mirrors its state.
- * Layout: header / scrolling history / hairline-ruled textarea that grows
- * from one row to MAX_INPUT_ROWS / status line, plus
- * a mention popup drawn over the bottom of the history while the cursor is
- * inside an `@` mention. */
+ * Layout, top to bottom: badge header / banner-or-history / hairline input
+ * (1–5 rows) / inline mention popup (hidden unless the cursor is in an `@`
+ * mention) / status line. */
 export class ChatView {
   private readonly body: BoxRenderable;
   private readonly banner: BoxRenderable;
@@ -193,7 +192,7 @@ export class ChatView {
       // empty by then; put the text back so the user can fix it.
       void this.model.submit(text).then((accepted) => {
         // Trade-off: anything typed during expansion wins over the refill.
-        if (!accepted && !this.destroyed && !this.input.plainText) {
+        if (!accepted && !this.torn && !this.input.plainText) {
           this.input.insertText(text);
           this.fitInput();
         }
@@ -215,11 +214,18 @@ export class ChatView {
     this.update();
   }
 
+  /** True once this view — or the renderer under it — is gone. OpenTUI
+   * destroys the renderer on SIGINT without telling the view, so a write
+   * after that would throw from the native text buffer. */
+  private get torn(): boolean {
+    return this.destroyed || this.renderer.isDestroyed;
+  }
+
   /** Appends messages not yet drawn and syncs the status line. */
   update(): void {
     // A turn still in flight when the view is destroyed would otherwise
     // write to renderables the renderer has already torn down.
-    if (this.destroyed) return;
+    if (this.torn) return;
     if (this.bannerShown && this.model.messages.length > 0) {
       this.bannerShown = false;
       this.body.remove(this.banner);
@@ -241,7 +247,7 @@ export class ChatView {
   /** Pins a message on the status line (e.g. "Closing browser...") so the
    * user sees that teardown started. Later model changes leave it alone. */
   setStatus(text: string): void {
-    if (this.destroyed) return;
+    if (this.torn) return;
     this.statusPinned = true;
     this.stopSpinner();
     this.status.content = text;
@@ -264,7 +270,7 @@ export class ChatView {
    * never reach the textarea. Everything else falls through and the
    * content/cursor hooks re-run the search. */
   private handlePopupKey(key: KeyEvent): void {
-    if (this.destroyed || !this.popup.visible) return;
+    if (this.torn || !this.popup.visible) return;
     switch (key.name) {
       case "up":
         this.popup.move(-1);
@@ -298,7 +304,7 @@ export class ChatView {
 
   /** Reads the textarea and shows or hides the popup accordingly. */
   private refreshPopup(): void {
-    if (this.destroyed) return;
+    if (this.torn) return;
     const mention = mentionAtCursor(
       this.input.plainText,
       this.input.cursorOffset,

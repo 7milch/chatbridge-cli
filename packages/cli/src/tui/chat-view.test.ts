@@ -6,6 +6,7 @@ import { FileIndex } from "../mentions/file-index.js";
 import { resolveBanner } from "./banner.js";
 import { ChatModel, type ChatSessionLike } from "./chat-model.js";
 import { ChatView, GUIDE, MAX_INPUT_ROWS } from "./chat-view.js";
+import { POPUP_HINT } from "./mention-popup.js";
 import { styled, theme } from "./theme.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -295,6 +296,17 @@ describe("ChatView", () => {
     const frame = t.captureCharFrame();
     expect(frame).toContain("README.md");
     expect(frame).toContain("src/chat-view.ts");
+  });
+
+  test("the popup sits between the input and the status row", async () => {
+    const t = await setup({ paths: ["src/a.ts"] });
+    await t.mockInput.typeText("@");
+    await t.renderOnce();
+    const rows = t.captureCharFrame().split("\n");
+    const bottomRule = rows.map((r) => r.startsWith("─")).lastIndexOf(true);
+    expect(rows[bottomRule + 1]).toContain("src/a.ts");
+    expect(rows[bottomRule + 2]).toContain(POPUP_HINT);
+    expect(rows[bottomRule + 3]).toContain(GUIDE);
   });
 
   test("the query after @ filters the candidates", async () => {
