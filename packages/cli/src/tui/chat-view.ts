@@ -111,20 +111,19 @@ export class ChatView {
     inputBox.add(this.input);
     root.add(inputBox);
 
+    // Inline: the popup occupies the rows between the input and the status.
+    this.popup = new MentionPopup(renderer, root);
+
     this.status = new TextRenderable(renderer, {
       id: "status",
       content: GUIDE,
       // Fixed: a guide longer than the terminal must not wrap and push the
-      // input box off the bottom (the popup is positioned against it).
+      // input box off the bottom.
       height: STATUS_HEIGHT,
       flexShrink: 0,
     });
     root.add(this.status);
     renderer.root.add(root);
-
-    this.popup = new MentionPopup(renderer, root, {
-      bottom: INPUT_BOX_HEIGHT + STATUS_HEIGHT,
-    });
 
     this.input.onSubmit = () => {
       const text = this.input.plainText;
