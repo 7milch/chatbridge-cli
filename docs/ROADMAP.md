@@ -133,6 +133,17 @@ Not scheduled. Each item becomes a milestone when picked up.
   stays verbatim by default.
 - **Live re-scan of the mention index.** New files appear without a
   restart.
+- **Ctrl+R: reopen the browser from the TUI.** Brainstormed 2026-09-10.
+  Reset = close the browser and open a new one (auth state restored, new
+  chat, history cleared, banner shown again), not just `startNewChat`.
+  Fatal non-timeout errors stop exiting immediately: the model enters a
+  `dead` state, the status row says `Ctrl+R reopen · Ctrl+C quit`, and
+  Ctrl+C returns the last fatal error; `AuthExpiredError` / `BlockedError`
+  / `AuthRequiredError` still exit at once. Core stays unchanged:
+  `ChatModel` gets an `openSession` factory and a `reset()` that closes
+  the old session (5 s cap), clears the history, and opens a new one; a
+  send rejected by that close is swallowed. Ctrl+R works while a turn is
+  pending (the main use: a hung page).
 
 ## Standing design rules
 
