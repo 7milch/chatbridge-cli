@@ -19,7 +19,7 @@ export const GUIDE =
 /** Three fixed cells so legacy terminals keep the line aligned. */
 const FRAMES = ["●○○", "○●○", "○○●", "○●○"];
 const FRAME_INTERVAL_MS = 120;
-const LABELS: Record<Role, () => StyledText> = {
+const LABELS: Record<Exclude<Role, "separator">, () => StyledText> = {
   user: () => styled(theme.user("user")),
   assistant: () => styled(theme.assistant("assistant")),
   error: () => styled(theme.error("error")),
@@ -354,6 +354,14 @@ export class ChatView {
       flexDirection: "column",
       marginBottom: 1,
     });
+    if (message.role === "separator") {
+      box.add(
+        new TextRenderable(this.renderer, {
+          content: styled(theme.muted(`── ${message.text} ──`)),
+        }),
+      );
+      return box;
+    }
     box.add(
       new TextRenderable(this.renderer, { content: LABELS[message.role]() }),
     );

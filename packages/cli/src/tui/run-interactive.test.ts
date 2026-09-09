@@ -12,12 +12,20 @@ describe("waitForQuit", () => {
     // OpenTUI's own SIGINT/SIGTERM/SIGHUP handlers destroy the renderer
     // without exiting the process.
     const t = await createTestRenderer({ width: 40, height: 12 });
-    const model = new ChatModel({
-      async send() {
-        return "";
+    const model = new ChatModel(
+      {
+        async send() {
+          return "";
+        },
+        async close() {},
+        async kill() {},
       },
-      async close() {},
-    });
+      {
+        openSession: async () => {
+          throw new Error("not expected");
+        },
+      },
+    );
     const view = new ChatView(t.renderer, model, {
       title: "test-cli",
       providerName: "dummy-chat",

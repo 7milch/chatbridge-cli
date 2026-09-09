@@ -18,6 +18,7 @@ function echoSession(delayMs: number): ChatSessionLike {
       return `Echo: ${prompt}`;
     },
     async close() {},
+    async kill() {},
   };
 }
 
@@ -47,6 +48,9 @@ async function setup(
   const model = new ChatModel(
     opts.session ?? echoSession(opts.delayMs ?? 100),
     {
+      openSession: async () => {
+        throw new Error("not expected");
+      },
       expand:
         opts.expand ?? (async (text) => ({ prompt: text, attachments: [] })),
     },
@@ -175,12 +179,20 @@ describe("ChatView", () => {
 
   test("error messages are labelled error", async () => {
     const t = await createTestRenderer({ width: 60, height: 20 });
-    const model = new ChatModel({
-      async send() {
-        throw new Error("page closed");
+    const model = new ChatModel(
+      {
+        async send() {
+          throw new Error("page closed");
+        },
+        async close() {},
+        async kill() {},
       },
-      async close() {},
-    });
+      {
+        openSession: async () => {
+          throw new Error("not expected");
+        },
+      },
+    );
     const view = new ChatView(t.renderer, model, {
       title: "test-cli",
       providerName: "dummy-chat",
@@ -225,6 +237,7 @@ describe("ChatView", () => {
           throw new Error("page closed");
         },
         async close() {},
+        async kill() {},
       },
     });
     await t.mockInput.typeText("first");
@@ -401,6 +414,7 @@ describe("ChatView", () => {
           return "done";
         },
         async close() {},
+        async kill() {},
       },
       expand: async (text) => ({
         prompt: `${text}\n\n### a.ts\n\`\`\`ts\nx\n\`\`\``,

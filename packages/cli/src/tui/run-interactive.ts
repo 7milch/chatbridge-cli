@@ -89,7 +89,9 @@ export async function runInteractive(
   }
   let view: ChatView | undefined;
   try {
-    const model = new ChatModel(session);
+    const model = new ChatModel(session, {
+      openSession: () => ChatSession.open(opts),
+    });
     view = new ChatView(renderer, model, {
       title: opts.title,
       providerName: opts.provider.name,
