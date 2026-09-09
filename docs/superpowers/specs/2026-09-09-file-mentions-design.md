@@ -153,11 +153,15 @@ export interface ChatModelOptions {
 `submit(text)`:
 
 1. Trim; ignore blank / busy / fatal as today.
-2. `await expand(prompt)`. On `MentionError`, push
-   `{ role: "error", text: problems.join("\n") }`, call `onChange`, and
-   return **without** touching `status` or `fatal`. Nothing was sent.
-3. Push `{ role: "user", text: prompt, attachments }`, set `busy`, and
-   continue exactly as today with `session.send(expansion.prompt)`.
+2. Set `status` to `busy` (no `onChange` yet — nothing observable has
+   changed) so a second Enter during expansion is rejected by the guard
+   above, then `await expand(prompt)`. On `MentionError`: set `status`
+   back to `idle`, push `{ role: "error", text: problems.join("\n") }`,
+   call `onChange` once, and return `false`; `fatal` is untouched and
+   nothing was sent. On any other error: the same, plus `fatal` is set.
+3. Push `{ role: "user", text: prompt }` (with `attachments` when the
+   list is non-empty), call `onChange`, then `session.send(expansion.prompt)`
+   and continue exactly as today.
 
 `submit` returns `Promise<boolean>`: `true` when the message was accepted
 (so the view knows to clear the textarea), `false` otherwise.
