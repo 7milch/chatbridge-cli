@@ -29,7 +29,8 @@
   },
   "dependencies": {
     "@chatbridge/core": "workspace:*",
-    "@opentui/core": "0.5.10"
+    "@opentui/core": "0.5.10",
+    "ignore": "^7.0.9"
   },
   "devDependencies": {
     "@chatbridge/example-dummy-chat": "workspace:*"
