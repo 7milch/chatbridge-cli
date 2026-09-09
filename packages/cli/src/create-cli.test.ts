@@ -209,3 +209,42 @@ describe("CHATBRIDGE_DEBUG", () => {
     expect(stderrChunks.join("")).toContain("Caused by:");
   });
 });
+
+describe("--version", () => {
+  const logs: string[] = [];
+  const originalLog = console.log;
+  function captureLog() {
+    logs.length = 0;
+    console.log = ((...args: unknown[]) => {
+      logs.push(args.join(" "));
+    }) as typeof console.log;
+  }
+  afterEach(() => {
+    console.log = originalLog;
+  });
+
+  test("prints name and version and exits 0", async () => {
+    captureLog();
+    const cli = createCli({
+      name: "test-cli",
+      version: "1.2.3",
+      provider: stubProvider(),
+    });
+    expect(await cli.run(["bun", "cli", "--version"])).toBe(0);
+    expect(logs.join("\n")).toBe("test-cli v1.2.3");
+  });
+
+  test("-V without a version prints the name alone", async () => {
+    captureLog();
+    const cli = createCli({ name: "test-cli", provider: stubProvider() });
+    expect(await cli.run(["bun", "cli", "-V"])).toBe(0);
+    expect(logs.join("\n")).toBe("test-cli");
+  });
+
+  test("help lists --version", async () => {
+    captureLog();
+    const cli = createCli({ name: "test-cli", provider: stubProvider() });
+    await cli.run(["bun", "cli", "--help"]);
+    expect(logs.join("\n")).toContain("--version");
+  });
+});

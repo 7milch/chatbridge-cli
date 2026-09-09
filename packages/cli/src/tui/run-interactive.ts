@@ -11,6 +11,10 @@ import { ChatView } from "./chat-view.js";
 export interface InteractiveOptions extends ChatSessionOptions {
   /** Shown in the header, e.g. the CLI name. */
   title: string;
+  /** Shown in the default startup banner. */
+  version?: string;
+  /** Vendor startup banner; replaces the default when set. */
+  banner?: string[];
   /** Test-only: replaces createCliRenderer. */
   createRenderer?: () => Promise<CliRenderer>;
   /** Test-only: replaces the working-directory index. */
