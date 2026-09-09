@@ -166,9 +166,14 @@ export interface ChatModelOptions {
 
 - `ChatViewOptions` gains `index: FileIndex`.
 - `onSubmit`: when the popup is open, Enter is handled by the popup (see
-  below) and never reaches submit. Otherwise call `model.submit(text)` and
-  clear the textarea only when it resolves `true`. The current early clear
-  is removed.
+  below) and never reaches submit. Otherwise the view applies the same
+  synchronous guard as the model (blank text, busy, fatal) and drops the
+  submit; on accept it clears the textarea immediately and calls
+  `model.submit(text)`. When `submit` resolves `false` (a mention error)
+  the original text is put back, unless the user has already typed
+  something new. `submit` resolves only after the reply arrives, so
+  clearing on `true` would wipe input typed during the turn — that is why
+  the early clear stays.
 - After every keypress that reaches the textarea, read `plainText` and the
   cursor; if `mentionAtCursor` finds a mention, `index.search(path, 8)` and
   show the popup; otherwise hide it.
@@ -253,3 +258,11 @@ Same two layers as milestone 3a; no new E2E.
 - Highlighting matched characters in the popup and the popup's visual
   design are revisited in the TUI redesign milestone.
 - Re-scanning the index while running (new files appear without restart).
+- Hand-typed symlink paths are followed by `expandMentions`; only the
+  index refuses symlinks. A `realpath` check against cwd is a possible
+  hardening.
+- `.gitignore` negation (`!keep.log`) in a nested file cannot re-include a
+  file ignored by a parent scope. Evaluating scopes innermost-first would
+  fix it if this matters.
+- The index walk could start before `ChatSession.open` and be awaited
+  after, so it overlaps the browser launch.

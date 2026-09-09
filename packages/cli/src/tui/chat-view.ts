@@ -141,6 +141,7 @@ export class ChatView {
       // A mention problem is only known after expansion, and the box is
       // empty by then; put the text back so the user can fix it.
       void this.model.submit(text).then((accepted) => {
+        // Trade-off: anything typed during expansion wins over the refill.
         if (!accepted && !this.destroyed && !this.input.plainText) {
           this.input.insertText(text);
         }

@@ -85,7 +85,9 @@ chat.
 - Type **`@`** to attach a file from the directory you started `chatbridge`
   in. A popup lists fuzzy matches (`.gitignore`d files, `.git`, and
   `node_modules` are left out); **↑/↓** select, **Tab** or **Enter** insert
-  `@path `, **Esc** closes. On send, each mentioned file is appended to
+  `@path `, **Esc** closes. A path you type by hand still attaches even
+  when the popup does not list it (a `.gitignore`d file, for example).
+  On send, each mentioned file is appended to
   the prompt as a fenced code block under a `### path` heading, and the
   history shows `📎 path (size)` for each one. Limits: 200 KB per file,
   1 MB per message, text files only, paths inside the working directory.
