@@ -1,6 +1,6 @@
 {
   "name": "@chatbridge/cli",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Drive browser-only web chat AI services from the command line",
   "license": "MIT",
   "repository": {
