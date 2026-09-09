@@ -5,12 +5,17 @@ import {
   createCliRenderer,
 } from "@opentui/core";
 import { FileIndex } from "../mentions/file-index.js";
+import { resolveBanner } from "./banner.js";
 import { ChatModel } from "./chat-model.js";
 import { ChatView } from "./chat-view.js";
 
 export interface InteractiveOptions extends ChatSessionOptions {
   /** Shown in the header, e.g. the CLI name. */
   title: string;
+  /** Shown in the default startup banner. */
+  version?: string;
+  /** Vendor startup banner; replaces the default when set. */
+  banner?: string[];
   /** Test-only: replaces createCliRenderer. */
   createRenderer?: () => Promise<CliRenderer>;
   /** Test-only: replaces the working-directory index. */
@@ -93,6 +98,13 @@ export async function runInteractive(
       title: opts.title,
       providerName: opts.provider.name,
       timeoutMs: opts.timeoutMs,
+      headless: opts.headless,
+      banner: resolveBanner({
+        name: opts.title,
+        version: opts.version,
+        providerName: opts.provider.name,
+        banner: opts.banner,
+      }),
       index,
     });
     const quit = waitForQuit(renderer, model);

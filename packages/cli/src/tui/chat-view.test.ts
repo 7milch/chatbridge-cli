@@ -1,9 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { StyledText } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { type Expansion, MentionError } from "../mentions/expand-mentions.js";
 import { FileIndex } from "../mentions/file-index.js";
+import { resolveBanner } from "./banner.js";
 import { ChatModel, type ChatSessionLike } from "./chat-model.js";
-import { ChatView, GUIDE } from "./chat-view.js";
+import { ChatView, GUIDE, MAX_INPUT_ROWS } from "./chat-view.js";
+import { POPUP_HINT } from "./mention-popup.js";
+import { styled, theme } from "./theme.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -30,10 +34,13 @@ async function setup(
     session?: ChatSessionLike;
     paths?: string[];
     expand?: (text: string) => Promise<Expansion>;
+    headless?: boolean;
+    banner?: StyledText[];
+    width?: number;
   } = {},
 ) {
   const t = await createTestRenderer({
-    width: 80,
+    width: opts.width ?? 80,
     height: 20,
     kittyKeyboard: opts.kittyKeyboard ?? false,
   });
@@ -48,6 +55,14 @@ async function setup(
     title: "test-cli",
     providerName: "dummy-chat",
     timeoutMs: 2_000,
+    headless: opts.headless ?? true,
+    banner:
+      opts.banner ??
+      resolveBanner({
+        name: "test-cli",
+        version: "0.0.1",
+        providerName: "dummy-chat",
+      }),
     index: FileIndex.fromPaths(
       opts.paths ?? ["src/chat-view.ts", "src/chat-model.ts", "README.md"],
     ),
@@ -86,24 +101,31 @@ async function setup(
 }
 
 describe("ChatView", () => {
-  test("shows the header and the guide when idle", async () => {
+  test("shows the badge header and the guide when idle", async () => {
     const t = await setup();
     const frame = t.captureCharFrame();
-    expect(frame).toContain("test-cli · dummy-chat");
+    expect(frame.split("\n")[0]).toBe(
+      " test-cli  dummy-chat · headless · 2s budget".padEnd(80),
+    );
     expect(frame).toContain(GUIDE);
+  });
+
+  test("header says headful when not headless", async () => {
+    const t = await setup({ headless: false });
+    expect(t.captureCharFrame()).toContain("dummy-chat · headful · 2s budget");
   });
 
   test("Enter submits, clears the box, shows spinner, then the reply", async () => {
     const t = await setup({ delayMs: 300 });
     await t.mockInput.typeText("hello");
     t.mockInput.pressEnter();
-    await t.frameWith("You");
+    await t.frameWith("user");
     expect(t.model.messages[0]).toEqual({ role: "user", text: "hello" });
     const busy = await t.frameWith("Thinking…");
-    expect(busy).toContain("You");
+    expect(busy).toContain("user");
     expect(busy).not.toContain(GUIDE);
     const done = await t.frameWith("Echo: hello");
-    expect(done).toContain("Assistant");
+    expect(done).toContain("assistant");
     expect(done).toContain(GUIDE);
   });
 
@@ -113,7 +135,7 @@ describe("ChatView", () => {
     t.mockInput.pressEnter({ shift: true });
     await t.mockInput.typeText("two");
     t.mockInput.pressEnter();
-    await t.frameWith("You");
+    await t.frameWith("user");
     expect(t.model.messages[0]).toEqual({ role: "user", text: "one\ntwo" });
   });
 
@@ -123,7 +145,7 @@ describe("ChatView", () => {
     t.mockInput.pressKey("LINEFEED");
     await t.mockInput.typeText("two");
     t.mockInput.pressEnter();
-    await t.frameWith("You");
+    await t.frameWith("user");
     expect(t.model.messages[0]).toEqual({ role: "user", text: "one\ntwo" });
   });
 
@@ -134,7 +156,7 @@ describe("ChatView", () => {
     t.mockInput.pressKey("j", { ctrl: true });
     await t.mockInput.typeText("two");
     t.mockInput.pressEnter();
-    await t.frameWith("You");
+    await t.frameWith("user");
     expect(t.model.messages[0]).toEqual({ role: "user", text: "one\ntwo" });
   });
 
@@ -151,7 +173,7 @@ describe("ChatView", () => {
     expect(frame).toContain("second");
   });
 
-  test("error messages are labelled Error", async () => {
+  test("error messages are labelled error", async () => {
     const t = await createTestRenderer({ width: 60, height: 20 });
     const model = new ChatModel({
       async send() {
@@ -163,6 +185,8 @@ describe("ChatView", () => {
       title: "test-cli",
       providerName: "dummy-chat",
       timeoutMs: 2_000,
+      headless: true,
+      banner: [],
       index: FileIndex.fromPaths([]),
     });
     teardown = () => {
@@ -172,7 +196,7 @@ describe("ChatView", () => {
     await model.submit("x");
     await t.renderOnce();
     const frame = t.captureCharFrame();
-    expect(frame).toContain("Error");
+    expect(frame).toContain("error");
     expect(frame).toContain("page closed");
   });
 
@@ -180,7 +204,7 @@ describe("ChatView", () => {
     const t = await setup({ delayMs: 200 });
     await t.mockInput.typeText("hello");
     t.mockInput.pressEnter();
-    await t.frameWith("You");
+    await t.frameWith("user");
     expect(t.model.status).toBe("busy");
     // Teardown mid-turn: the reply lands after the renderer is gone.
     t.view.destroy();
@@ -266,6 +290,20 @@ describe("ChatView", () => {
     await t.frameWith("Echo: hello");
   });
 
+  test("a renderer destroyed mid-turn stops the indicator instead of writing", async () => {
+    // OpenTUI's own SIGINT handler destroys the renderer without telling the
+    // view; the spinner interval would then write to a freed text buffer,
+    // and runInteractive only calls destroy() after the browser has closed.
+    const t = await setup({ delayMs: 5_000 });
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    await t.frameWith("Thinking…");
+    t.renderer.destroy();
+    // Several spinner frames (120 ms each) must pass without a throw.
+    await sleep(400);
+    expect(() => t.view.setStatus("Closing browser...")).not.toThrow();
+  });
+
   test("typing @ opens the popup with candidates", async () => {
     const t = await setup();
     await t.mockInput.typeText("see @");
@@ -273,6 +311,18 @@ describe("ChatView", () => {
     const frame = t.captureCharFrame();
     expect(frame).toContain("README.md");
     expect(frame).toContain("src/chat-view.ts");
+  });
+
+  test("the popup sits between the input and the status row", async () => {
+    const t = await setup({ paths: ["src/a.ts"] });
+    await t.mockInput.typeText("@");
+    await t.renderOnce();
+    const rows = t.captureCharFrame().split("\n");
+    const bottomRule = rows.map((r) => r.startsWith("─")).lastIndexOf(true);
+    expect(bottomRule).toBeGreaterThan(0);
+    expect(rows[bottomRule + 1]).toContain("src/a.ts");
+    expect(rows[bottomRule + 2]).toContain(POPUP_HINT);
+    expect(rows[bottomRule + 3]).toContain(GUIDE);
   });
 
   test("the query after @ filters the candidates", async () => {
@@ -306,9 +356,9 @@ describe("ChatView", () => {
     expect(t.model.messages).toEqual([]);
     expect(t.captureCharFrame()).toContain("@a.ts ");
     // A second Enter, popup closed, sends (submit is async: wait for the
-    // "You" entry rather than a single render pass).
+    // "user" entry rather than a single render pass).
     t.mockInput.pressEnter();
-    await t.frameWith("You");
+    await t.frameWith("user");
     expect(t.model.messages[0]?.text).toBe("@a.ts");
   });
 
@@ -322,7 +372,7 @@ describe("ChatView", () => {
     expect(frame).not.toContain("a.ts");
     // Enter now reaches the textarea again rather than the popup.
     t.mockInput.pressEnter();
-    await t.frameWith("You");
+    await t.frameWith("user");
     expect(t.model.messages[0]?.text).toBe("hi @a");
   });
 
@@ -384,10 +434,125 @@ describe("ChatView", () => {
     await t.renderOnce();
     t.mockInput.pressEnter();
     const frame = await t.frameWith("@nope.ts: not found");
-    expect(frame).toContain("Error");
+    expect(frame).toContain("error");
     expect(frame).toContain("read @nope.ts");
     expect(t.model.status).toBe("idle");
     expect(t.model.fatal).toBeUndefined();
+  });
+
+  test("the banner is centred in the empty history", async () => {
+    const t = await setup();
+    const rows = t.captureCharFrame().split("\n");
+    const title = rows.findIndex((r) => r.includes("test-cli v0.0.1"));
+    expect(title).toBeGreaterThan(2);
+    expect(rows[title + 1]).toContain(
+      "Connected to dummy-chat. Type a message, or @ to attach a file.",
+    );
+    // Centred: roughly as much blank space left as right.
+    const line = rows[title] ?? "";
+    const left = line.length - line.trimStart().length;
+    const right = line.length - line.trimEnd().length;
+    expect(Math.abs(left - right)).toBeLessThanOrEqual(1);
+    // Vertically centred between the header (2 rows) and the input.
+    const inputTop = rows.findIndex((r) => r.startsWith("─"));
+    expect(Math.abs(title - 2 - (inputTop - title - 2))).toBeLessThanOrEqual(2);
+  });
+
+  test("a vendor banner is drawn line by line and over-wide lines are cut", async () => {
+    const t = await setup({
+      banner: ["ACME", "x".repeat(120)].map((l) => styled(theme.muted(l))),
+    });
+    const frame = t.captureCharFrame();
+    expect(frame).toContain("ACME");
+    expect(frame).toContain("x".repeat(80));
+    expect(frame).not.toContain("x".repeat(81));
+    for (const row of frame.split("\n"))
+      expect(row.length).toBeLessThanOrEqual(80);
+  });
+
+  test("the banner disappears with the first message and never returns", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("Echo: hello");
+    expect(frame).not.toContain("test-cli v0.0.1");
+  });
+
+  test("the input is a bare > between two hairlines, one row when empty", async () => {
+    const t = await setup();
+    const rows = t.captureCharFrame().split("\n");
+    const top = rows.findIndex((r) => r.startsWith("─"));
+    expect(top).toBeGreaterThan(0);
+    expect(rows[top]).toBe("─".repeat(80));
+    expect(rows[top + 1]).toStartWith("> Type a message");
+    expect(rows[top + 2]).toBe("─".repeat(80));
+    expect(rows[top + 3]).toContain(GUIDE);
+    expect(t.captureCharFrame()).not.toContain("┌");
+  });
+
+  test("the input grows for a single line that wraps", async () => {
+    const t = await setup({ width: 40 });
+    const inner = () => {
+      const rows = t.captureCharFrame().split("\n");
+      const top = rows.findIndex((r) => r.startsWith("─"));
+      const bottom = rows.findIndex((r, i) => i > top && r.startsWith("─"));
+      return { rows, top, count: bottom - top - 1 };
+    };
+    expect(inner().count).toBe(1);
+    // 100 code units with no newline: at 38 usable columns that is 3 rows.
+    await t.mockInput.typeText("w".repeat(100));
+    await t.renderOnce();
+    const { rows, top, count } = inner();
+    expect(count).toBe(3);
+    expect(rows.slice(top + 1, top + 1 + count).join("")).toContain(
+      "w".repeat(30),
+    );
+  });
+
+  test("the input grows one row per newline up to five, then scrolls", async () => {
+    const t = await setup({ kittyKeyboard: true });
+    const hairlines = () => {
+      const rows = t.captureCharFrame().split("\n");
+      const top = rows.findIndex((r) => r.startsWith("─"));
+      const bottom = rows.findIndex((r, i) => i > top && r.startsWith("─"));
+      return { rows, top, bottom, inner: bottom - top - 1 };
+    };
+    for (let i = 1; i <= 7; i++) {
+      await t.mockInput.typeText(`line${i}`);
+      await t.renderOnce();
+      expect(hairlines().inner).toBe(Math.min(i, MAX_INPUT_ROWS));
+      t.mockInput.pressEnter({ shift: true });
+    }
+    const { rows, top } = hairlines();
+    // Seven lines typed (plus a trailing empty one), five visible: the
+    // oldest scrolled out, the cursor line still in view.
+    expect(rows[top + 1]).not.toContain("line1");
+    const shown = rows.slice(top + 1, top + 1 + MAX_INPUT_ROWS).join("\n");
+    expect(shown).toContain("line7");
+    expect(t.captureCharFrame()).toContain(GUIDE);
+  });
+
+  test("the history shrinks to make room for the input", async () => {
+    const t = await setup({ delayMs: 10, kittyKeyboard: true });
+    await t.mockInput.typeText("first");
+    t.mockInput.pressEnter();
+    await t.frameWith("Echo: first");
+    const before = t
+      .captureCharFrame()
+      .split("\n")
+      .findIndex((r) => r.startsWith("─"));
+    await t.mockInput.typeText("a");
+    t.mockInput.pressEnter({ shift: true });
+    await t.mockInput.typeText("b");
+    t.mockInput.pressEnter({ shift: true });
+    await t.mockInput.typeText("c");
+    await t.renderOnce();
+    const after = t
+      .captureCharFrame()
+      .split("\n")
+      .findIndex((r) => r.startsWith("─"));
+    expect(after).toBe(before - 2);
+    expect(t.captureCharFrame()).toContain("Echo: first");
   });
 
   test("the guide mentions @ file", async () => {

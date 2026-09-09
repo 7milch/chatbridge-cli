@@ -48,6 +48,8 @@ describe("waitForQuit", () => {
       title: "test-cli",
       providerName: "dummy-chat",
       timeoutMs: 1_000,
+      headless: true,
+      banner: [],
       index: FileIndex.fromPaths([]),
     });
     const quit = waitForQuit(t.renderer, model);
@@ -100,5 +102,53 @@ describe("runInteractive", () => {
       }),
     ).rejects.toBe(boom);
     expect(closed).toBe(1);
+  });
+
+  test("shows the default banner with the provider name, then quits on destroy", async () => {
+    const t = await createTestRenderer({ width: 80, height: 20 });
+    let frame = "";
+    const run = runInteractive({
+      ...sessionOpts(() => {}),
+      version: "1.2.3",
+      createRenderer: async () => t.renderer,
+      index: FileIndex.fromPaths([]),
+    });
+    for (let i = 0; i < 50 && !frame.includes("test-cli v1.2.3"); i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      await t.renderOnce();
+      frame = t.captureCharFrame();
+    }
+    try {
+      expect(frame).toContain("test-cli v1.2.3");
+      expect(frame).toContain("Connected to fake.");
+      expect(frame).toContain("fake · headless · 1s budget");
+    } finally {
+      // A failed assertion must not leave the renderer up and `run` pending.
+      t.renderer.destroy();
+    }
+    expect(await run).toEqual({});
+  });
+
+  test("a vendor banner replaces the default", async () => {
+    const t = await createTestRenderer({ width: 80, height: 20 });
+    let frame = "";
+    const run = runInteractive({
+      ...sessionOpts(() => {}),
+      banner: ["ACME BANNER"],
+      createRenderer: async () => t.renderer,
+      index: FileIndex.fromPaths([]),
+    });
+    for (let i = 0; i < 50 && !frame.includes("ACME BANNER"); i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      await t.renderOnce();
+      frame = t.captureCharFrame();
+    }
+    try {
+      expect(frame).toContain("ACME BANNER");
+      expect(frame).not.toContain("Connected to");
+    } finally {
+      t.renderer.destroy();
+    }
+    await run;
   });
 });

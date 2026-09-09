@@ -14,6 +14,11 @@ import { supportsInteractive } from "./tui/runtime-check.js";
 export interface CreateCliOptions {
   /** CLI name shown in help and errors, e.g. "chatbridge" or "company-ai-cli". */
   name: string;
+  /** Shown by --version and in the interactive startup banner. */
+  version?: string;
+  /** Interactive startup banner, one element per row; replaces the default
+   * (name, version and a one-line hint). Used verbatim. */
+  banner?: string[];
   /** Pinned provider. When set, --provider is rejected and config is not read. */
   provider?: Provider;
   /** Config directory name under ~/.config; defaults to `name`. */
@@ -74,6 +79,7 @@ export function createCli(opts: CreateCliOptions) {
       `  ${opts.name} auth login${providerFlag}`,
       `  ${opts.name} auth logout${providerFlag}`,
       `  ${opts.name} auth status${providerFlag}`,
+      `  ${opts.name} --version | -V`,
       "",
       "Without -p, an interactive chat opens (needs a terminal and Bun >= 1.3 or Node >= 26.4).",
       "One-shot mode prints the AI response to stdout.",
@@ -146,12 +152,22 @@ export function createCli(opts: CreateCliOptions) {
           headful: { type: "boolean", default: false },
           timeout: { type: "string" },
           help: { type: "boolean", short: "h", default: false },
+          version: { type: "boolean", short: "V", default: false },
         },
         allowPositionals: true,
       });
 
       if (values.help) {
         console.log(help());
+        return 0;
+      }
+
+      if (values.version) {
+        console.log(
+          opts.version === undefined
+            ? opts.name
+            : `${opts.name} v${opts.version}`,
+        );
         return 0;
       }
 
@@ -216,6 +232,8 @@ export function createCli(opts: CreateCliOptions) {
         const { runInteractive } = await import("./tui/run-interactive.js");
         const result = await runInteractive({
           title: opts.name,
+          version: opts.version,
+          banner: opts.banner,
           provider,
           authStore,
           headless: !values.headful,
