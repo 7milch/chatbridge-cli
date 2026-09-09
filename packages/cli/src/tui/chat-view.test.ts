@@ -7,13 +7,6 @@ import { ChatView, GUIDE } from "./chat-view.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** A lone ESC byte is held by the input parser until it can rule out an
- * escape sequence, so a test must wait before the key is delivered. */
-async function pressEscape(mockInput: { pressEscape: () => void }) {
-  mockInput.pressEscape();
-  await sleep(60);
-}
-
 function echoSession(delayMs: number): ChatSessionLike {
   return {
     async send(prompt) {
@@ -74,7 +67,22 @@ async function setup(
     }
     throw new Error(`no frame contained ${JSON.stringify(text)}`);
   }
-  return { ...t, model, view, frameWith };
+  /** A lone ESC byte is held by the input parser until it can rule out an
+   * escape sequence, so the key lands some time after the press. Waits for
+   * the effect — `candidate` gone from the frame — instead of a fixed delay. */
+  async function escapePopup(candidate: string, tries = 100): Promise<string> {
+    t.mockInput.pressEscape();
+    for (let i = 0; i < tries; i++) {
+      await sleep(20);
+      await t.renderOnce();
+      const f = t.captureCharFrame();
+      if (!f.includes(candidate)) return f;
+    }
+    throw new Error(
+      `popup still showed ${JSON.stringify(candidate)} after Escape`,
+    );
+  }
+  return { ...t, model, view, frameWith, escapePopup };
 }
 
 describe("ChatView", () => {
@@ -309,9 +317,7 @@ describe("ChatView", () => {
     await t.mockInput.typeText("hi @a");
     await t.renderOnce();
     expect(t.captureCharFrame()).toContain("a.ts");
-    await pressEscape(t.mockInput);
-    await t.renderOnce();
-    const frame = t.captureCharFrame();
+    const frame = await t.escapePopup("a.ts");
     expect(frame).toContain("hi @a");
     expect(frame).not.toContain("a.ts");
     // Enter now reaches the textarea again rather than the popup.
@@ -354,9 +360,10 @@ describe("ChatView", () => {
         ],
       }),
     });
-    await t.mockInput.typeText("look @a.ts");
-    // Close the popup first so Enter sends.
-    await pressEscape(t.mockInput);
+    // The trailing space ends the mention, which closes the popup, so Enter
+    // sends; the model trims it back off.
+    await t.mockInput.typeText("look @a.ts ");
+    await t.renderOnce();
     t.mockInput.pressEnter();
     const frame = await t.frameWith("done");
     expect(frame).toContain("📎 a.ts (512 B)");
@@ -372,8 +379,9 @@ describe("ChatView", () => {
         throw new MentionError(["@nope.ts: not found"]);
       },
     });
-    await t.mockInput.typeText("read @nope.ts");
-    await pressEscape(t.mockInput);
+    // The trailing space closes the popup so Enter sends.
+    await t.mockInput.typeText("read @nope.ts ");
+    await t.renderOnce();
     t.mockInput.pressEnter();
     const frame = await t.frameWith("@nope.ts: not found");
     expect(frame).toContain("Error");
