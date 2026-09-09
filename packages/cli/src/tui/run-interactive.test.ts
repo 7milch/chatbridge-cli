@@ -5,33 +5,7 @@ import { createTestRenderer } from "@opentui/core/testing";
 import { FileIndex } from "../mentions/file-index.js";
 import { ChatModel } from "./chat-model.js";
 import { ChatView } from "./chat-view.js";
-import {
-  closeWithTimeout,
-  runInteractive,
-  waitForQuit,
-} from "./run-interactive.js";
-
-describe("closeWithTimeout", () => {
-  test("returns true when the session closes in time", async () => {
-    expect(await closeWithTimeout({ close: async () => {} }, 1000)).toBe(true);
-  });
-
-  test("returns false when the close never settles", async () => {
-    const started = Date.now();
-    const stuck = { close: () => new Promise<void>(() => {}) };
-    expect(await closeWithTimeout(stuck, 50)).toBe(false);
-    expect(Date.now() - started).toBeLessThan(1000);
-  });
-
-  test("swallows a rejecting close", async () => {
-    const failing = {
-      close: async () => {
-        throw new Error("browser already gone");
-      },
-    };
-    expect(await closeWithTimeout(failing, 1000)).toBe(true);
-  });
-});
+import { runInteractive, waitForQuit } from "./run-interactive.js";
 
 describe("waitForQuit", () => {
   test("resolves when the renderer is destroyed from outside", async () => {

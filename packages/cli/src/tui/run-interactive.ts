@@ -8,6 +8,7 @@ import { FileIndex } from "../mentions/file-index.js";
 import { resolveBanner } from "./banner.js";
 import { ChatModel } from "./chat-model.js";
 import { ChatView } from "./chat-view.js";
+import { closeWithTimeout } from "./close-session.js";
 
 export interface InteractiveOptions extends ChatSessionOptions {
   /** Shown in the header, e.g. the CLI name. */
@@ -35,11 +36,6 @@ interface KeypressSource {
  * that typing is not visible through the exported type. */
 interface DestroySource {
   on(event: "destroy", handler: () => void): unknown;
-}
-
-/** What the bounded close needs from a session; lets tests inject a fake. */
-export interface ClosableSession {
-  close(): Promise<void>;
 }
 
 /**
@@ -122,29 +118,5 @@ export async function runInteractive(
       process.stderr.write("browser did not close within 5 s; exiting\n");
       process.exit(1);
     }
-  }
-}
-
-/** Playwright close can hang on a wedged browser; never block exit on it.
- * Returns true when the session closed within `ms`. Close errors are
- * swallowed: teardown must not mask the result the caller is returning. */
-export async function closeWithTimeout(
-  session: ClosableSession,
-  ms: number,
-): Promise<boolean> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<boolean>((resolve) => {
-    timer = setTimeout(() => resolve(false), ms);
-  });
-  try {
-    return await Promise.race([
-      session.close().then(
-        () => true,
-        () => true,
-      ),
-      deadline,
-    ]);
-  } finally {
-    clearTimeout(timer);
   }
 }
