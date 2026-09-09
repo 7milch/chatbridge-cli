@@ -245,6 +245,6 @@ describe("--version", () => {
     captureLog();
     const cli = createCli({ name: "test-cli", provider: stubProvider() });
     await cli.run(["bun", "cli", "--help"]);
-    expect(logs.join("\n")).toContain("--version");
+    expect(logs.join("\n")).toContain("  test-cli --version | -V");
   });
 });

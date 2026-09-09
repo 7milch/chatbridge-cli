@@ -12,6 +12,9 @@ export type Styler = (text: string) => TextChunk;
 
 const ANSI = { red: 1, green: 2, blue: 4, brightBlack: 8 } as const;
 
+// `__isChunk: true` is OpenTUI's runtime discriminator for TextChunk
+// (0.5.10). A rename would not be caught by the type-check, so re-check
+// this when bumping past that version.
 function chunk(text: string, attributes: number, fg?: RGBA): TextChunk {
   const c: TextChunk = { __isChunk: true, text, attributes };
   if (fg) c.fg = fg;

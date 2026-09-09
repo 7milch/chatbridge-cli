@@ -36,10 +36,11 @@ async function setup(
     expand?: (text: string) => Promise<Expansion>;
     headless?: boolean;
     banner?: StyledText[];
+    width?: number;
   } = {},
 ) {
   const t = await createTestRenderer({
-    width: 80,
+    width: opts.width ?? 80,
     height: 20,
     kittyKeyboard: opts.kittyKeyboard ?? false,
   });
@@ -318,6 +319,7 @@ describe("ChatView", () => {
     await t.renderOnce();
     const rows = t.captureCharFrame().split("\n");
     const bottomRule = rows.map((r) => r.startsWith("─")).lastIndexOf(true);
+    expect(bottomRule).toBeGreaterThan(0);
     expect(rows[bottomRule + 1]).toContain("src/a.ts");
     expect(rows[bottomRule + 2]).toContain(POPUP_HINT);
     expect(rows[bottomRule + 3]).toContain(GUIDE);
@@ -486,6 +488,25 @@ describe("ChatView", () => {
     expect(rows[top + 2]).toBe("─".repeat(80));
     expect(rows[top + 3]).toContain(GUIDE);
     expect(t.captureCharFrame()).not.toContain("┌");
+  });
+
+  test("the input grows for a single line that wraps", async () => {
+    const t = await setup({ width: 40 });
+    const inner = () => {
+      const rows = t.captureCharFrame().split("\n");
+      const top = rows.findIndex((r) => r.startsWith("─"));
+      const bottom = rows.findIndex((r, i) => i > top && r.startsWith("─"));
+      return { rows, top, count: bottom - top - 1 };
+    };
+    expect(inner().count).toBe(1);
+    // 100 code units with no newline: at 38 usable columns that is 3 rows.
+    await t.mockInput.typeText("w".repeat(100));
+    await t.renderOnce();
+    const { rows, top, count } = inner();
+    expect(count).toBe(3);
+    expect(rows.slice(top + 1, top + 1 + count).join("")).toContain(
+      "w".repeat(30),
+    );
   });
 
   test("the input grows one row per newline up to five, then scrolls", async () => {

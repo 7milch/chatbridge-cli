@@ -63,7 +63,9 @@ placeholder `Type a message`, `flexGrow: 1`. Key bindings (Enter submit,
 Shift+Enter / Ctrl+J newline) are unchanged.
 
 Height follows the content: on every `onContentChange` the textarea height is
-set to `clamp(virtualLineCount, 1, 5)`. Beyond five rows the textarea scrolls
+set to `clamp(estimated visual rows, 1, 5)`, where the rows are estimated per
+logical line as `ceil(length / usable width)` (OpenTUI's `virtualLineCount` is
+computed against the current viewport and cannot be read before a layout pass). Beyond five rows the textarea scrolls
 internally. The history (or banner) shrinks through flex; nothing else moves.
 
 ### Mention popup
@@ -99,6 +101,7 @@ wraps OpenTUI styled-text helpers and is not configurable by vendors.
 | Token | Used for | Style |
 |---|---|---|
 | `badge` | CLI name in the header | bold + inverse |
+| `title` | banner first line (CLI name) | bold |
 | `muted` | header detail, borders, `>`, guide, attachments, banner, popup directory part, popup hint | dim |
 | `user` | user label | bold + ANSI blue |
 | `assistant` | assistant label | bold + ANSI green |

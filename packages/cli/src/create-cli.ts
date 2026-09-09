@@ -79,7 +79,7 @@ export function createCli(opts: CreateCliOptions) {
       `  ${opts.name} auth login${providerFlag}`,
       `  ${opts.name} auth logout${providerFlag}`,
       `  ${opts.name} auth status${providerFlag}`,
-      `  ${opts.name} --version`,
+      `  ${opts.name} --version | -V`,
       "",
       "Without -p, an interactive chat opens (needs a terminal and Bun >= 1.3 or Node >= 26.4).",
       "One-shot mode prints the AI response to stdout.",

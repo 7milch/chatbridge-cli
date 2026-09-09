@@ -298,13 +298,24 @@ export class ChatView {
     key.preventDefault();
   }
 
-  /** One row when empty, one more per line up to MAX_INPUT_ROWS; beyond
-   * that the textarea scrolls internally and the history gives up rows. */
+  /** One row when empty, then one row per *visual* line up to
+   * MAX_INPUT_ROWS; beyond that the textarea scrolls internally and the
+   * history gives up rows. The visual rows are estimated from the text
+   * rather than read off OpenTUI: its `virtualLineCount` is computed
+   * against the current viewport, so at height 1 it always reports 1 and
+   * only catches up after the height is raised and a layout pass runs. */
   private fitInput(): void {
-    this.input.height = Math.min(
-      MAX_INPUT_ROWS,
-      Math.max(1, this.input.lineCount),
+    // Before the first frame the textarea has no laid-out width; the box is
+    // the full terminal minus the 2-cell "> " prompt.
+    const usable = Math.max(
+      1,
+      this.input.width || this.renderer.terminalWidth - 2,
     );
+    let rows = 0;
+    for (const line of this.input.plainText.split("\n")) {
+      rows += Math.max(1, Math.ceil(line.length / usable));
+    }
+    this.input.height = Math.min(MAX_INPUT_ROWS, Math.max(1, rows));
   }
 
   /** Reads the textarea and shows or hides the popup accordingly. */
