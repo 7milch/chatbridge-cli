@@ -66,6 +66,19 @@ Providers are loaded with `--provider <npm-package|./path>` or from
 A globally installed CLI resolves an npm-package `defaultProvider` only if
 that provider is installed globally as well.
 
+A derived CLI passes its own identity to `createCli`:
+
+```ts
+createCli({
+  name: "acme-ai",
+  version: "2.4.0",            // shown by --version and in the startup banner
+  banner: ["Acme internal assistant", "Conversations are not stored."], // optional
+  provider,
+});
+```
+
+`--version` (`-V`) prints `name vX.Y.Z`.
+
 Exit codes: 1 invalid argument or config, 2 not logged in, 3 auth expired,
 4 response timeout, 5 provider could not be loaded, 6 blocked by the
 service (a bot challenge or an IdP refusing the automated browser; try
@@ -82,6 +95,12 @@ chat.
   Shift+Enter needs a terminal that speaks the kitty keyboard protocol
   (iTerm2, kitty, WezTerm, Ghostty), Ctrl+J works everywhere. **Ctrl+C**
   quits.
+- The screen is a header (CLI name, provider, headless/headful, timeout
+  budget), the conversation with `user` / `assistant` / `error` labels, and
+  a `>` input between two rules that grows to five rows as you add
+  newlines. Until the first message the history shows a startup banner
+  (the CLI name and version by default; a derived CLI can pass its own
+  `banner` lines to `createCli`).
 - Type **`@`** to attach a file from the directory you started `chatbridge`
   in. A popup lists fuzzy matches (`.gitignore`d files, `.git`, and
   `node_modules` are left out); **↑/↓** select, **Tab** or **Enter** insert

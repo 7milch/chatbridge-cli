@@ -94,7 +94,7 @@ file. Everything lives in `@chatbridge/cli`; core, runtime, and provider
 are unchanged. One-shot expansion stays in the backlog behind a flag.
 Spec: `docs/superpowers/specs/2026-09-09-file-mentions-design.md`.
 
-### 7. Interactive TUI visual redesign — in progress (issue #28)
+### 7. Interactive TUI visual redesign — done (issue #28, 2026-09-09)
 
 Give the interactive TUI a considered visual design. Direction chosen by a
 mock competition (five HTML mocks, 2026-09-09); the pick is mock 5:
@@ -107,6 +107,7 @@ mock competition (five HTML mocks, 2026-09-09); the pick is mock 5:
 - Status row: key hints when idle; spinner + elapsed / budget while waiting
 
 Mocks: `docs/superpowers/mocks/2026-09-09-tui-mocks.html`.
+Shipped with `createCli({ version, banner })` and `--version`; spec: `docs/superpowers/specs/2026-09-09-tui-visual-redesign-design.md`.
 
 ### 5. Company adoption
 
