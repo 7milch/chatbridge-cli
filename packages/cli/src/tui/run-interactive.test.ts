@@ -118,10 +118,14 @@ describe("runInteractive", () => {
       await t.renderOnce();
       frame = t.captureCharFrame();
     }
-    expect(frame).toContain("test-cli v1.2.3");
-    expect(frame).toContain("Connected to fake.");
-    expect(frame).toContain("fake · headless · 1s budget");
-    t.renderer.destroy();
+    try {
+      expect(frame).toContain("test-cli v1.2.3");
+      expect(frame).toContain("Connected to fake.");
+      expect(frame).toContain("fake · headless · 1s budget");
+    } finally {
+      // A failed assertion must not leave the renderer up and `run` pending.
+      t.renderer.destroy();
+    }
     expect(await run).toEqual({});
   });
 
@@ -139,9 +143,12 @@ describe("runInteractive", () => {
       await t.renderOnce();
       frame = t.captureCharFrame();
     }
-    expect(frame).toContain("ACME BANNER");
-    expect(frame).not.toContain("Connected to");
-    t.renderer.destroy();
+    try {
+      expect(frame).toContain("ACME BANNER");
+      expect(frame).not.toContain("Connected to");
+    } finally {
+      t.renderer.destroy();
+    }
     await run;
   });
 });

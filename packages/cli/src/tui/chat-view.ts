@@ -247,7 +247,12 @@ export class ChatView {
   /** Pins a message on the status line (e.g. "Closing browser...") so the
    * user sees that teardown started. Later model changes leave it alone. */
   setStatus(text: string): void {
-    if (this.torn) return;
+    if (this.torn) {
+      // Nothing can be drawn any more, but the spinner interval must not
+      // outlive the buffer it writes to.
+      this.stopSpinner();
+      return;
+    }
     this.statusPinned = true;
     this.stopSpinner();
     this.status.content = text;
@@ -364,6 +369,9 @@ export class ChatView {
     if (this.spinner) return;
     this.startedAt = Date.now();
     const tick = () => {
+      // The renderer can be destroyed from under a running turn (SIGINT);
+      // the interval outlives it until teardown reaches this view.
+      if (this.torn) return this.stopSpinner();
       this.frame = (this.frame + 1) % FRAMES.length;
       const elapsed = Math.floor((Date.now() - this.startedAt) / 1000);
       this.status.content = `${FRAMES[this.frame]} Thinking…  ${elapsed}s / ${this.budgetSec}s`;

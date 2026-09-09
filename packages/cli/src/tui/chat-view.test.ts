@@ -289,6 +289,20 @@ describe("ChatView", () => {
     await t.frameWith("Echo: hello");
   });
 
+  test("a renderer destroyed mid-turn stops the indicator instead of writing", async () => {
+    // OpenTUI's own SIGINT handler destroys the renderer without telling the
+    // view; the spinner interval would then write to a freed text buffer,
+    // and runInteractive only calls destroy() after the browser has closed.
+    const t = await setup({ delayMs: 5_000 });
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    await t.frameWith("Thinking…");
+    t.renderer.destroy();
+    // Several spinner frames (120 ms each) must pass without a throw.
+    await sleep(400);
+    expect(() => t.view.setStatus("Closing browser...")).not.toThrow();
+  });
+
   test("typing @ opens the popup with candidates", async () => {
     const t = await setup();
     await t.mockInput.typeText("see @");
