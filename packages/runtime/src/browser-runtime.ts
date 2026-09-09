@@ -1,6 +1,5 @@
 import type { Provider } from "@chatbridge/provider";
 import {
-  type Browser,
   type BrowserContext,
   type BrowserServer,
   type Page,
@@ -22,9 +21,10 @@ export interface LaunchOptions {
  * SIGKILL: a plain `Browser` from `launch()` does not expose its OS
  * process on the public Playwright API, but `BrowserServer` does. */
 export class BrowserRuntime {
+  private killed = false;
+
   private constructor(
     private readonly browserServer: BrowserServer,
-    private readonly browser: Browser,
     private readonly context: BrowserContext,
     readonly page: Page,
     private readonly authStore: AuthStore,
@@ -43,13 +43,7 @@ export class BrowserRuntime {
           : undefined;
         const context = await browser.newContext({ storageState });
         const page = await context.newPage();
-        return new BrowserRuntime(
-          browserServer,
-          browser,
-          context,
-          page,
-          opts.authStore,
-        );
+        return new BrowserRuntime(browserServer, context, page, opts.authStore);
       } catch (err) {
         // Never leak a connected browser when context/page setup fails.
         await browser.close().catch(() => {});
@@ -71,15 +65,19 @@ export class BrowserRuntime {
   }
 
   async close(): Promise<void> {
+    // After kill(), the process is already gone; closing it again is
+    // expected to reject and is not a real failure for the caller.
+    if (this.killed) return;
     // Closes the actual browser process (not just this connection); the
     // connected `browser` client observes the resulting disconnect.
-    await this.browserServer.close().catch(() => {});
+    await this.browserServer.close();
   }
 
   /** Force-ends the browser process (SIGKILL) and drops the connection.
    * For a wedged browser that `close()` cannot finish; nothing is saved.
    * No-op when the process is already gone. Never throws. */
   async kill(): Promise<void> {
+    this.killed = true;
     await this.browserServer.kill().catch(() => {});
   }
 }
