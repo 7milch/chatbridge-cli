@@ -85,6 +85,15 @@ already work with the completion-based contract, and incremental display
 is a UX feature rather than a provider need.
 Spec: `docs/superpowers/specs/2026-09-08-timeout-diagnosis-block-detection-design.md`.
 
+### 6. @file mentions in the interactive TUI — done (issue #27, 2026-09-09)
+
+Typing `@` in the TUI opens a fuzzy popup over a `.gitignore`-aware index
+of the working directory; on send the mentioned files are appended to the
+prompt as fenced sections and the history shows one attachment line per
+file. Everything lives in `@chatbridge/cli`; core, runtime, and provider
+are unchanged. One-shot expansion stays in the backlog behind a flag.
+Spec: `docs/superpowers/specs/2026-09-09-file-mentions-design.md`.
+
 ### 5. Company adoption
 
 Company repository builds `company-ai-cli` via `createCli({ name, provider, configDir })`
@@ -105,6 +114,10 @@ Not scheduled. Each item becomes a milestone when picked up.
 - **Cross-process conversation resume (chat handle).** Provider would expose
   the service's conversation id; the CLI would reopen it.
 - **History persistence.** Save the interactive transcript to disk.
+- **`@file` mentions in one-shot mode.** Behind an explicit flag; `-p`
+  stays verbatim by default.
+- **Live re-scan of the mention index.** New files appear without a
+  restart.
 
 ## Standing design rules
 

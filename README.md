@@ -82,6 +82,15 @@ chat.
   Shift+Enter needs a terminal that speaks the kitty keyboard protocol
   (iTerm2, kitty, WezTerm, Ghostty), Ctrl+J works everywhere. **Ctrl+C**
   quits.
+- Type **`@`** to attach a file from the directory you started `chatbridge`
+  in. A popup lists fuzzy matches (`.gitignore`d files, `.git`, and
+  `node_modules` are left out); **↑/↓** select, **Tab** or **Enter** insert
+  `@path `, **Esc** closes. On send, each mentioned file is appended to
+  the prompt as a fenced code block under a `### path` heading, and the
+  history shows `📎 path (size)` for each one. Limits: 200 KB per file,
+  1 MB per message, text files only, paths inside the working directory.
+  Problems are shown as an error and nothing is sent; fix the message and
+  press Enter again. One-shot mode (`-p`) sends the prompt verbatim.
 - While a reply is pending the status line shows an activity indicator
   with the elapsed time against the `--timeout` budget, e.g.
   `○●○ Thinking…  12s / 120s`.
