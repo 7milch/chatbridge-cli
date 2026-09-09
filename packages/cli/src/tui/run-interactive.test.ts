@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Page, Provider } from "@chatbridge/provider";
 import type { AuthStore } from "@chatbridge/runtime";
 import { createTestRenderer } from "@opentui/core/testing";
+import { FileIndex } from "../mentions/file-index.js";
 import { ChatModel } from "./chat-model.js";
 import { ChatView } from "./chat-view.js";
 import {
@@ -47,6 +48,7 @@ describe("waitForQuit", () => {
       title: "test-cli",
       providerName: "dummy-chat",
       timeoutMs: 1_000,
+      index: FileIndex.fromPaths([]),
     });
     const quit = waitForQuit(t.renderer, model);
     view.destroy();
@@ -94,6 +96,7 @@ describe("runInteractive", () => {
           closed++;
         }),
         createRenderer: () => Promise.reject(boom),
+        index: FileIndex.fromPaths([]),
       }),
     ).rejects.toBe(boom);
     expect(closed).toBe(1);

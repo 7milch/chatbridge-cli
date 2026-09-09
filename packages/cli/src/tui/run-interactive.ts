@@ -4,6 +4,7 @@ import {
   type KeyEvent,
   createCliRenderer,
 } from "@opentui/core";
+import { FileIndex } from "../mentions/file-index.js";
 import { ChatModel } from "./chat-model.js";
 import { ChatView } from "./chat-view.js";
 
@@ -12,6 +13,8 @@ export interface InteractiveOptions extends ChatSessionOptions {
   title: string;
   /** Test-only: replaces createCliRenderer. */
   createRenderer?: () => Promise<CliRenderer>;
+  /** Test-only: replaces the working-directory index. */
+  index?: FileIndex;
 }
 
 const CLOSE_TIMEOUT_MS = 5_000;
@@ -71,8 +74,10 @@ export async function runInteractive(
   opts: InteractiveOptions,
 ): Promise<{ fatal?: unknown }> {
   const session = await ChatSession.open(opts);
+  let index: FileIndex;
   let renderer: CliRenderer;
   try {
+    index = opts.index ?? (await FileIndex.build({ cwd: process.cwd() }));
     renderer = await (
       opts.createRenderer ?? (() => createCliRenderer({ exitOnCtrlC: false }))
     )();
@@ -88,6 +93,7 @@ export async function runInteractive(
       title: opts.title,
       providerName: opts.provider.name,
       timeoutMs: opts.timeoutMs,
+      index,
     });
     const quit = waitForQuit(renderer, model);
     renderer.start();
