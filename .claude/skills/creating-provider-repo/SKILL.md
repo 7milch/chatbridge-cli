@@ -49,7 +49,9 @@ No CI workflow: real-service tests need a human login.
 ## Derived CLI identity (`@chatbridge/cli` ≥ 0.4.0)
 
 ```ts
-// src/bin.ts
+#!/usr/bin/env bun
+// src/bin.ts — the shebang picks the runtime that runs the CLI, see
+// "Runtime and shebang" below.
 import { createRequire } from "node:module";
 import { createCli } from "@chatbridge/cli";
 import provider from "./provider.js";
@@ -74,6 +76,23 @@ process.exitCode = await createCli({
 
 `version` and `banner` are the only vendor-facing TUI knobs; colours and
 layout are fixed by the framework.
+
+### Runtime and shebang
+
+Interactive mode (no `-p`) needs **Bun ≥ 1.3 or Node ≥ 26.4**; one-shot and
+`auth` work on Node ≥ 20. The shebang decides which runtime a globally
+installed bin (`bun link`, `npm link`, `npm i -g`) uses, and `tsc` copies it
+into `dist/bin.js` unchanged:
+
+| Users run the CLI on | Shebang |
+|---|---|
+| Bun (typical for a private vendor repo) | `#!/usr/bin/env bun` |
+| Node ≥ 26.4 everywhere | `#!/usr/bin/env node` |
+| Node < 26.4, no Bun | Interactive mode is unavailable; `#!/usr/bin/env node` and document `-p` only |
+
+Symptom of the wrong choice: `<vendor>: interactive mode needs Bun >= 1.3 or
+Node >= 26.4; use -p <prompt> on this runtime` even though Bun is installed.
+Verify with `<vendor> --version` after linking, then open interactive mode.
 
 ## DOM notes
 
@@ -127,3 +146,4 @@ exactly one element on the observation date.
 | `waitForResponse` returns "…" or an ellipsis | A placeholder assistant element (ChatGPT: `data-message-id="request-…"`) appears, is removed ~2 s later, then the real one is inserted | Wait for the done signal before the count check; stability read |
 | Page title "Just a moment..." and `isLoggedIn` false; CLI says auth expired | Cloudflare challenge in headless Chromium (both headless modes) | Implement `detectBlock` (framework ≥ 0.3.0): return `"challenge page"` when `document.title === "Just a moment..."`, so the CLI exits 6 and says `Try --headful`. Bot-protection evasion is out of scope (`CLAUDE.md`); record it and move on |
 | Google (or another IdP) refuses the automated browser even headful | IdP fingerprints the browser | Log in with email + password / emailed code; note it in `dom-notes.md` §Login |
+| `interactive mode needs Bun >= 1.3 or Node >= 26.4` although Bun is installed | `dist/bin.js` shebang is `node` and the system Node is older | Shebang `#!/usr/bin/env bun` (see Runtime and shebang), rebuild |
