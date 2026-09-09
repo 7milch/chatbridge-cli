@@ -189,3 +189,24 @@ describe("formatSize", () => {
     expect(formatSize(1.4 * 1024 * 1024)).toBe("1.4 MB");
   });
 });
+
+describe("expandMentions paths that look like traversal", () => {
+  test("a file whose name starts with two dots is attached", async () => {
+    await file("..hidden", "secret\n");
+    const out = await expandMentions("look @..hidden", cwd);
+    expect(out.attachments).toEqual([{ path: "..hidden", bytes: 7 }]);
+    expect(out.prompt).toContain("### ..hidden");
+  });
+
+  test("@. reports the working directory as a directory", async () => {
+    const err = await expandMentions("@.", cwd).catch((e) => e);
+    expect((err as MentionError).problems).toEqual(["@.: is a directory"]);
+  });
+
+  test("@.. is still outside the working directory", async () => {
+    const err = await expandMentions("@..", cwd).catch((e) => e);
+    expect((err as MentionError).problems).toEqual([
+      "@..: outside working directory",
+    ]);
+  });
+});

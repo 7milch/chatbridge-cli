@@ -104,8 +104,14 @@ async function walk(
   let here = scopes;
   const gitignore = entries.find((e) => e.isFile() && e.name === ".gitignore");
   if (gitignore) {
-    const content = await readFile(join(dir, ".gitignore"), "utf8");
-    here = [...scopes, { dir, ig: ignore().add(content) }];
+    try {
+      const content = await readFile(join(dir, ".gitignore"), "utf8");
+      here = [...scopes, { dir, ig: ignore().add(content) }];
+    } catch {
+      // Unreadable or vanished: treat this directory as having no
+      // .gitignore. The parent scopes still apply; the index is best
+      // effort and must never fail the whole walk.
+    }
   }
   entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   for (const entry of entries) {

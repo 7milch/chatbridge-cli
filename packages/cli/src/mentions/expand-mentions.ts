@@ -90,7 +90,10 @@ type LoadResult = { problem: string } | { abs: string; ok: Loaded };
 async function load(mention: string, cwd: string): Promise<LoadResult> {
   const abs = resolve(cwd, mention);
   const rel = relative(cwd, abs);
-  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+  // `rel === ""` is cwd itself (`@.`), which falls through to stat and is
+  // reported as a directory. Only a real `..` segment escapes cwd; a name
+  // that merely starts with two dots (`..hidden`) stays inside.
+  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
     return { problem: `@${mention}: outside working directory` };
   }
   const path = rel.split(sep).join("/");

@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FileIndex } from "./file-index.js";
@@ -25,6 +32,17 @@ describe("FileIndex.build", () => {
     await file("src/deep/c.ts");
     const index = await FileIndex.build({ cwd });
     expect(index.search("", 10)).toEqual(["b.ts", "src/a.ts", "src/deep/c.ts"]);
+  });
+
+  test("an unreadable .gitignore is treated as absent", async () => {
+    await file("sub/.gitignore", "keep.ts\n");
+    await file("sub/keep.ts");
+    await chmod(join(cwd, "sub/.gitignore"), 0o000);
+    const index = await FileIndex.build({ cwd });
+    const paths = index.search("", 10);
+    expect(paths).toContain("sub/keep.ts");
+    if (process.getuid?.() === 0) return; // root reads it anyway; skip
+    expect(paths).toContain("sub/.gitignore");
   });
 
   test("always skips .git and node_modules", async () => {
