@@ -12,7 +12,7 @@ import type { FileIndex } from "../mentions/file-index.js";
 import { mentionAtCursor } from "../mentions/parse-mentions.js";
 import type { ChatModel, Message, Role } from "./chat-model.js";
 import { MAX_ROWS, MentionPopup } from "./mention-popup.js";
-import { styled, theme } from "./theme.js";
+import { MUTED_COLOR, styled, theme } from "./theme.js";
 
 export const GUIDE =
   "Enter send · Shift+Enter (or Ctrl+J) newline · @ file · Ctrl+C quit";
@@ -24,9 +24,8 @@ const LABELS: Record<Role, () => StyledText> = {
   assistant: () => styled(theme.assistant("assistant")),
   error: () => styled(theme.error("error")),
 };
-/** Input box (border + 4 lines) and the status line below the history. */
-const INPUT_BOX_HEIGHT = 6;
-const STATUS_HEIGHT = 1;
+/** The input starts one row tall and grows with its content up to this. */
+export const MAX_INPUT_ROWS = 5;
 
 export interface ChatViewOptions {
   title: string;
@@ -49,7 +48,8 @@ interface KeypressSource {
 }
 
 /** Builds the OpenTUI tree for one ChatModel and mirrors its state.
- * Layout: header / scrolling history / 4-line textarea / status line, plus
+ * Layout: header / scrolling history / hairline-ruled textarea that grows
+ * from one row to MAX_INPUT_ROWS / status line, plus
  * a mention popup drawn over the bottom of the history while the cursor is
  * inside an `@` mention. */
 export class ChatView {
@@ -130,13 +130,25 @@ export class ChatView {
 
     const inputBox = new BoxRenderable(renderer, {
       id: "input-box",
-      border: true,
-      height: INPUT_BOX_HEIGHT,
+      flexDirection: "row",
+      flexShrink: 0,
+      border: ["top", "bottom"],
+      borderColor: MUTED_COLOR,
     });
+    inputBox.add(
+      new TextRenderable(renderer, {
+        id: "prompt",
+        content: styled(theme.muted("> ")),
+        flexShrink: 0,
+      }),
+    );
     this.input = new TextareaRenderable(renderer, {
       id: "input",
-      height: INPUT_BOX_HEIGHT - 2,
+      flexGrow: 1,
+      height: 1,
+      wrapMode: "word",
       placeholder: "Type a message",
+      placeholderColor: MUTED_COLOR,
       keyBindings: [
         { name: "return", action: "submit" },
         { name: "kpenter", action: "submit" },
@@ -158,7 +170,7 @@ export class ChatView {
       content: styled(theme.muted(GUIDE)),
       // Fixed: a guide longer than the terminal must not wrap and push the
       // input box off the bottom.
-      height: STATUS_HEIGHT,
+      height: 1,
       flexShrink: 0,
     });
     root.add(this.status);
@@ -176,12 +188,14 @@ export class ChatView {
         return;
       }
       this.input.clear();
+      this.fitInput();
       // A mention problem is only known after expansion, and the box is
       // empty by then; put the text back so the user can fix it.
       void this.model.submit(text).then((accepted) => {
         // Trade-off: anything typed during expansion wins over the refill.
         if (!accepted && !this.destroyed && !this.input.plainText) {
           this.input.insertText(text);
+          this.fitInput();
         }
       });
     };
@@ -191,7 +205,10 @@ export class ChatView {
       "keypress",
       this.onKeypress,
     );
-    this.input.onContentChange = () => this.refreshPopup();
+    this.input.onContentChange = () => {
+      this.fitInput();
+      this.refreshPopup();
+    };
     this.input.onCursorChange = () => this.refreshPopup();
     this.model.onChange = () => this.update();
     this.input.focus();
@@ -268,6 +285,15 @@ export class ChatView {
         return;
     }
     key.preventDefault();
+  }
+
+  /** One row when empty, one more per line up to MAX_INPUT_ROWS; beyond
+   * that the textarea scrolls internally and the history gives up rows. */
+  private fitInput(): void {
+    this.input.height = Math.min(
+      MAX_INPUT_ROWS,
+      Math.max(1, this.input.lineCount),
+    );
   }
 
   /** Reads the textarea and shows or hides the popup accordingly. */

@@ -5,7 +5,7 @@ import { type Expansion, MentionError } from "../mentions/expand-mentions.js";
 import { FileIndex } from "../mentions/file-index.js";
 import { resolveBanner } from "./banner.js";
 import { ChatModel, type ChatSessionLike } from "./chat-model.js";
-import { ChatView, GUIDE } from "./chat-view.js";
+import { ChatView, GUIDE, MAX_INPUT_ROWS } from "./chat-view.js";
 import { styled, theme } from "./theme.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -426,7 +426,7 @@ describe("ChatView", () => {
     const right = line.length - line.trimEnd().length;
     expect(Math.abs(left - right)).toBeLessThanOrEqual(1);
     // Vertically centred between the header (2 rows) and the input.
-    const inputTop = rows.findIndex((r) => r.includes("┌"));
+    const inputTop = rows.findIndex((r) => r.startsWith("─"));
     expect(Math.abs(title - 2 - (inputTop - title - 2))).toBeLessThanOrEqual(2);
   });
 
@@ -448,6 +448,64 @@ describe("ChatView", () => {
     t.mockInput.pressEnter();
     const frame = await t.frameWith("Echo: hello");
     expect(frame).not.toContain("test-cli v0.0.1");
+  });
+
+  test("the input is a bare > between two hairlines, one row when empty", async () => {
+    const t = await setup();
+    const rows = t.captureCharFrame().split("\n");
+    const top = rows.findIndex((r) => r.startsWith("─"));
+    expect(top).toBeGreaterThan(0);
+    expect(rows[top]).toBe("─".repeat(80));
+    expect(rows[top + 1]).toStartWith("> Type a message");
+    expect(rows[top + 2]).toBe("─".repeat(80));
+    expect(rows[top + 3]).toContain(GUIDE);
+    expect(t.captureCharFrame()).not.toContain("┌");
+  });
+
+  test("the input grows one row per newline up to five, then scrolls", async () => {
+    const t = await setup({ kittyKeyboard: true });
+    const hairlines = () => {
+      const rows = t.captureCharFrame().split("\n");
+      const top = rows.findIndex((r) => r.startsWith("─"));
+      const bottom = rows.findIndex((r, i) => i > top && r.startsWith("─"));
+      return { rows, top, bottom, inner: bottom - top - 1 };
+    };
+    for (let i = 1; i <= 7; i++) {
+      await t.mockInput.typeText(`line${i}`);
+      await t.renderOnce();
+      expect(hairlines().inner).toBe(Math.min(i, MAX_INPUT_ROWS));
+      t.mockInput.pressEnter({ shift: true });
+    }
+    const { rows, top } = hairlines();
+    // Seven lines typed (plus a trailing empty one), five visible: the
+    // oldest scrolled out, the cursor line still in view.
+    expect(rows[top + 1]).not.toContain("line1");
+    const shown = rows.slice(top + 1, top + 1 + MAX_INPUT_ROWS).join("\n");
+    expect(shown).toContain("line7");
+    expect(t.captureCharFrame()).toContain(GUIDE);
+  });
+
+  test("the history shrinks to make room for the input", async () => {
+    const t = await setup({ delayMs: 10, kittyKeyboard: true });
+    await t.mockInput.typeText("first");
+    t.mockInput.pressEnter();
+    await t.frameWith("Echo: first");
+    const before = t
+      .captureCharFrame()
+      .split("\n")
+      .findIndex((r) => r.startsWith("─"));
+    await t.mockInput.typeText("a");
+    t.mockInput.pressEnter({ shift: true });
+    await t.mockInput.typeText("b");
+    t.mockInput.pressEnter({ shift: true });
+    await t.mockInput.typeText("c");
+    await t.renderOnce();
+    const after = t
+      .captureCharFrame()
+      .split("\n")
+      .findIndex((r) => r.startsWith("─"));
+    expect(after).toBe(before - 2);
+    expect(t.captureCharFrame()).toContain("Echo: first");
   });
 
   test("the guide mentions @ file", async () => {
