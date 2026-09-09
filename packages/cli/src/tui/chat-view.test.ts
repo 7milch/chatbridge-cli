@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { StyledText } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { type Expansion, MentionError } from "../mentions/expand-mentions.js";
 import { FileIndex } from "../mentions/file-index.js";
+import { resolveBanner } from "./banner.js";
 import { ChatModel, type ChatSessionLike } from "./chat-model.js";
 import { ChatView, GUIDE } from "./chat-view.js";
+import { styled, theme } from "./theme.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -31,6 +34,7 @@ async function setup(
     paths?: string[];
     expand?: (text: string) => Promise<Expansion>;
     headless?: boolean;
+    banner?: StyledText[];
   } = {},
 ) {
   const t = await createTestRenderer({
@@ -50,6 +54,13 @@ async function setup(
     providerName: "dummy-chat",
     timeoutMs: 2_000,
     headless: opts.headless ?? true,
+    banner:
+      opts.banner ??
+      resolveBanner({
+        name: "test-cli",
+        version: "0.0.1",
+        providerName: "dummy-chat",
+      }),
     index: FileIndex.fromPaths(
       opts.paths ?? ["src/chat-view.ts", "src/chat-model.ts", "README.md"],
     ),
@@ -173,6 +184,7 @@ describe("ChatView", () => {
       providerName: "dummy-chat",
       timeoutMs: 2_000,
       headless: true,
+      banner: [],
       index: FileIndex.fromPaths([]),
     });
     teardown = () => {
@@ -398,6 +410,44 @@ describe("ChatView", () => {
     expect(frame).toContain("read @nope.ts");
     expect(t.model.status).toBe("idle");
     expect(t.model.fatal).toBeUndefined();
+  });
+
+  test("the banner is centred in the empty history", async () => {
+    const t = await setup();
+    const rows = t.captureCharFrame().split("\n");
+    const title = rows.findIndex((r) => r.includes("test-cli v0.0.1"));
+    expect(title).toBeGreaterThan(2);
+    expect(rows[title + 1]).toContain(
+      "Connected to dummy-chat. Type a message, or @ to attach a file.",
+    );
+    // Centred: roughly as much blank space left as right.
+    const line = rows[title] ?? "";
+    const left = line.length - line.trimStart().length;
+    const right = line.length - line.trimEnd().length;
+    expect(Math.abs(left - right)).toBeLessThanOrEqual(1);
+    // Vertically centred between the header (2 rows) and the input.
+    const inputTop = rows.findIndex((r) => r.includes("┌"));
+    expect(Math.abs(title - 2 - (inputTop - title - 2))).toBeLessThanOrEqual(2);
+  });
+
+  test("a vendor banner is drawn line by line and over-wide lines are cut", async () => {
+    const t = await setup({
+      banner: ["ACME", "x".repeat(120)].map((l) => styled(theme.muted(l))),
+    });
+    const frame = t.captureCharFrame();
+    expect(frame).toContain("ACME");
+    expect(frame).toContain("x".repeat(80));
+    expect(frame).not.toContain("x".repeat(81));
+    for (const row of frame.split("\n"))
+      expect(row.length).toBeLessThanOrEqual(80);
+  });
+
+  test("the banner disappears with the first message and never returns", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("Echo: hello");
+    expect(frame).not.toContain("test-cli v0.0.1");
   });
 
   test("the guide mentions @ file", async () => {

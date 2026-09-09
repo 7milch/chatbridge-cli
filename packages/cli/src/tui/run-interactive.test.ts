@@ -49,6 +49,7 @@ describe("waitForQuit", () => {
       providerName: "dummy-chat",
       timeoutMs: 1_000,
       headless: true,
+      banner: [],
       index: FileIndex.fromPaths([]),
     });
     const quit = waitForQuit(t.renderer, model);

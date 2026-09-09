@@ -35,6 +35,8 @@ export interface ChatViewOptions {
   timeoutMs: number;
   /** Shown in the header as "headless" or "headful". */
   headless: boolean;
+  /** Startup banner lines, shown centred until the first message. */
+  banner: StyledText[];
   /** Candidates for `@` mentions. */
   index: FileIndex;
 }
@@ -51,6 +53,9 @@ interface KeypressSource {
  * a mention popup drawn over the bottom of the history while the cursor is
  * inside an `@` mention. */
 export class ChatView {
+  private readonly body: BoxRenderable;
+  private readonly banner: BoxRenderable;
+  private bannerShown = true;
   private readonly history: ScrollBoxRenderable;
   private readonly input: TextareaRenderable;
   private readonly status: TextRenderable;
@@ -92,13 +97,36 @@ export class ChatView {
         marginBottom: 1,
       }),
     );
+    this.body = new BoxRenderable(renderer, {
+      id: "body",
+      flexGrow: 1,
+      // The slot's content (banner, then a growing history) must never size
+      // it: without a zero basis the body takes a row from the input box.
+      flexShrink: 1,
+      flexBasis: 0,
+      minHeight: 0,
+      flexDirection: "column",
+    });
+    root.add(this.body);
+    this.banner = new BoxRenderable(renderer, {
+      id: "banner",
+      flexGrow: 1,
+      flexDirection: "column",
+      justifyContent: "center",
+      alignItems: "center",
+    });
+    for (const line of opts.banner) {
+      this.banner.add(
+        new TextRenderable(renderer, { content: line, wrapMode: "none" }),
+      );
+    }
     this.history = new ScrollBoxRenderable(renderer, {
       id: "history",
       flexGrow: 1,
       stickyScroll: true,
       stickyStart: "bottom",
     });
-    root.add(this.history);
+    this.body.add(this.banner);
 
     const inputBox = new BoxRenderable(renderer, {
       id: "input-box",
@@ -175,6 +203,11 @@ export class ChatView {
     // A turn still in flight when the view is destroyed would otherwise
     // write to renderables the renderer has already torn down.
     if (this.destroyed) return;
+    if (this.bannerShown && this.model.messages.length > 0) {
+      this.bannerShown = false;
+      this.body.remove(this.banner);
+      this.body.add(this.history);
+    }
     for (; this.rendered < this.model.messages.length; this.rendered++) {
       const message = this.model.messages[this.rendered];
       if (message) this.history.add(this.messageBox(message));
