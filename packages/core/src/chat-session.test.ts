@@ -33,6 +33,7 @@ interface Harness {
   sent: string[];
   replies: Array<ReturnType<typeof deferred<string>>>;
   closed: number;
+  killed: number;
   saved: number;
   saveShouldFail: boolean;
   launch: () => Promise<RuntimeLike>;
@@ -48,6 +49,7 @@ function harness(): Harness {
     sent: [],
     replies: [],
     closed: 0,
+    killed: 0,
     saved: 0,
     saveShouldFail: false,
     loggedIn: true,
@@ -92,6 +94,9 @@ function harness(): Harness {
     },
     close: async () => {
       h.closed++;
+    },
+    kill: async () => {
+      h.killed++;
     },
   });
   return h;
@@ -368,5 +373,43 @@ describe("ChatSession.close", () => {
     );
     expect(h.saved).toBe(0);
     expect(h.closed).toBe(1);
+  });
+});
+
+describe("ChatSession.kill", () => {
+  test("kills the runtime without saving auth state", async () => {
+    const h = harness();
+    const session = await ChatSession.open(opts(h));
+    await session.kill();
+    expect(h.killed).toBe(1);
+    expect(h.saved).toBe(0);
+    expect(h.closed).toBe(0);
+  });
+
+  test("is idempotent and blocks close() afterwards", async () => {
+    const h = harness();
+    const session = await ChatSession.open(opts(h));
+    await session.kill();
+    await session.kill();
+    await session.close();
+    expect(h.killed).toBe(1);
+    expect(h.closed).toBe(0);
+  });
+
+  test("send() after kill() throws InvalidStateError", async () => {
+    const h = harness();
+    const session = await ChatSession.open(opts(h));
+    await session.kill();
+    await expect(session.send("x")).rejects.toBeInstanceOf(InvalidStateError);
+  });
+
+  test("kill() during a pending send makes that send reject", async () => {
+    const h = harness();
+    const session = await ChatSession.open(opts(h));
+    const p = session.send("one");
+    const reply = await replyOf(h, 0);
+    await session.kill();
+    reply.reject(new Error("Target page, context or browser has been closed"));
+    await expect(p).rejects.toThrow("has been closed");
   });
 });

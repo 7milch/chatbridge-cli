@@ -84,7 +84,11 @@ function sessionOpts(onClose: () => void) {
     authStore: { has: () => true } as unknown as AuthStore,
     headless: true,
     timeoutMs: 1000,
-    launch: async () => ({ page, close: async () => onClose() }),
+    launch: async () => ({
+      page,
+      close: async () => onClose(),
+      kill: async () => {},
+    }),
   };
 }
 

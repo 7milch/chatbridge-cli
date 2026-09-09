@@ -18,6 +18,7 @@ export interface RuntimeLike {
   readonly page: Page;
   saveAuthState(): Promise<void>;
   close(): Promise<void>;
+  kill(): Promise<void>;
 }
 
 export interface ChatSessionOptions {
@@ -170,5 +171,14 @@ export class ChatSession {
     } finally {
       await this.rt.close();
     }
+  }
+
+  /** Force-ends the browser without saving the auth state: the page is
+   * presumed hung, so `isLoggedIn` cannot be trusted. Idempotent with
+   * `close()` — whichever runs first wins. */
+  async kill(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    await this.rt.kill();
   }
 }
