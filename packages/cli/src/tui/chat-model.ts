@@ -54,11 +54,16 @@ export class ChatModel {
     if (!prompt || this.status === "busy" || this.fatal !== undefined) {
       return false;
     }
+    // Claim the turn before awaiting, so a second Enter in the same tick is
+    // rejected by the guard above instead of racing through expansion.
+    // No onChange yet: nothing observable has changed for the view.
+    this.status = "busy";
     let expansion: Expansion;
     try {
       expansion = await this.expand(prompt);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      this.status = "idle";
       this.messages.push({ role: "error", text: message });
       // A mention problem is the user's to fix; anything else is a bug.
       if (!(err instanceof MentionError)) this.fatal = err;
@@ -70,7 +75,6 @@ export class ChatModel {
       message.attachments = expansion.attachments;
     }
     this.messages.push(message);
-    this.status = "busy";
     this.onChange();
     try {
       const reply = await this.session.send(expansion.prompt);

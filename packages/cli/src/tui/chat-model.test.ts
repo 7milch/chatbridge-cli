@@ -188,4 +188,25 @@ describe("ChatModel.submit", () => {
     expect(model.messages).toEqual([{ role: "error", text: "disk on fire" }]);
     expect(model.fatal).toBe(boom);
   });
+
+  test("a second submit issued while mentions expand is rejected", async () => {
+    const { session, calls, replies } = fakeSession();
+    const model = new ChatModel(session, {
+      expand: async (text) => {
+        await tick();
+        return { prompt: text, attachments: [] };
+      },
+    });
+    const first = model.submit("one");
+    const second = model.submit("two"); // same tick, expansion still pending
+    expect(await second).toBe(false);
+    await tick();
+    expect(calls).toEqual(["one"]);
+    replies[0]?.resolve("ok");
+    expect(await first).toBe(true);
+    expect(model.messages).toEqual([
+      { role: "user", text: "one" },
+      { role: "assistant", text: "ok" },
+    ]);
+  });
 });
