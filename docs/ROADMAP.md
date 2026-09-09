@@ -109,6 +109,22 @@ mock competition (five HTML mocks, 2026-09-09); the pick is mock 5:
 Mocks: `docs/superpowers/mocks/2026-09-09-tui-mocks.html`.
 Shipped with `createCli({ version, banner })` and `--version`; spec: `docs/superpowers/specs/2026-09-09-tui-visual-redesign-design.md`.
 
+### 8. Ctrl+R: reopen the browser from the TUI — in progress (issue #34)
+
+Promoted from the backlog (brainstormed 2026-09-10; the design is being
+re-brainstormed from scratch, so the notes below are a starting point):
+
+- Reset = close the browser and open a new one (auth state restored, new
+  chat, history cleared, banner shown again), not just `startNewChat`
+- Fatal non-timeout errors stop exiting immediately: the model enters a
+  `dead` state, the status row says `Ctrl+R reopen · Ctrl+C quit`, and
+  Ctrl+C returns the last fatal error; `AuthExpiredError` / `BlockedError`
+  / `AuthRequiredError` still exit at once
+- Core stays unchanged: `ChatModel` gets an `openSession` factory and a
+  `reset()` that closes the old session (5 s cap), clears the history, and
+  opens a new one; a send rejected by that close is swallowed
+- Ctrl+R works while a turn is pending (the main use: a hung page)
+
 ### 5. Company adoption
 
 Company repository builds `company-ai-cli` via `createCli({ name, provider, configDir })`
@@ -133,17 +149,6 @@ Not scheduled. Each item becomes a milestone when picked up.
   stays verbatim by default.
 - **Live re-scan of the mention index.** New files appear without a
   restart.
-- **Ctrl+R: reopen the browser from the TUI.** Brainstormed 2026-09-10.
-  Reset = close the browser and open a new one (auth state restored, new
-  chat, history cleared, banner shown again), not just `startNewChat`.
-  Fatal non-timeout errors stop exiting immediately: the model enters a
-  `dead` state, the status row says `Ctrl+R reopen · Ctrl+C quit`, and
-  Ctrl+C returns the last fatal error; `AuthExpiredError` / `BlockedError`
-  / `AuthRequiredError` still exit at once. Core stays unchanged:
-  `ChatModel` gets an `openSession` factory and a `reset()` that closes
-  the old session (5 s cap), clears the history, and opens a new one; a
-  send rejected by that close is swallowed. Ctrl+R works while a turn is
-  pending (the main use: a hung page).
 
 ## Standing design rules
 
