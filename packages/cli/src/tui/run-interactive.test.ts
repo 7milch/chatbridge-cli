@@ -48,6 +48,7 @@ describe("waitForQuit", () => {
       title: "test-cli",
       providerName: "dummy-chat",
       timeoutMs: 1_000,
+      headless: true,
       index: FileIndex.fromPaths([]),
     });
     const quit = waitForQuit(t.renderer, model);

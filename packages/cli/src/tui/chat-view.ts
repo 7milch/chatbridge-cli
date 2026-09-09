@@ -3,6 +3,7 @@ import {
   type CliRenderer,
   type KeyEvent,
   ScrollBoxRenderable,
+  type StyledText,
   TextRenderable,
   TextareaRenderable,
 } from "@opentui/core";
@@ -11,16 +12,17 @@ import type { FileIndex } from "../mentions/file-index.js";
 import { mentionAtCursor } from "../mentions/parse-mentions.js";
 import type { ChatModel, Message, Role } from "./chat-model.js";
 import { MAX_ROWS, MentionPopup } from "./mention-popup.js";
+import { styled, theme } from "./theme.js";
 
 export const GUIDE =
   "Enter send · Shift+Enter (or Ctrl+J) newline · @ file · Ctrl+C quit";
 /** Three fixed cells so legacy terminals keep the line aligned. */
 const FRAMES = ["●○○", "○●○", "○○●", "○●○"];
 const FRAME_INTERVAL_MS = 120;
-const LABELS: Record<Role, string> = {
-  user: "You",
-  assistant: "Assistant",
-  error: "Error",
+const LABELS: Record<Role, () => StyledText> = {
+  user: () => styled(theme.user("user")),
+  assistant: () => styled(theme.assistant("assistant")),
+  error: () => styled(theme.error("error")),
 };
 /** Input box (border + 4 lines) and the status line below the history. */
 const INPUT_BOX_HEIGHT = 6;
@@ -31,6 +33,8 @@ export interface ChatViewOptions {
   providerName: string;
   /** Response timeout budget shown next to the elapsed time. */
   timeoutMs: number;
+  /** Shown in the header as "headless" or "headful". */
+  headless: boolean;
   /** Candidates for `@` mentions. */
   index: FileIndex;
 }
@@ -77,7 +81,14 @@ export class ChatView {
     root.add(
       new TextRenderable(renderer, {
         id: "header",
-        content: `${opts.title} · ${opts.providerName}`,
+        content: styled(
+          theme.badge(` ${opts.title} `),
+          " ",
+          theme.muted(
+            `${opts.providerName} · ${opts.headless ? "headless" : "headful"} · ${this.budgetSec}s budget`,
+          ),
+        ),
+        wrapMode: "none",
         marginBottom: 1,
       }),
     );
@@ -116,7 +127,7 @@ export class ChatView {
 
     this.status = new TextRenderable(renderer, {
       id: "status",
-      content: GUIDE,
+      content: styled(theme.muted(GUIDE)),
       // Fixed: a guide longer than the terminal must not wrap and push the
       // input box off the bottom.
       height: STATUS_HEIGHT,
@@ -173,7 +184,7 @@ export class ChatView {
       this.startSpinner();
     } else {
       this.stopSpinner();
-      this.status.content = GUIDE;
+      this.status.content = styled(theme.muted(GUIDE));
     }
   }
 
@@ -263,18 +274,21 @@ export class ChatView {
       marginBottom: 1,
     });
     box.add(
-      new TextRenderable(this.renderer, { content: LABELS[message.role] }),
+      new TextRenderable(this.renderer, { content: LABELS[message.role]() }),
     );
     box.add(
       new TextRenderable(this.renderer, {
-        content: message.text,
+        content:
+          message.role === "error"
+            ? styled(theme.errorText(message.text))
+            : message.text,
         wrapMode: "word",
       }),
     );
     for (const a of message.attachments ?? []) {
       box.add(
         new TextRenderable(this.renderer, {
-          content: `📎 ${a.path} (${formatSize(a.bytes)})`,
+          content: styled(theme.muted(`📎 ${a.path} (${formatSize(a.bytes)})`)),
         }),
       );
     }

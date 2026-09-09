@@ -30,6 +30,7 @@ async function setup(
     session?: ChatSessionLike;
     paths?: string[];
     expand?: (text: string) => Promise<Expansion>;
+    headless?: boolean;
   } = {},
 ) {
   const t = await createTestRenderer({
@@ -48,6 +49,7 @@ async function setup(
     title: "test-cli",
     providerName: "dummy-chat",
     timeoutMs: 2_000,
+    headless: opts.headless ?? true,
     index: FileIndex.fromPaths(
       opts.paths ?? ["src/chat-view.ts", "src/chat-model.ts", "README.md"],
     ),
@@ -86,24 +88,31 @@ async function setup(
 }
 
 describe("ChatView", () => {
-  test("shows the header and the guide when idle", async () => {
+  test("shows the badge header and the guide when idle", async () => {
     const t = await setup();
     const frame = t.captureCharFrame();
-    expect(frame).toContain("test-cli · dummy-chat");
+    expect(frame.split("\n")[0]).toBe(
+      " test-cli  dummy-chat · headless · 2s budget".padEnd(80),
+    );
     expect(frame).toContain(GUIDE);
+  });
+
+  test("header says headful when not headless", async () => {
+    const t = await setup({ headless: false });
+    expect(t.captureCharFrame()).toContain("dummy-chat · headful · 2s budget");
   });
 
   test("Enter submits, clears the box, shows spinner, then the reply", async () => {
     const t = await setup({ delayMs: 300 });
     await t.mockInput.typeText("hello");
     t.mockInput.pressEnter();
-    await t.frameWith("You");
+    await t.frameWith("user");
     expect(t.model.messages[0]).toEqual({ role: "user", text: "hello" });
     const busy = await t.frameWith("Thinking…");
-    expect(busy).toContain("You");
+    expect(busy).toContain("user");
     expect(busy).not.toContain(GUIDE);
     const done = await t.frameWith("Echo: hello");
-    expect(done).toContain("Assistant");
+    expect(done).toContain("assistant");
     expect(done).toContain(GUIDE);
   });
 
@@ -113,7 +122,7 @@ describe("ChatView", () => {
     t.mockInput.pressEnter({ shift: true });
     await t.mockInput.typeText("two");
     t.mockInput.pressEnter();
-    await t.frameWith("You");
+    await t.frameWith("user");
     expect(t.model.messages[0]).toEqual({ role: "user", text: "one\ntwo" });
   });
 
@@ -123,7 +132,7 @@ describe("ChatView", () => {
     t.mockInput.pressKey("LINEFEED");
     await t.mockInput.typeText("two");
     t.mockInput.pressEnter();
-    await t.frameWith("You");
+    await t.frameWith("user");
     expect(t.model.messages[0]).toEqual({ role: "user", text: "one\ntwo" });
   });
 
@@ -134,7 +143,7 @@ describe("ChatView", () => {
     t.mockInput.pressKey("j", { ctrl: true });
     await t.mockInput.typeText("two");
     t.mockInput.pressEnter();
-    await t.frameWith("You");
+    await t.frameWith("user");
     expect(t.model.messages[0]).toEqual({ role: "user", text: "one\ntwo" });
   });
 
@@ -151,7 +160,7 @@ describe("ChatView", () => {
     expect(frame).toContain("second");
   });
 
-  test("error messages are labelled Error", async () => {
+  test("error messages are labelled error", async () => {
     const t = await createTestRenderer({ width: 60, height: 20 });
     const model = new ChatModel({
       async send() {
@@ -163,6 +172,7 @@ describe("ChatView", () => {
       title: "test-cli",
       providerName: "dummy-chat",
       timeoutMs: 2_000,
+      headless: true,
       index: FileIndex.fromPaths([]),
     });
     teardown = () => {
@@ -172,7 +182,7 @@ describe("ChatView", () => {
     await model.submit("x");
     await t.renderOnce();
     const frame = t.captureCharFrame();
-    expect(frame).toContain("Error");
+    expect(frame).toContain("error");
     expect(frame).toContain("page closed");
   });
 
@@ -180,7 +190,7 @@ describe("ChatView", () => {
     const t = await setup({ delayMs: 200 });
     await t.mockInput.typeText("hello");
     t.mockInput.pressEnter();
-    await t.frameWith("You");
+    await t.frameWith("user");
     expect(t.model.status).toBe("busy");
     // Teardown mid-turn: the reply lands after the renderer is gone.
     t.view.destroy();
@@ -306,9 +316,9 @@ describe("ChatView", () => {
     expect(t.model.messages).toEqual([]);
     expect(t.captureCharFrame()).toContain("@a.ts ");
     // A second Enter, popup closed, sends (submit is async: wait for the
-    // "You" entry rather than a single render pass).
+    // "user" entry rather than a single render pass).
     t.mockInput.pressEnter();
-    await t.frameWith("You");
+    await t.frameWith("user");
     expect(t.model.messages[0]?.text).toBe("@a.ts");
   });
 
@@ -322,7 +332,7 @@ describe("ChatView", () => {
     expect(frame).not.toContain("a.ts");
     // Enter now reaches the textarea again rather than the popup.
     t.mockInput.pressEnter();
-    await t.frameWith("You");
+    await t.frameWith("user");
     expect(t.model.messages[0]?.text).toBe("hi @a");
   });
 
@@ -384,7 +394,7 @@ describe("ChatView", () => {
     await t.renderOnce();
     t.mockInput.pressEnter();
     const frame = await t.frameWith("@nope.ts: not found");
-    expect(frame).toContain("Error");
+    expect(frame).toContain("error");
     expect(frame).toContain("read @nope.ts");
     expect(t.model.status).toBe("idle");
     expect(t.model.fatal).toBeUndefined();

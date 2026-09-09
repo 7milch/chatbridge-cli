@@ -97,6 +97,7 @@ export async function runInteractive(
       title: opts.title,
       providerName: opts.provider.name,
       timeoutMs: opts.timeoutMs,
+      headless: opts.headless,
       index,
     });
     const quit = waitForQuit(renderer, model);
