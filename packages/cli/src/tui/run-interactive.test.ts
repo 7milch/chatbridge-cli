@@ -39,10 +39,82 @@ describe("waitForQuit", () => {
     t.renderer.destroy();
     expect(await quit).toBeUndefined();
   });
+
+  test("does not resolve on a fatal error; Ctrl+C then returns it", async () => {
+    const t = await createTestRenderer({ width: 40, height: 12 });
+    const boom = new Error("page closed");
+    const model = new ChatModel(
+      {
+        async send() {
+          throw boom;
+        },
+        async close() {},
+        async kill() {},
+      },
+      {
+        openSession: async () => {
+          throw new Error("not expected");
+        },
+        expand: async (text) => ({ prompt: text, attachments: [] }),
+      },
+    );
+    const view = new ChatView(t.renderer, model, {
+      title: "test-cli",
+      providerName: "dummy-chat",
+      timeoutMs: 1_000,
+      headless: true,
+      banner: [],
+      index: FileIndex.fromPaths([]),
+    });
+    const quit = waitForQuit(t.renderer, model);
+    await model.submit("x");
+    expect(model.status).toBe("dead");
+    const raced = await Promise.race([
+      quit.then(() => "resolved"),
+      new Promise((r) => setTimeout(() => r("pending"), 50)),
+    ]);
+    expect(raced).toBe("pending");
+    t.mockInput.pressKey("c", { ctrl: true });
+    expect(await quit).toBe(boom);
+    view.destroy();
+    t.renderer.destroy();
+  });
+
+  test("Ctrl+C from a healthy model resolves undefined", async () => {
+    const t = await createTestRenderer({ width: 40, height: 12 });
+    const model = new ChatModel(
+      {
+        async send() {
+          return "";
+        },
+        async close() {},
+        async kill() {},
+      },
+      {
+        openSession: async () => {
+          throw new Error("not expected");
+        },
+      },
+    );
+    const view = new ChatView(t.renderer, model, {
+      title: "test-cli",
+      providerName: "dummy-chat",
+      timeoutMs: 1_000,
+      headless: true,
+      banner: [],
+      index: FileIndex.fromPaths([]),
+    });
+    const quit = waitForQuit(t.renderer, model);
+    t.mockInput.pressKey("c", { ctrl: true });
+    expect(await quit).toBeUndefined();
+    view.destroy();
+    t.renderer.destroy();
+  });
 });
 
-/** Minimal ChatSession dependencies: a provider that never needs a browser. */
-function sessionOpts(onClose: () => void) {
+/** Minimal ChatSession dependencies: a provider that never needs a browser.
+ * `launches` grows by one runtime record per BrowserRuntime.launch call. */
+function sessionOpts() {
   const provider: Provider = {
     name: "fake",
     chatUrl: "http://127.0.0.1:1/chat",
@@ -60,41 +132,52 @@ function sessionOpts(onClose: () => void) {
     setDefaultTimeout() {},
     goto: async () => null,
   } as unknown as Page;
+  const launches: Array<{ closed: number; killed: number }> = [];
   return {
-    title: "test-cli",
-    provider,
-    authStore: { has: () => true } as unknown as AuthStore,
-    headless: true,
-    timeoutMs: 1000,
-    launch: async () => ({
-      page,
-      close: async () => onClose(),
-      kill: async () => {},
-    }),
+    launches,
+    opts: {
+      title: "test-cli",
+      provider,
+      authStore: { has: () => true } as unknown as AuthStore,
+      headless: true,
+      timeoutMs: 1000,
+      launch: async () => {
+        const rec = { closed: 0, killed: 0 };
+        launches.push(rec);
+        return {
+          page,
+          saveAuthState: async () => {},
+          close: async () => {
+            rec.closed++;
+          },
+          kill: async () => {
+            rec.killed++;
+          },
+        };
+      },
+    },
   };
 }
 
 describe("runInteractive", () => {
   test("closes the session when the renderer fails to start", async () => {
-    let closed = 0;
+    const s = sessionOpts();
     const boom = new Error("no tty");
     await expect(
       runInteractive({
-        ...sessionOpts(() => {
-          closed++;
-        }),
+        ...s.opts,
         createRenderer: () => Promise.reject(boom),
         index: FileIndex.fromPaths([]),
       }),
     ).rejects.toBe(boom);
-    expect(closed).toBe(1);
+    expect(s.launches[0]?.closed).toBe(1);
   });
 
   test("shows the default banner with the provider name, then quits on destroy", async () => {
     const t = await createTestRenderer({ width: 80, height: 20 });
     let frame = "";
     const run = runInteractive({
-      ...sessionOpts(() => {}),
+      ...sessionOpts().opts,
       version: "1.2.3",
       createRenderer: async () => t.renderer,
       index: FileIndex.fromPaths([]),
@@ -119,7 +202,7 @@ describe("runInteractive", () => {
     const t = await createTestRenderer({ width: 80, height: 20 });
     let frame = "";
     const run = runInteractive({
-      ...sessionOpts(() => {}),
+      ...sessionOpts().opts,
       banner: ["ACME BANNER"],
       createRenderer: async () => t.renderer,
       index: FileIndex.fromPaths([]),
@@ -136,5 +219,37 @@ describe("runInteractive", () => {
       t.renderer.destroy();
     }
     await run;
+  });
+
+  test("teardown closes the session that is current after a reset", async () => {
+    const t = await createTestRenderer({ width: 80, height: 20 });
+    const s = sessionOpts();
+    const run = runInteractive({
+      ...s.opts,
+      createRenderer: async () => t.renderer,
+      index: FileIndex.fromPaths([]),
+    });
+    let frame = "";
+    for (let i = 0; i < 50 && !frame.includes("Ctrl+R reopen"); i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      await t.renderOnce();
+      frame = t.captureCharFrame();
+    }
+    t.mockInput.pressKey("r", { ctrl: true });
+    for (let i = 0; i < 50 && !frame.includes("── reopened ──"); i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      await t.renderOnce();
+      frame = t.captureCharFrame();
+    }
+    try {
+      expect(frame).toContain("── reopened ──");
+      expect(s.launches).toHaveLength(2);
+      expect(s.launches[0]?.closed).toBe(1);
+      expect(s.launches[1]?.closed).toBe(0);
+    } finally {
+      t.mockInput.pressKey("c", { ctrl: true });
+    }
+    expect(await run).toEqual({});
+    expect(s.launches[1]?.closed).toBe(1);
   });
 });
