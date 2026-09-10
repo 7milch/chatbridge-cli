@@ -58,9 +58,7 @@ async function setup(
   } = {},
 ) {
   const t = await createTestRenderer({
-    // Wide enough for the full guide (83 cells); tests that assert
-    // 80-column geometry pass `width: 80` explicitly.
-    width: opts.width ?? 90,
+    width: opts.width ?? 80,
     height: 20,
     kittyKeyboard: opts.kittyKeyboard ?? false,
   });
@@ -128,7 +126,7 @@ describe("ChatView", () => {
     const t = await setup();
     const frame = t.captureCharFrame();
     expect(frame.split("\n")[0]).toBe(
-      " test-cli  dummy-chat · headless · 2s budget".padEnd(90),
+      " test-cli  dummy-chat · headless · 2s budget".padEnd(80),
     );
     expect(frame).toContain(GUIDE);
   });
@@ -493,7 +491,6 @@ describe("ChatView", () => {
 
   test("a vendor banner is drawn line by line and over-wide lines are cut", async () => {
     const t = await setup({
-      width: 80,
       banner: ["ACME", "x".repeat(120)].map((l) => styled(theme.muted(l))),
     });
     const frame = t.captureCharFrame();
@@ -517,9 +514,9 @@ describe("ChatView", () => {
     const rows = t.captureCharFrame().split("\n");
     const top = rows.findIndex((r) => r.startsWith("─"));
     expect(top).toBeGreaterThan(0);
-    expect(rows[top]).toBe("─".repeat(90));
+    expect(rows[top]).toBe("─".repeat(80));
     expect(rows[top + 1]).toStartWith("> Type a message");
-    expect(rows[top + 2]).toBe("─".repeat(90));
+    expect(rows[top + 2]).toBe("─".repeat(80));
     expect(rows[top + 3]).toContain(GUIDE);
     expect(t.captureCharFrame()).not.toContain("┌");
   });
@@ -592,8 +589,10 @@ describe("ChatView", () => {
   test("the guide mentions @ file", async () => {
     const t = await setup();
     expect(GUIDE).toBe(
-      "Enter send · Shift+Enter (or Ctrl+J) newline · @ file · Ctrl+R reopen · Ctrl+C quit",
+      "Enter send · Shift+Enter/Ctrl+J newline · @ file · Ctrl+R reopen · Ctrl+C quit",
     );
+    // Must fit an 80-column terminal, or the status row clips.
+    expect([...GUIDE].length).toBeLessThanOrEqual(80);
     expect(t.captureCharFrame()).toContain("@ file");
   });
 

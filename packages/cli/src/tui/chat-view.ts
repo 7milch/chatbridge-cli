@@ -15,7 +15,7 @@ import { MAX_ROWS, MentionPopup } from "./mention-popup.js";
 import { MUTED_COLOR, styled, theme } from "./theme.js";
 
 export const GUIDE =
-  "Enter send · Shift+Enter (or Ctrl+J) newline · @ file · Ctrl+R reopen · Ctrl+C quit";
+  "Enter send · Shift+Enter/Ctrl+J newline · @ file · Ctrl+R reopen · Ctrl+C quit";
 /** Shown instead of GUIDE once a fatal error left the session unusable. */
 export const DEAD_GUIDE = "Ctrl+R reopen · Ctrl+C quit";
 export const RESETTING_STATUS = "Reopening browser...";
