@@ -93,8 +93,14 @@ chat.
 
 - **Enter** sends. **Shift+Enter** (or **Ctrl+J**) inserts a newline;
   Shift+Enter needs a terminal that speaks the kitty keyboard protocol
-  (iTerm2, kitty, WezTerm, Ghostty), Ctrl+J works everywhere. **Ctrl+C**
-  quits.
+  (iTerm2, kitty, WezTerm, Ghostty), Ctrl+J works everywhere. **Ctrl+R**
+  reopens the browser. **Ctrl+C** quits.
+- **Ctrl+R** closes the browser (killing it after 5 s if it will not close),
+  opens a fresh one with the saved auth state, and starts a new chat. The
+  transcript stays on screen with a `── reopened ──` line; the service does
+  not remember the earlier turns, so re-send what you need. Use it when a
+  response hangs. If a fatal error happens mid-conversation the status row
+  shows `Ctrl+R reopen · Ctrl+C quit`; quitting then exits with that error.
 - The screen is a header (CLI name, provider, headless/headful, timeout
   budget), the conversation with `user` / `assistant` / `error` labels, and
   a `>` input between two rules that grows to five rows as you add

@@ -8,6 +8,7 @@ import { FileIndex } from "../mentions/file-index.js";
 import { resolveBanner } from "./banner.js";
 import { ChatModel } from "./chat-model.js";
 import { ChatView } from "./chat-view.js";
+import { closeWithTimeout } from "./close-session.js";
 
 export interface InteractiveOptions extends ChatSessionOptions {
   /** Shown in the header, e.g. the CLI name. */
@@ -37,48 +38,76 @@ interface DestroySource {
   on(event: "destroy", handler: () => void): unknown;
 }
 
-/** What the bounded close needs from a session; lets tests inject a fake. */
-export interface ClosableSession {
-  close(): Promise<void>;
-}
-
 /**
- * Resolves when the user asks to quit: Ctrl+C, a fatal model error (the
- * error is the resolved value), or the renderer being destroyed from
- * outside — OpenTUI installs its own SIGINT/SIGTERM/SIGHUP handlers that
- * destroy the renderer without exiting the process, so without this the
- * caller's promise would stay pending and the browser would keep the
- * process alive.
- *
- * Must be called after the ChatView is built: it chains onto the view's
- * `onChange` handler rather than replacing it.
+ * Resolves when the user asks to quit: Ctrl+C, or the renderer being
+ * destroyed from outside — OpenTUI installs its own SIGINT/SIGTERM/SIGHUP
+ * handlers that destroy the renderer without exiting the process, so
+ * without this the caller's promise would stay pending and the browser
+ * would keep the process alive. A fatal model error does not quit (the
+ * model goes `dead` and Ctrl+R can recover); the resolved value is the
+ * model's `fatal` at quit time so a quit from `dead` reports the error.
  */
 export function waitForQuit(
   renderer: CliRenderer,
   model: ChatModel,
 ): Promise<unknown> {
   return new Promise<unknown>((resolve) => {
-    const notify = model.onChange;
-    model.onChange = () => {
-      notify();
-      if (model.fatal !== undefined) resolve(model.fatal);
-    };
     (renderer.keyInput as unknown as KeypressSource).on("keypress", (key) => {
-      if (key.ctrl && key.name === "c") resolve(undefined);
+      if (key.ctrl && key.name === "c") resolve(model.fatal);
     });
     (renderer as unknown as DestroySource).on("destroy", () =>
-      resolve(undefined),
+      resolve(model.fatal),
     );
   });
 }
 
+/** Waits for an in-flight reset to settle, capped at CLOSE_TIMEOUT_MS.
+ * True when there was nothing to wait for or it settled in time; false when
+ * it did not, in which case the caller must not assume which session is
+ * current and hard-exits instead. */
+async function settleReset(
+  pending: Promise<void> | undefined,
+): Promise<boolean> {
+  if (pending === undefined) return true;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      // A rejecting reset still counts as settled; it must never escape from
+      // the caller's `finally`.
+      pending.then(
+        () => true,
+        () => true,
+      ),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), CLOSE_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 /** Opens a ChatSession (errors propagate before any UI exists), runs the
- * TUI until Ctrl+C or a fatal error, then restores the terminal.
- * Resolves with the fatal error, if any, for the caller to report. */
+ * TUI until the user quits, then restores the terminal. Resolves with the
+ * model's unrecovered fatal error, if any, for the caller to report. */
 export async function runInteractive(
   opts: InteractiveOptions,
 ): Promise<{ fatal?: unknown }> {
-  const session = await ChatSession.open(opts);
+  // Progress messages go to stderr, which would land on top of the live TUI.
+  // Forward them directly only until the renderer takes over the terminal;
+  // after that a reopen's "Opening browser..." is reported by the status row.
+  // Messages are buffered rather than dropped, so what `close()` reports at
+  // teardown ("Could not save auth state: ...") still reaches the user; the
+  // buffer is flushed once the terminal has been restored. A mid-session
+  // reset's messages are flushed then too, which is acceptable.
+  let uiUp = false;
+  const buffered: string[] = [];
+  const onProgress = (message: string) => {
+    if (uiUp) buffered.push(message);
+    else opts.onProgress?.(message);
+  };
+  const sessionOpts: InteractiveOptions = { ...opts, onProgress };
+  const session = await ChatSession.open(sessionOpts);
   let index: FileIndex;
   let renderer: CliRenderer;
   try {
@@ -92,8 +121,11 @@ export async function runInteractive(
     throw err;
   }
   let view: ChatView | undefined;
+  let model: ChatModel | undefined;
   try {
-    const model = new ChatModel(session);
+    model = new ChatModel(session, {
+      openSession: () => ChatSession.open(sessionOpts),
+    });
     view = new ChatView(renderer, model, {
       title: opts.title,
       providerName: opts.provider.name,
@@ -108,43 +140,38 @@ export async function runInteractive(
       index,
     });
     const quit = waitForQuit(renderer, model);
+    uiUp = true;
     renderer.start();
     const fatal = await quit;
     return fatal === undefined ? {} : { fatal };
   } finally {
     view?.setStatus(CLOSING_STATUS);
-    const closed = await closeWithTimeout(session, CLOSE_TIMEOUT_MS);
+    // A reset in flight has already closed the old session and is about to
+    // assign a new one; closing model.session now would leak that new browser
+    // and its Playwright connection would keep the process alive. Wait for the
+    // reset to settle first, under the same cap.
+    const settled = await settleReset(model?.pendingReset);
+    // After a reset the original `session` is already closed; close whichever
+    // one the model holds now.
+    const closed =
+      settled &&
+      (await closeWithTimeout(model?.session ?? session, CLOSE_TIMEOUT_MS));
     view?.destroy();
     renderer.destroy();
+    // The terminal is ours again: anything the teardown reported can be
+    // printed now.
+    uiUp = false;
+    for (const message of buffered) opts.onProgress?.(message);
+    buffered.length = 0;
     if (!closed) {
       // The Playwright connection would keep the event loop alive forever;
       // the terminal is restored by now, so exiting hard is safe here.
-      process.stderr.write("browser did not close within 5 s; exiting\n");
+      process.stderr.write(
+        settled
+          ? "browser did not close within 5 s; exiting\n"
+          : "browser reopen did not finish within 5 s; exiting\n",
+      );
       process.exit(1);
     }
-  }
-}
-
-/** Playwright close can hang on a wedged browser; never block exit on it.
- * Returns true when the session closed within `ms`. Close errors are
- * swallowed: teardown must not mask the result the caller is returning. */
-export async function closeWithTimeout(
-  session: ClosableSession,
-  ms: number,
-): Promise<boolean> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<boolean>((resolve) => {
-    timer = setTimeout(() => resolve(false), ms);
-  });
-  try {
-    return await Promise.race([
-      session.close().then(
-        () => true,
-        () => true,
-      ),
-      deadline,
-    ]);
-  } finally {
-    clearTimeout(timer);
   }
 }

@@ -109,6 +109,17 @@ mock competition (five HTML mocks, 2026-09-09); the pick is mock 5:
 Mocks: `docs/superpowers/mocks/2026-09-09-tui-mocks.html`.
 Shipped with `createCli({ version, banner })` and `--version`; spec: `docs/superpowers/specs/2026-09-09-tui-visual-redesign-design.md`.
 
+### 8. Ctrl+R: reopen the browser from the TUI — done (issue #34, PR #35, 2026-09-10)
+
+Ctrl+R closes the browser (5 s cap, then SIGKILL via the new
+`BrowserRuntime.kill()` / `ChatSession.kill()`), opens a fresh one with the
+saved auth state, and marks the kept history with `── reopened ──`. It works
+mid-turn — the main use is a hung page. Fatal errors no longer quit the TUI:
+the model enters `dead`, the status row offers `Ctrl+R reopen · Ctrl+C quit`,
+and quitting reports the error. Core stays UI-free; the state machine and
+the close cap live in `@chatbridge/cli`.
+Spec: `docs/superpowers/specs/2026-09-10-browser-reopen-design.md`.
+
 ### 5. Company adoption
 
 Company repository builds `company-ai-cli` via `createCli({ name, provider, configDir })`
@@ -133,17 +144,6 @@ Not scheduled. Each item becomes a milestone when picked up.
   stays verbatim by default.
 - **Live re-scan of the mention index.** New files appear without a
   restart.
-- **Ctrl+R: reopen the browser from the TUI.** Brainstormed 2026-09-10.
-  Reset = close the browser and open a new one (auth state restored, new
-  chat, history cleared, banner shown again), not just `startNewChat`.
-  Fatal non-timeout errors stop exiting immediately: the model enters a
-  `dead` state, the status row says `Ctrl+R reopen · Ctrl+C quit`, and
-  Ctrl+C returns the last fatal error; `AuthExpiredError` / `BlockedError`
-  / `AuthRequiredError` still exit at once. Core stays unchanged:
-  `ChatModel` gets an `openSession` factory and a `reset()` that closes
-  the old session (5 s cap), clears the history, and opens a new one; a
-  send rejected by that close is swallowed. Ctrl+R works while a turn is
-  pending (the main use: a hung page).
 
 ## Standing design rules
 

@@ -18,6 +18,7 @@ export interface RuntimeLike {
   readonly page: Page;
   saveAuthState(): Promise<void>;
   close(): Promise<void>;
+  kill(): Promise<void>;
 }
 
 export interface ChatSessionOptions {
@@ -36,6 +37,7 @@ export interface ChatSessionOptions {
 export class ChatSession {
   private pending = false;
   private closed = false;
+  private killed = false;
 
   private constructor(
     private readonly rt: RuntimeLike,
@@ -170,5 +172,20 @@ export class ChatSession {
     } finally {
       await this.rt.close();
     }
+  }
+
+  /** Force-ends the browser without saving the auth state: the page is
+   * presumed hung, so `isLoggedIn` cannot be trusted.
+   *
+   * A kill always wins: it runs even while a `close()` is still parked on the
+   * hung page (the usual case — the caller falls back to kill after a close
+   * timed out). That `close()` then fails its `isLoggedIn`, swallows the
+   * error, and its `rt.close()` is a no-op after the kill. A `close()` started
+   * after a kill is a no-op, and a second `kill()` is a no-op. */
+  async kill(): Promise<void> {
+    if (this.killed) return;
+    this.killed = true;
+    this.closed = true;
+    await this.rt.kill();
   }
 }

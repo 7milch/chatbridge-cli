@@ -104,4 +104,32 @@ describe("BrowserRuntime (headless Chromium on Bun)", () => {
     );
     expect(names).toContain("test-db");
   }, 60_000);
+
+  test("kill() ends the browser process and is idempotent", async () => {
+    const server = await startDummyChat(0);
+    cleanups.push(server.stop);
+    const provider = createDummyProvider(server.url);
+    const store = tempStore(provider.name);
+
+    const rt = await BrowserRuntime.launch({
+      headless: true,
+      provider,
+      authStore: store,
+    });
+    await rt.page.goto(provider.chatUrl);
+    expect(rt.page.isClosed()).toBe(false);
+
+    await rt.kill();
+    // The page belongs to a browser that is gone; Playwright reports it closed
+    // once the disconnect has propagated.
+    for (let i = 0; i < 100 && !rt.page.isClosed(); i++) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(rt.page.isClosed()).toBe(true);
+
+    // A second kill (process already gone) must not throw.
+    await rt.kill();
+    // close() after kill() must not throw either: teardown paths call it.
+    await rt.close();
+  }, 60_000);
 });

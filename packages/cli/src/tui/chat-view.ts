@@ -15,11 +15,14 @@ import { MAX_ROWS, MentionPopup } from "./mention-popup.js";
 import { MUTED_COLOR, styled, theme } from "./theme.js";
 
 export const GUIDE =
-  "Enter send · Shift+Enter (or Ctrl+J) newline · @ file · Ctrl+C quit";
+  "Enter send · Shift+Enter/Ctrl+J newline · @ file · Ctrl+R reopen · Ctrl+C quit";
+/** Shown instead of GUIDE once a fatal error left the session unusable. */
+export const DEAD_GUIDE = "Ctrl+R reopen · Ctrl+C quit";
+export const RESETTING_STATUS = "Reopening browser...";
 /** Three fixed cells so legacy terminals keep the line aligned. */
 const FRAMES = ["●○○", "○●○", "○○●", "○●○"];
 const FRAME_INTERVAL_MS = 120;
-const LABELS: Record<Role, () => StyledText> = {
+const LABELS: Record<Exclude<Role, "separator">, () => StyledText> = {
   user: () => styled(theme.user("user")),
   assistant: () => styled(theme.assistant("assistant")),
   error: () => styled(theme.error("error")),
@@ -179,11 +182,7 @@ export class ChatView {
       const text = this.input.plainText;
       // Mirrors the cases ChatModel.submit drops synchronously, so the
       // textarea is never cleared for input the model is going to ignore.
-      if (
-        !text.trim() ||
-        this.model.status === "busy" ||
-        this.model.fatal !== undefined
-      ) {
+      if (!text.trim() || this.model.status !== "idle") {
         return;
       }
       this.input.clear();
@@ -199,7 +198,7 @@ export class ChatView {
       });
     };
     // Global listener: runs before the focused textarea and can stop it.
-    this.onKeypress = (key) => this.handlePopupKey(key);
+    this.onKeypress = (key) => this.handleKey(key);
     (renderer.keyInput as unknown as KeypressSource).on(
       "keypress",
       this.onKeypress,
@@ -236,11 +235,21 @@ export class ChatView {
       if (message) this.history.add(this.messageBox(message));
     }
     if (this.statusPinned) return;
-    if (this.model.status === "busy") {
-      this.startSpinner();
-    } else {
-      this.stopSpinner();
-      this.status.content = styled(theme.muted(GUIDE));
+    switch (this.model.status) {
+      case "busy":
+        this.startSpinner();
+        break;
+      case "resetting":
+        this.stopSpinner();
+        this.status.content = styled(theme.muted(RESETTING_STATUS));
+        break;
+      case "dead":
+        this.stopSpinner();
+        this.status.content = styled(theme.errorText(DEAD_GUIDE));
+        break;
+      default:
+        this.stopSpinner();
+        this.status.content = styled(theme.muted(GUIDE));
     }
   }
 
@@ -271,11 +280,18 @@ export class ChatView {
     this.stopSpinner();
   }
 
-  /** While the popup is open, navigation and accept keys belong to it and
-   * never reach the textarea. Everything else falls through and the
-   * content/cursor hooks re-run the search. */
-  private handlePopupKey(key: KeyEvent): void {
-    if (this.torn || !this.popup.visible) return;
+  /** Ctrl+R reopens the browser in every state. While the popup is open,
+   * navigation and accept keys belong to it and never reach the textarea.
+   * Everything else falls through and the content/cursor hooks re-run the
+   * search. */
+  private handleKey(key: KeyEvent): void {
+    if (this.torn) return;
+    if (key.ctrl && key.name === "r") {
+      key.preventDefault();
+      void this.model.reset();
+      return;
+    }
+    if (!this.popup.visible) return;
     switch (key.name) {
       case "up":
         this.popup.move(-1);
@@ -354,6 +370,15 @@ export class ChatView {
       flexDirection: "column",
       marginBottom: 1,
     });
+    if (message.role === "separator") {
+      box.add(
+        new TextRenderable(this.renderer, {
+          content: styled(theme.muted(`── ${message.text} ──`)),
+          wrapMode: "none",
+        }),
+      );
+      return box;
+    }
     box.add(
       new TextRenderable(this.renderer, { content: LABELS[message.role]() }),
     );

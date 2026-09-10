@@ -5,7 +5,13 @@ import { type Expansion, MentionError } from "../mentions/expand-mentions.js";
 import { FileIndex } from "../mentions/file-index.js";
 import { resolveBanner } from "./banner.js";
 import { ChatModel, type ChatSessionLike } from "./chat-model.js";
-import { ChatView, GUIDE, MAX_INPUT_ROWS } from "./chat-view.js";
+import {
+  ChatView,
+  DEAD_GUIDE,
+  GUIDE,
+  MAX_INPUT_ROWS,
+  RESETTING_STATUS,
+} from "./chat-view.js";
 import { POPUP_HINT } from "./mention-popup.js";
 import { styled, theme } from "./theme.js";
 
@@ -18,7 +24,18 @@ function echoSession(delayMs: number): ChatSessionLike {
       return `Echo: ${prompt}`;
     },
     async close() {},
+    async kill() {},
   };
+}
+
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 let teardown: (() => void) | undefined;
@@ -32,6 +49,7 @@ async function setup(
     kittyKeyboard?: boolean;
     delayMs?: number;
     session?: ChatSessionLike;
+    openSession?: () => Promise<ChatSessionLike>;
     paths?: string[];
     expand?: (text: string) => Promise<Expansion>;
     headless?: boolean;
@@ -47,6 +65,9 @@ async function setup(
   const model = new ChatModel(
     opts.session ?? echoSession(opts.delayMs ?? 100),
     {
+      openSession:
+        opts.openSession ?? (async () => echoSession(opts.delayMs ?? 100)),
+      closeTimeoutMs: 50,
       expand:
         opts.expand ?? (async (text) => ({ prompt: text, attachments: [] })),
     },
@@ -175,12 +196,20 @@ describe("ChatView", () => {
 
   test("error messages are labelled error", async () => {
     const t = await createTestRenderer({ width: 60, height: 20 });
-    const model = new ChatModel({
-      async send() {
-        throw new Error("page closed");
+    const model = new ChatModel(
+      {
+        async send() {
+          throw new Error("page closed");
+        },
+        async close() {},
+        async kill() {},
       },
-      async close() {},
-    });
+      {
+        openSession: async () => {
+          throw new Error("not expected");
+        },
+      },
+    );
     const view = new ChatView(t.renderer, model, {
       title: "test-cli",
       providerName: "dummy-chat",
@@ -225,6 +254,7 @@ describe("ChatView", () => {
           throw new Error("page closed");
         },
         async close() {},
+        async kill() {},
       },
     });
     await t.mockInput.typeText("first");
@@ -401,6 +431,7 @@ describe("ChatView", () => {
           return "done";
         },
         async close() {},
+        async kill() {},
       },
       expand: async (text) => ({
         prompt: `${text}\n\n### a.ts\n\`\`\`ts\nx\n\`\`\``,
@@ -558,8 +589,98 @@ describe("ChatView", () => {
   test("the guide mentions @ file", async () => {
     const t = await setup();
     expect(GUIDE).toBe(
-      "Enter send · Shift+Enter (or Ctrl+J) newline · @ file · Ctrl+C quit",
+      "Enter send · Shift+Enter/Ctrl+J newline · @ file · Ctrl+R reopen · Ctrl+C quit",
     );
+    // Must fit an 80-column terminal, or the status row clips.
+    expect([...GUIDE].length).toBeLessThanOrEqual(80);
     expect(t.captureCharFrame()).toContain("@ file");
+  });
+
+  test("the guide mentions Ctrl+R reopen", async () => {
+    const t = await setup();
+    expect(t.captureCharFrame()).toContain("Ctrl+R reopen");
+  });
+
+  test("Ctrl+R resets the model and draws a separator", async () => {
+    const t = await setup();
+    t.mockInput.pressKey("r", { ctrl: true });
+    const frame = await t.frameWith("── reopened ──");
+    expect(t.model.status).toBe("idle");
+    expect(frame).toContain(GUIDE);
+    expect(t.model.messages).toEqual([{ role: "separator", text: "reopened" }]);
+  });
+
+  test("Ctrl+R resets the model on kitty terminals too", async () => {
+    const t = await setup({ kittyKeyboard: true });
+    t.mockInput.pressKey("r", { ctrl: true });
+    await t.frameWith("── reopened ──");
+    expect(t.model.status).toBe("idle");
+  });
+
+  test("Ctrl+R while busy replaces the spinner with the resetting status", async () => {
+    const gate = deferred<ChatSessionLike>();
+    const t = await setup({
+      delayMs: 5_000,
+      openSession: () => gate.promise,
+    });
+    await t.mockInput.typeText("hang");
+    t.mockInput.pressEnter();
+    await t.frameWith("Thinking…");
+    t.mockInput.pressKey("r", { ctrl: true });
+    const resetting = await t.frameWith(RESETTING_STATUS);
+    expect(resetting).not.toContain("Thinking…");
+    gate.resolve(echoSession(10));
+    const done = await t.frameWith("── reopened ──");
+    expect(done).toContain(GUIDE);
+    expect(done).toContain("hang"); // history kept
+  });
+
+  test("a fatal error shows the dead guide and Ctrl+R recovers", async () => {
+    const t = await setup({
+      session: {
+        async send() {
+          throw new Error("page closed");
+        },
+        async close() {},
+        async kill() {},
+      },
+    });
+    await t.mockInput.typeText("x");
+    t.mockInput.pressEnter();
+    const dead = await t.frameWith(DEAD_GUIDE);
+    expect(dead).toContain("page closed");
+    expect(dead).not.toContain(GUIDE);
+    t.mockInput.pressKey("r", { ctrl: true });
+    const back = await t.frameWith("── reopened ──");
+    expect(back).toContain(GUIDE);
+    expect(t.model.fatal).toBeUndefined();
+  });
+
+  test("a failed reopen keeps the dead guide and shows the error", async () => {
+    const t = await setup({
+      openSession: async () => {
+        throw new Error("auth gone");
+      },
+    });
+    t.mockInput.pressKey("r", { ctrl: true });
+    const frame = await t.frameWith("auth gone");
+    expect(frame).toContain(DEAD_GUIDE);
+    expect(t.model.status).toBe("dead");
+  });
+
+  test("Ctrl+R works with the mention popup open", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("see @chat");
+    await t.frameWith("src/chat-view.ts");
+    t.mockInput.pressKey("r", { ctrl: true });
+    await t.frameWith("── reopened ──");
+    expect(t.model.status).toBe("idle");
+  });
+
+  test("the separator has no role label", async () => {
+    const t = await setup();
+    await t.model.reset();
+    const frame = await t.frameWith("── reopened ──");
+    expect(frame).not.toContain("separator");
   });
 });
