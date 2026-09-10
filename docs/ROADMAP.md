@@ -109,7 +109,7 @@ mock competition (five HTML mocks, 2026-09-09); the pick is mock 5:
 Mocks: `docs/superpowers/mocks/2026-09-09-tui-mocks.html`.
 Shipped with `createCli({ version, banner })` and `--version`; spec: `docs/superpowers/specs/2026-09-09-tui-visual-redesign-design.md`.
 
-### 8. Ctrl+R: reopen the browser from the TUI — in progress (issue #34)
+### 8. Ctrl+R: reopen the browser from the TUI — done (issue #34, PR #35, 2026-09-10)
 
 Ctrl+R closes the browser (5 s cap, then SIGKILL via the new
 `BrowserRuntime.kill()` / `ChatSession.kill()`), opens a fresh one with the
