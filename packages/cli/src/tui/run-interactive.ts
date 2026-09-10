@@ -72,7 +72,12 @@ async function settleReset(
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      pending.then(() => true),
+      // A rejecting reset still counts as settled; it must never escape from
+      // the caller's `finally`.
+      pending.then(
+        () => true,
+        () => true,
+      ),
       new Promise<boolean>((resolve) => {
         timer = setTimeout(() => resolve(false), CLOSE_TIMEOUT_MS);
       }),
@@ -89,11 +94,17 @@ export async function runInteractive(
   opts: InteractiveOptions,
 ): Promise<{ fatal?: unknown }> {
   // Progress messages go to stderr, which would land on top of the live TUI.
-  // Forward them only until the renderer takes over the terminal; after that
-  // a reopen's "Opening browser..." is reported by the status row instead.
+  // Forward them directly only until the renderer takes over the terminal;
+  // after that a reopen's "Opening browser..." is reported by the status row.
+  // Messages are buffered rather than dropped, so what `close()` reports at
+  // teardown ("Could not save auth state: ...") still reaches the user; the
+  // buffer is flushed once the terminal has been restored. A mid-session
+  // reset's messages are flushed then too, which is acceptable.
   let uiUp = false;
+  const buffered: string[] = [];
   const onProgress = (message: string) => {
-    if (!uiUp) opts.onProgress?.(message);
+    if (uiUp) buffered.push(message);
+    else opts.onProgress?.(message);
   };
   const sessionOpts: InteractiveOptions = { ...opts, onProgress };
   const session = await ChatSession.open(sessionOpts);
@@ -147,10 +158,19 @@ export async function runInteractive(
       (await closeWithTimeout(model?.session ?? session, CLOSE_TIMEOUT_MS));
     view?.destroy();
     renderer.destroy();
+    // The terminal is ours again: anything the teardown reported can be
+    // printed now.
+    uiUp = false;
+    for (const message of buffered) opts.onProgress?.(message);
+    buffered.length = 0;
     if (!closed) {
       // The Playwright connection would keep the event loop alive forever;
       // the terminal is restored by now, so exiting hard is safe here.
-      process.stderr.write("browser did not close within 5 s; exiting\n");
+      process.stderr.write(
+        settled
+          ? "browser did not close within 5 s; exiting\n"
+          : "browser reopen did not finish within 5 s; exiting\n",
+      );
       process.exit(1);
     }
   }

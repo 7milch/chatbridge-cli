@@ -115,8 +115,9 @@ describe("waitForQuit", () => {
 /** Minimal ChatSession dependencies: a provider that never needs a browser.
  * `launches` grows by one runtime record per BrowserRuntime.launch call.
  * `gate`, when given, holds up every launch after the first, so a test can
- * keep a Ctrl+R reset in flight. */
-function sessionOpts(gate?: Promise<void>) {
+ * keep a Ctrl+R reset in flight. `failSave` makes every saveAuthState throw,
+ * so closing reports the failure through onProgress. */
+function sessionOpts(gate?: Promise<void>, failSave = false) {
   const provider: Provider = {
     name: "fake",
     chatUrl: "http://127.0.0.1:1/chat",
@@ -150,7 +151,9 @@ function sessionOpts(gate?: Promise<void>) {
         if (gate !== undefined && launches.length > 1) await gate;
         return {
           page,
-          saveAuthState: async () => {},
+          saveAuthState: async () => {
+            if (failSave) throw new Error("disk full");
+          },
           close: async () => {
             rec.closed++;
           },
@@ -293,6 +296,38 @@ describe("runInteractive", () => {
     expect(s.launches[0]?.closed).toBe(1);
     // The browser opened by the abandoned reset must not be left running.
     expect(s.launches[1]?.closed).toBe(1);
+  });
+
+  test("teardown progress messages are flushed after the terminal is restored", async () => {
+    const t = await createTestRenderer({ width: 80, height: 20 });
+    const s = sessionOpts(undefined, true);
+    const progress: string[] = [];
+    let resolved = false;
+    const run = runInteractive({
+      ...s.opts,
+      onProgress: (m) => progress.push(m),
+      createRenderer: async () => t.renderer,
+      index: FileIndex.fromPaths([]),
+    }).then((r) => {
+      resolved = true;
+      return r;
+    });
+    let frame = "";
+    for (let i = 0; i < 50 && !frame.includes("Ctrl+R reopen"); i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      await t.renderOnce();
+      frame = t.captureCharFrame();
+    }
+    // Nothing from close() yet, and nothing may be printed over the live TUI.
+    expect(progress.some((m) => m.includes("Could not save auth state"))).toBe(
+      false,
+    );
+    t.mockInput.pressKey("c", { ctrl: true });
+    await run;
+    expect(resolved).toBe(true);
+    expect(
+      progress.filter((m) => m.includes("Could not save auth state")),
+    ).toHaveLength(1);
   });
 
   test("progress messages stop once the TUI owns the terminal", async () => {

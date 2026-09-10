@@ -42,6 +42,8 @@ interface Harness {
   block: string | undefined;
   hasDetectBlock: boolean;
   detectBlockCalls: number;
+  /** When set, isLoggedIn awaits this before answering. */
+  loginGate: Promise<unknown> | undefined;
 }
 
 function harness(): Harness {
@@ -56,6 +58,7 @@ function harness(): Harness {
     block: undefined,
     hasDetectBlock: false,
     detectBlockCalls: 0,
+    loginGate: undefined,
     provider: undefined as unknown as Provider,
     launch: undefined as unknown as Harness["launch"],
   };
@@ -64,6 +67,7 @@ function harness(): Harness {
     chatUrl: "http://127.0.0.1:1/chat",
     async navigateToLogin() {},
     async isLoggedIn() {
+      if (h.loginGate !== undefined) await h.loginGate;
       return h.loggedIn;
     },
     async startNewChat() {},
@@ -394,6 +398,24 @@ describe("ChatSession.kill", () => {
     await session.close();
     expect(h.killed).toBe(1);
     expect(h.closed).toBe(0);
+  });
+
+  test("wins over an in-flight close()", async () => {
+    const h = harness();
+    const session = await ChatSession.open({ ...opts(h), timeoutMs: 60_000 });
+    // close() parks on isLoggedIn: the page is hung, which is exactly when
+    // the caller falls back to kill().
+    const gate = deferred<void>();
+    h.loginGate = gate.promise;
+    const closing = session.close();
+    await new Promise((r) => setTimeout(r, 0));
+    await session.kill();
+    expect(h.killed).toBe(1);
+    // Releasing the hung check must not save auth state or throw out of close.
+    gate.reject(new Error("Target page, context or browser has been closed"));
+    await closing;
+    expect(h.saved).toBe(0);
+    expect(h.killed).toBe(1);
   });
 
   test("send() after kill() throws InvalidStateError", async () => {
