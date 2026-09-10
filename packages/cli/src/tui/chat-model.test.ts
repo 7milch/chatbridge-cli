@@ -396,4 +396,27 @@ describe("ChatModel.reset", () => {
     await r;
     expect(b.calls).toEqual([]);
   });
+
+  test("pendingReset is defined while resetting and undefined after", async () => {
+    const h = harness();
+    const gate = deferred<void>();
+    const b = fakeSession("b");
+    const model = new ChatModel(h.first.session, {
+      closeTimeoutMs: 20,
+      openSession: async () => {
+        await gate.promise;
+        return b.session;
+      },
+    });
+    expect(model.pendingReset).toBeUndefined();
+    const r = model.reset();
+    expect(model.pendingReset).toBeDefined();
+    await tick();
+    expect(model.pendingReset).toBeDefined();
+    gate.resolve();
+    await r;
+    expect(model.pendingReset).toBeUndefined();
+    // Awaiting the exposed promise is enough to see the new session.
+    expect(model.session).toBe(b.session);
+  });
 });

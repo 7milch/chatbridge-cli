@@ -54,6 +54,9 @@ export class ChatModel {
   /** Bumped by every reset; a send from an older generation is stale and
    * its outcome is dropped. */
   private generation = 0;
+  /** The reset currently in flight, so teardown can wait for the new
+   * session to exist before closing it. */
+  private pending: Promise<void> | undefined;
   private readonly openSession: () => Promise<ChatSessionLike>;
   private readonly expand: (text: string) => Promise<Expansion>;
   private readonly closeTimeoutMs: number;
@@ -129,12 +132,28 @@ export class ChatModel {
     return true;
   }
 
+  /** The in-flight reset, or undefined when none is running. Teardown awaits
+   * it so the session it opens is not leaked. */
+  get pendingReset(): Promise<void> | undefined {
+    return this.pending;
+  }
+
   /** Replaces the browser: close-or-kill the current session, open a new
    * one, mark the history. Works in every state — the main use is a hung
    * page mid-turn. Ignored while a reset is already running. On failure the
    * model is `dead` with the reopen error as `fatal`. */
-  async reset(): Promise<void> {
-    if (this.status === "resetting") return;
+  reset(): Promise<void> {
+    if (this.status === "resetting") return Promise.resolve();
+    // runReset sets the status synchronously, so the guard above rejects a
+    // second Ctrl+R in the same tick.
+    const run = this.runReset();
+    this.pending = run;
+    return run.finally(() => {
+      if (this.pending === run) this.pending = undefined;
+    });
+  }
+
+  private async runReset(): Promise<void> {
     this.status = "resetting";
     this.generation++;
     this.onChange();

@@ -113,8 +113,10 @@ describe("waitForQuit", () => {
 });
 
 /** Minimal ChatSession dependencies: a provider that never needs a browser.
- * `launches` grows by one runtime record per BrowserRuntime.launch call. */
-function sessionOpts() {
+ * `launches` grows by one runtime record per BrowserRuntime.launch call.
+ * `gate`, when given, holds up every launch after the first, so a test can
+ * keep a Ctrl+R reset in flight. */
+function sessionOpts(gate?: Promise<void>) {
   const provider: Provider = {
     name: "fake",
     chatUrl: "http://127.0.0.1:1/chat",
@@ -144,6 +146,8 @@ function sessionOpts() {
       launch: async () => {
         const rec = { closed: 0, killed: 0 };
         launches.push(rec);
+        // Pushed before the wait, so a test can see the launch has started.
+        if (gate !== undefined && launches.length > 1) await gate;
         return {
           page,
           saveAuthState: async () => {},
@@ -251,5 +255,77 @@ describe("runInteractive", () => {
     }
     expect(await run).toEqual({});
     expect(s.launches[1]?.closed).toBe(1);
+  });
+
+  test("Ctrl+C while a reset is in flight still closes the reopened session", async () => {
+    const t = await createTestRenderer({ width: 80, height: 20 });
+    let openGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      openGate = () => resolve();
+    });
+    const s = sessionOpts(gate);
+    const run = runInteractive({
+      ...s.opts,
+      createRenderer: async () => t.renderer,
+      index: FileIndex.fromPaths([]),
+    });
+    let frame = "";
+    for (let i = 0; i < 50 && !frame.includes("Ctrl+R reopen"); i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      await t.renderOnce();
+      frame = t.captureCharFrame();
+    }
+    t.mockInput.pressKey("r", { ctrl: true });
+    // The second launch has started and is parked on the gate.
+    for (let i = 0; i < 50 && s.launches.length < 2; i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      await t.renderOnce();
+    }
+    try {
+      expect(s.launches).toHaveLength(2);
+      expect(t.captureCharFrame()).not.toContain("── reopened ──");
+    } finally {
+      // Quit mid-reset, then let the reopen finish.
+      t.mockInput.pressKey("c", { ctrl: true });
+      openGate();
+    }
+    expect(await run).toEqual({});
+    expect(s.launches[0]?.closed).toBe(1);
+    // The browser opened by the abandoned reset must not be left running.
+    expect(s.launches[1]?.closed).toBe(1);
+  });
+
+  test("progress messages stop once the TUI owns the terminal", async () => {
+    const t = await createTestRenderer({ width: 80, height: 20 });
+    const s = sessionOpts();
+    const progress: string[] = [];
+    const run = runInteractive({
+      ...s.opts,
+      onProgress: (m) => progress.push(m),
+      createRenderer: async () => t.renderer,
+      index: FileIndex.fromPaths([]),
+    });
+    let frame = "";
+    for (let i = 0; i < 50 && !frame.includes("Ctrl+R reopen"); i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      await t.renderOnce();
+      frame = t.captureCharFrame();
+    }
+    t.mockInput.pressKey("r", { ctrl: true });
+    for (let i = 0; i < 50 && !frame.includes("── reopened ──"); i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      await t.renderOnce();
+      frame = t.captureCharFrame();
+    }
+    try {
+      expect(frame).toContain("── reopened ──");
+      // Only the pre-UI open reported; the reopen's would land on the TUI.
+      expect(progress.filter((m) => m === "Opening browser...")).toHaveLength(
+        1,
+      );
+    } finally {
+      t.mockInput.pressKey("c", { ctrl: true });
+    }
+    await run;
   });
 });
