@@ -144,6 +144,15 @@ Not scheduled. Each item becomes a milestone when picked up.
   stays verbatim by default.
 - **Live re-scan of the mention index.** New files appear without a
   restart.
+- **VSCode extension (chat view).** A sidebar/panel chat UI on top of
+  `ChatSession`, shipped as a factory in the style of `createCli` so a vendor
+  repo supplies the Provider and packages the extension. Decided 2026-09-10:
+  the browser runs inside the extension host (core/runtime are Node-only, no
+  Bun APIs); the CLI-as-child-process alternative was rejected. Start with a
+  spike before any design: a minimal extension that drives the dummy chat
+  through `ChatSession` from the extension host, including headful `login()`,
+  to confirm Playwright works under VSCode's Electron Node and how Chromium
+  installation should be surfaced.
 
 ## Standing design rules
 
