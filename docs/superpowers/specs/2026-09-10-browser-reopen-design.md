@@ -158,3 +158,53 @@ interface ChatSessionLike {
 - Re-sending the interrupted prompt automatically.
 - Cross-process conversation resume (still in the backlog).
 - Any change to one-shot mode.
+
+## As built (2026-09-10)
+
+Where the implementation differs from the design above, the following is
+authoritative.
+
+### runtime — how the SIGKILL is delivered
+
+Playwright 1.63's `Browser` has no public `process()`, so
+`browser.process()?.kill("SIGKILL")` was not available. `BrowserRuntime` now
+launches through `chromium.launchServer()` and `connect()`s to it, and
+`kill()` calls `BrowserServer.kill()`, which is the hard kill. `close()` also
+shuts the server down. Both stay idempotent and safe when the process is
+already gone.
+
+### core — `ChatSession.kill()` wins over an in-flight `close()`
+
+`kill()` guards on its own `killed` flag, not on `closed`. That matters
+because the caller's close-or-kill path always calls `close()` first and only
+falls back to `kill()` after the cap, so a `closed`-only guard would make the
+kill a no-op exactly when it is needed. A `close()` parked on a hung
+`isLoggedIn` then fails, swallows the error, and its `rt.close()` is a no-op
+after the kill. `close()` started after a kill is a no-op, and a second
+`kill()` is a no-op.
+
+### cli — reset/teardown interaction
+
+- `ChatModelOptions` gains `closeTimeoutMs` (default 5 s) so the close-or-kill
+  cap is injectable in tests, and `ChatModel` exposes `pendingReset`: the
+  promise of the reset in flight, or `undefined`.
+- Teardown waits for `pendingReset` before closing the current session, capped
+  at 5 s — otherwise it would close the old session while the reset assigns a
+  new browser, leaking it and keeping the process alive. A reset still pending
+  at the cap takes the hard-exit path, since teardown cannot tell which
+  session is current.
+- The two hard-exit paths report different causes: a reset that did not settle
+  prints `browser reopen did not finish within 5 s; exiting`, a close that
+  exceeded the cap prints `browser did not close within 5 s; exiting`. Both
+  `process.exit(1)`.
+- `onProgress` is muted once the TUI owns the terminal, but messages are
+  buffered rather than dropped and flushed through the caller's `onProgress`
+  after `renderer.destroy()`, so what `close()` reports at quit ("Could not
+  save auth state: ...", "Session is no longer logged in; auth state not
+  saved.") still reaches the user. Messages buffered during a mid-session
+  reset flush at quit too.
+
+### cli — idle status line
+
+Shortened to fit 80 columns:
+`Enter send · Shift+Enter/Ctrl+J newline · @ file · Ctrl+R reopen · Ctrl+C quit`
