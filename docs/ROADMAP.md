@@ -153,6 +153,21 @@ Not scheduled. Each item becomes a milestone when picked up.
   through `ChatSession` from the extension host, including headful `login()`,
   to confirm Playwright works under VSCode's Electron Node and how Chromium
   installation should be surfaced.
+- **`!` shell commands in the TUI.** Brainstormed 2026-09-15 (#38). A
+  line starting with `!` is not sent as a prompt: the rest of the line
+  runs as a shell command in the directory `chatbridge` was started in,
+  and the TUI shows the command and its output. The output is then sent
+  to the service verbatim under a fixed lead-in ("Please check the
+  execution result."), so the model reacts to it in the same turn — the
+  difference from Claude Code, where `!` only injects the output into
+  context. The output rides in a fenced block labelled with the command
+  line, reusing the milestone 6 attachment shape. Everything lives in
+  `@chatbridge/cli` (core, runtime, and provider unchanged); the lead-in
+  is vendor-configurable through `createCli`, like `banner`. No sandbox —
+  the command runs with the user's own privileges, as in Claude Code —
+  and one-shot mode stays prompt-only. Open: command timeout and
+  output-size cap, whether stderr and a non-zero exit are labelled, and
+  whether the user can edit the message before it is sent.
 
 ## Standing design rules
 
