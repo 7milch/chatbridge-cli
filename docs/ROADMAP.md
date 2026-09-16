@@ -157,17 +157,20 @@ Not scheduled. Each item becomes a milestone when picked up.
   line starting with `!` is not sent as a prompt: the rest of the line
   runs as a shell command in the directory `chatbridge` was started in,
   and the TUI shows the command and its output. The output is then sent
-  to the service verbatim under a fixed lead-in ("Please check the
-  execution result."), so the model reacts to it in the same turn — the
-  difference from Claude Code, where `!` only injects the output into
-  context. The output rides in a fenced block labelled with the command
-  line, reusing the milestone 6 attachment shape. Everything lives in
-  `@chatbridge/cli` (core, runtime, and provider unchanged); the lead-in
-  is vendor-configurable through `createCli`, like `banner`. No sandbox —
-  the command runs with the user's own privileges, as in Claude Code —
-  and one-shot mode stays prompt-only. Open: command timeout and
-  output-size cap, whether stderr and a non-zero exit are labelled, and
-  whether the user can edit the message before it is sent.
+  to the service verbatim under a lead-in ("Please check the execution
+  result."), so the model reacts to it in the same turn — the difference
+  from Claude Code, where `!` only injects the output into context. The
+  output rides in a fenced block labelled with the command line, reusing
+  the milestone 6 attachment shape. The lead-in is never hardcoded: a
+  built-in default, overridden by the vendor through `createCli` (like
+  `banner`), overridden in turn by the user's `config.json` — the
+  wording is language- and service-specific, so whoever runs the CLI
+  gets the last word. Everything lives in `@chatbridge/cli` (core,
+  runtime, and provider unchanged). No sandbox — the command runs with
+  the user's own privileges, as in Claude Code — and one-shot mode stays
+  prompt-only. Open: command timeout and output-size cap, whether stderr
+  and a non-zero exit are labelled, and whether a body typed alongside
+  the command replaces the lead-in for that turn.
 
 ## Standing design rules
 
