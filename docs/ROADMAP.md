@@ -153,6 +153,24 @@ Not scheduled. Each item becomes a milestone when picked up.
   through `ChatSession` from the extension host, including headful `login()`,
   to confirm Playwright works under VSCode's Electron Node and how Chromium
   installation should be surfaced.
+- **`!` shell mode in the TUI.** Claude Code-style: `!` on an empty input
+  switches the input box into shell mode (`Escape` / `Backspace` / `Ctrl+U`
+  on an empty prompt exits). The command runs in the directory `chatbridge`
+  was started in, with the user's own privileges and no sandbox; the command
+  line and its output appear in the history. The output is then sent to the
+  service verbatim as a fenced block labelled with the command line (the
+  milestone 6 attachment shape) under a lead-in such as "Please check the
+  execution result.", so the model reacts to it in the same turn. The lead-in
+  is configurable in three layers: built-in default → vendor default through
+  `createCli` (like `banner`) → the user's `config.json`. Claude Code's
+  `respondToBashCommands: false` needs a different shape here, since every
+  message goes to the service: the off switch holds the output back and
+  attaches it to the next message the user composes. Everything lives in
+  `@chatbridge/cli`; one-shot mode is out of scope. Claude Code's verified
+  behaviour and the open questions for the design session (which extras to
+  take, key conflicts with the `@` popup and `Ctrl+R`, timeout / output cap,
+  stderr and exit-code labelling, per-turn lead-in override, streaming) are
+  recorded in issue #38.
 
 ## Standing design rules
 
