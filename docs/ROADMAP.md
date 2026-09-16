@@ -183,6 +183,21 @@ Not scheduled. Each item becomes a milestone when picked up.
   `@` expansion at queue vs. send time, queuing `!` shell commands, survival
   across `Ctrl+R` and `resetting` / `dead`, take-back granularity) are
   recorded in issue #40.
+- **Configurable retry and timeout for opening the browser.** Today
+  `ChatSession.open()` runs launch → goto → isLoggedIn → startNewChat once,
+  under the single `--timeout` that also covers turns, and `auth login`
+  hardcodes 30 s. Give the opening phase its own timeout and a retry count
+  (re-run the whole phase after a launch or navigation failure, closing the
+  browser in between; never retry auth-required / auth-expired / blocked).
+  Three layers, each overriding the one before: a built-in default → the
+  provider's default as an optional field on `Provider` (a slow corporate
+  service needs more than the dummy) → environment variables
+  (`CHATBRIDGE_OPEN_TIMEOUT` / `CHATBRIDGE_OPEN_RETRIES`, names to be
+  confirmed). Retry logic in core, knob resolution in `@chatbridge/cli`,
+  progress reported per attempt through `onProgress`. Open questions
+  (per-step vs. whole-phase timeout and the relation to `--timeout`, whether
+  `auth login` and `Ctrl+R` share the knobs, a `config.json` layer, backoff,
+  vendor defaults via `createCli`) are recorded in issue #42.
 
 ## Standing design rules
 
