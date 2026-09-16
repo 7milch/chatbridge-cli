@@ -171,6 +171,18 @@ Not scheduled. Each item becomes a milestone when picked up.
   take, key conflicts with the `@` popup and `Ctrl+R`, timeout / output cap,
   stderr and exit-code labelling, per-turn lead-in override, streaming) are
   recorded in issue #38.
+- **Message queue while a turn is in flight.** Claude Code-style: `Enter`
+  while the status is `busy` queues the message instead of being rejected
+  (as `ChatModel.submit()` does today), and the queued entries are listed
+  above the input box. When the turn ends, the oldest entry is sent as the
+  next turn, one per turn. `Up` from the first line of the input takes the
+  queue back into the input box for editing, one entry per line; `Enter`
+  re-queues the edited text as one entry, clearing the input drops it.
+  Everything lives in `@chatbridge/cli`; one-shot mode is out of scope.
+  Claude Code's verified behaviour and the open questions (`Esc` semantics,
+  `@` expansion at queue vs. send time, queuing `!` shell commands, survival
+  across `Ctrl+R` and `resetting` / `dead`, take-back granularity) are
+  recorded in issue #40.
 
 ## Standing design rules
 
