@@ -153,24 +153,34 @@ Not scheduled. Each item becomes a milestone when picked up.
   through `ChatSession` from the extension host, including headful `login()`,
   to confirm Playwright works under VSCode's Electron Node and how Chromium
   installation should be surfaced.
-- **`!` shell commands in the TUI.** Brainstormed 2026-09-15 (#38). A
-  line starting with `!` is not sent as a prompt: the rest of the line
-  runs as a shell command in the directory `chatbridge` was started in,
-  and the TUI shows the command and its output. The output is then sent
-  to the service verbatim under a lead-in ("Please check the execution
-  result."), so the model reacts to it in the same turn — the difference
-  from Claude Code, where `!` only injects the output into context. The
-  output rides in a fenced block labelled with the command line, reusing
-  the milestone 6 attachment shape. The lead-in is never hardcoded: a
-  built-in default, overridden by the vendor through `createCli` (like
-  `banner`), overridden in turn by the user's `config.json` — the
-  wording is language- and service-specific, so whoever runs the CLI
-  gets the last word. Everything lives in `@chatbridge/cli` (core,
-  runtime, and provider unchanged). No sandbox — the command runs with
-  the user's own privileges, as in Claude Code — and one-shot mode stays
-  prompt-only. Open: command timeout and output-size cap, whether stderr
-  and a non-zero exit are labelled, and whether a body typed alongside
-  the command replaces the lead-in for that turn.
+- **`!` shell commands in the TUI.** Brainstormed 2026-09-15 (#38),
+  modelled on Claude Code's shell mode (behaviour verified against
+  `code.claude.com/docs/en/interactive-mode`, 2026-09-16). `!` on an
+  empty input switches the box into a shell mode at the keystroke — it
+  is a mode with its own prompt, not a prefix parsed at send time — and
+  leaves on `Escape` / `Backspace` / `Ctrl+U` on an empty line. The
+  command runs in the directory `chatbridge` was started in, its output
+  streams into the history, and the output is then sent to the service
+  verbatim under a lead-in ("Please check the execution result."), so
+  the model reacts to it in the same turn. Claude Code does the same by
+  default and can be turned back to context-only with
+  `respondToBashCommands: false`; chatbridge has no context separate
+  from a send, so its off switch instead holds the output back and
+  attaches it to the next message the user composes. The output rides in
+  a fenced block labelled with the command line, reusing the milestone 6
+  attachment shape. The lead-in is never hardcoded: a built-in default,
+  overridden by the vendor through `createCli` (like `banner`),
+  overridden in turn by the user's `config.json` — the wording is
+  language- and service-specific, so whoever runs the CLI gets the last
+  word. Everything lives in `@chatbridge/cli` (core, runtime, and
+  provider unchanged). No sandbox — the command runs with the user's own
+  privileges, as in Claude Code — and one-shot mode stays prompt-only.
+  The design session starts by walking Claude Code's shell mode in full
+  (history-based `Tab` completion, path completion, `Ctrl+B`
+  backgrounding, paste-into-empty-input) and deciding what this TUI
+  takes; open besides that: command timeout and output-size cap, whether
+  stderr and a non-zero exit are labelled, and whether a body typed
+  alongside the command replaces the lead-in for that turn.
 
 ## Standing design rules
 
