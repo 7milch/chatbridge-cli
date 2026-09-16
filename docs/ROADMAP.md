@@ -198,6 +198,18 @@ Not scheduled. Each item becomes a milestone when picked up.
   (per-step vs. whole-phase timeout and the relation to `--timeout`, whether
   `auth login` and `Ctrl+R` share the knobs, a `config.json` layer, backoff,
   vendor defaults via `createCli`) are recorded in issue #42.
+- **Customizable busy spinner in the TUI.** The three-dot frames
+  (`●○○` / `○●○` / `○○●`), their interval, and the `Thinking…` label are
+  constants in `chat-view.ts` today. Make them data with layered defaults:
+  built-in → the provider's default as plain data (strings and a number, no
+  OpenTUI dependency, read only by `@chatbridge/cli`) → a vendor override
+  through `createCli` in the style of `banner` → possibly the user's
+  `config.json`. Frames are validated for equal display width so the status
+  line does not shift. Core and runtime are unchanged. Open questions
+  (whether the provider should carry presentation data at all given boundary
+  1, width measurement for wide characters and emoji, whether the label and
+  the `Reopening browser...` / `Opening browser...` lines share the knob)
+  are recorded in issue #44.
 
 ## Standing design rules
 
