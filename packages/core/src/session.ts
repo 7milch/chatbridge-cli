@@ -1,6 +1,11 @@
 import type { Provider } from "@chatbridge/provider";
-import { type AuthStore, BrowserRuntime } from "@chatbridge/runtime";
-import { ChatSession } from "./chat-session.js";
+import {
+  type AuthStore,
+  BrowserRuntime,
+  type LaunchOptions,
+} from "@chatbridge/runtime";
+import { ChatSession, type RuntimeLike } from "./chat-session.js";
+import { launchRuntime } from "./launch-runtime.js";
 import { runStep } from "./run-step.js";
 
 export interface OneShotOptions {
@@ -27,6 +32,10 @@ export interface LoginOptions {
   provider: Provider;
   authStore: AuthStore;
   onProgress?: (message: string) => void;
+  /** Test-only: replaces BrowserRuntime.launch. */
+  launch?: (opts: LaunchOptions) => Promise<RuntimeLike>;
+  /** Test-only: see ChatSessionOptions.missingBrowserExecutable. */
+  missingBrowserExecutable?: () => string | undefined;
 }
 
 const LOGIN_NAVIGATION_TIMEOUT_MS = 30_000;
@@ -35,11 +44,12 @@ const LOGIN_NAVIGATION_TIMEOUT_MS = 30_000;
 export async function runLogin(opts: LoginOptions): Promise<void> {
   const { provider, authStore, onProgress } = opts;
   onProgress?.("Opening browser...");
-  const rt = await BrowserRuntime.launch({
-    headless: false,
-    provider,
-    authStore,
-  });
+  const launch = opts.launch ?? BrowserRuntime.launch;
+  const rt = await launchRuntime(
+    () => launch({ headless: false, provider, authStore }),
+    opts.missingBrowserExecutable ??
+      (opts.launch ? () => undefined : undefined),
+  );
   try {
     rt.page.setDefaultTimeout(LOGIN_NAVIGATION_TIMEOUT_MS);
     await runStep("navigateToLogin", LOGIN_NAVIGATION_TIMEOUT_MS, () =>

@@ -59,3 +59,12 @@ export class BlockedError extends ChatBridgeError {
     super("BLOCKED", message, options);
   }
 }
+
+/** Playwright's Chromium is not installed. The message names the expected
+ * path; the CLI prints an install hint and the VSCode extension offers an
+ * Install button. */
+export class BrowserUnavailableError extends ChatBridgeError {
+  constructor(message: string, options?: ErrorOptions) {
+    super("BROWSER_UNAVAILABLE", message, options);
+  }
+}

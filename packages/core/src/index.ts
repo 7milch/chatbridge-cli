@@ -10,6 +10,7 @@ export {
   type ChatSessionOptions,
   type RuntimeLike,
 } from "./chat-session.js";
+export { launchRuntime } from "./launch-runtime.js";
 export { createAuthStore } from "./create-auth-store.js";
 export {
   AuthStore,

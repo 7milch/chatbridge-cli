@@ -11,6 +11,7 @@ import {
   InvalidStateError,
   ResponseTimeoutError,
 } from "./errors.js";
+import { launchRuntime } from "./launch-runtime.js";
 import { runStep } from "./run-step.js";
 
 /** The part of BrowserRuntime a session needs; lets tests inject a fake. */
@@ -30,6 +31,9 @@ export interface ChatSessionOptions {
   onProgress?: (message: string) => void;
   /** Test-only: replaces BrowserRuntime.launch. */
   launch?: (opts: LaunchOptions) => Promise<RuntimeLike>;
+  /** Test-only: replaces the missing-browser pre-check. Defaults to the
+   * runtime check, or to "present" when `launch` is injected. */
+  missingBrowserExecutable?: () => string | undefined;
 }
 
 /** A conversation that keeps the browser open across turns. Turns are
@@ -86,7 +90,11 @@ export class ChatSession {
     onProgress?.("Opening browser...");
     const launch =
       opts.launch ?? ((o: LaunchOptions) => BrowserRuntime.launch(o));
-    const rt = await launch({ headless: opts.headless, provider, authStore });
+    const rt = await launchRuntime(
+      () => launch({ headless: opts.headless, provider, authStore }),
+      opts.missingBrowserExecutable ??
+        (opts.launch ? () => undefined : undefined),
+    );
     try {
       rt.page.setDefaultTimeout(timeoutMs);
       await runStep("goto", timeoutMs, () => rt.page.goto(provider.chatUrl));
