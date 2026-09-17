@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { formatShellPrompt, formatShellSection } from "./format-result.js";
+import {
+  formatShellPrompt,
+  formatShellSection,
+  truncatedNote,
+} from "./format-result.js";
 import type { ShellResult } from "./run-command.js";
 
 function result(over: Partial<ShellResult> = {}): ShellResult {
@@ -13,6 +17,14 @@ function result(over: Partial<ShellResult> = {}): ShellResult {
     ...over,
   };
 }
+
+describe("truncatedNote", () => {
+  test("rounds the dropped bytes up to whole KB", () => {
+    expect(truncatedNote(1)).toBe("… (truncated: first 1 KB dropped)");
+    expect(truncatedNote(2048)).toBe("… (truncated: first 2 KB dropped)");
+    expect(truncatedNote(2049)).toBe("… (truncated: first 3 KB dropped)");
+  });
+});
 
 describe("formatShellSection", () => {
   test("success: heading, fence, output, fence — nothing else", () => {

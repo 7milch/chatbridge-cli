@@ -10,6 +10,7 @@ import {
 import { formatSize } from "../mentions/expand-mentions.js";
 import type { FileIndex } from "../mentions/file-index.js";
 import { mentionAtCursor } from "../mentions/parse-mentions.js";
+import { truncatedNote } from "../shell/format-result.js";
 import type { ChatModel, Message, Role } from "./chat-model.js";
 import { MAX_ROWS, MentionPopup } from "./mention-popup.js";
 import { MUTED_COLOR, styled, theme } from "./theme.js";
@@ -27,7 +28,7 @@ export const HELD_GUIDE =
 /** Shown instead of GUIDE once a fatal error left the session unusable. */
 export const DEAD_GUIDE = "Ctrl+R reopen · Ctrl+C quit";
 export const RESETTING_STATUS = "Reopening browser...";
-export const RUNNING_LABEL = "Running…";
+const RUNNING_LABEL = "Running…";
 export const SHELL_PLACEHOLDER = "Run a shell command";
 const PLACEHOLDER = "Type a message";
 const HELD_FOOTER = "📎 held, sent with your next message";
@@ -55,11 +56,7 @@ function shellFooter(message: Message): string {
   const r = message.result;
   if (!r) return "";
   const parts: string[] = [];
-  if (r.droppedBytes > 0) {
-    parts.push(
-      `… (truncated: first ${Math.ceil(r.droppedBytes / 1024)} KB dropped)`,
-    );
-  }
+  if (r.droppedBytes > 0) parts.push(truncatedNote(r.droppedBytes));
   if (r.exitCode !== undefined && r.exitCode !== 0) {
     parts.push(`exit code: ${r.exitCode}`);
   }

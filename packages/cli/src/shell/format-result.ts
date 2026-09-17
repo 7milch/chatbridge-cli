@@ -6,9 +6,11 @@ function headingFor(command: string): string {
   return `### $ ${command.replace(/\r?\n/g, " ⏎ ")}`;
 }
 
-/** Whole KB, rounded up, matching the mention size errors. */
-function wholeKb(bytes: number): string {
-  return `${Math.ceil(bytes / 1024)} KB`;
+/** The note that says the head of the output was dropped by the cap.
+ * Whole KB, rounded up, matching the mention size errors. Shared with the
+ * TUI footer so both places word it the same way. */
+export function truncatedNote(droppedBytes: number): string {
+  return `… (truncated: first ${Math.ceil(droppedBytes / 1024)} KB dropped)`;
 }
 
 /** The milestone 6 attachment shape for one command result:
@@ -29,7 +31,7 @@ export function formatShellSection(result: ShellResult): string {
   const fence = fenceFor(body);
   const lines = [headingFor(result.command)];
   if (result.droppedBytes > 0) {
-    lines.push(`… (truncated: first ${wholeKb(result.droppedBytes)} dropped)`);
+    lines.push(truncatedNote(result.droppedBytes));
   }
   lines.push(`${fence}\n${body}${fence}`);
   if (result.exitCode !== undefined && result.exitCode !== 0) {
