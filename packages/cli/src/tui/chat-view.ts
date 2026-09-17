@@ -240,6 +240,11 @@ export class ChatView {
     this.update();
   }
 
+  /** Test hook: the textarea's current text. */
+  get inputText(): string {
+    return this.input.plainText;
+  }
+
   /** True once this view — or the renderer under it — is gone. OpenTUI
    * destroys the renderer on SIGINT without telling the view, so a write
    * after that would throw from the native text buffer. */
@@ -355,6 +360,16 @@ export class ChatView {
       void this.model.reset();
       return;
     }
+    if (
+      key.name === "up" &&
+      !this.popup.visible &&
+      this.model.queue.length > 0 &&
+      this.onFirstLine()
+    ) {
+      key.preventDefault();
+      this.takeBack();
+      return;
+    }
     if (!this.popup.visible) return;
     switch (key.name) {
       case "up":
@@ -376,6 +391,24 @@ export class ChatView {
         return;
     }
     key.preventDefault();
+  }
+
+  /** True when the cursor sits on the first logical line of the textarea. */
+  private onFirstLine(): boolean {
+    const before = this.input.plainText.slice(0, this.input.cursorOffset);
+    return !before.includes("\n");
+  }
+
+  /** Moves every queued entry into the input box, one per line, ahead of
+   * the typed text. Enter then queues (or sends) the box as one entry. */
+  private takeBack(): void {
+    const entries = this.model.takeBack();
+    if (entries.length === 0) return;
+    const typed = this.input.plainText;
+    const text = typed ? `${entries.join("\n")}\n${typed}` : entries.join("\n");
+    this.input.clear();
+    this.input.insertText(text);
+    this.fitInput();
   }
 
   /** One row when empty, then one row per *visual* line up to

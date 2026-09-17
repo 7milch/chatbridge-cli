@@ -780,4 +780,62 @@ describe("ChatView queue", () => {
     // tells the two apart on screen.
     expect(QUEUE_GUIDE).toStartWith("Up take back ·");
   });
+
+  test("Up on the first line takes the queue back ahead of the typed text", async () => {
+    const t = await busySetup();
+    await t.mockInput.typeText("second");
+    t.mockInput.pressEnter();
+    await t.mockInput.typeText("third");
+    t.mockInput.pressEnter();
+    await t.frameWith("▹ third");
+    await t.mockInput.typeText("typed");
+    t.mockInput.pressArrow("up");
+    await t.renderOnce();
+    expect(t.model.queue).toEqual([]);
+    expect(t.view.inputText).toBe("second\nthird\ntyped");
+    const frame = t.captureCharFrame();
+    expect(frame).not.toContain("▹");
+    // Enter re-queues the whole box as one entry.
+    t.mockInput.pressEnter();
+    await t.frameWith("▹ second");
+    expect(t.model.queue).toEqual(["second\nthird\ntyped"]);
+    t.release();
+  });
+
+  test("Up with an empty box takes the queue back without a trailing newline", async () => {
+    const t = await busySetup();
+    await t.mockInput.typeText("second");
+    t.mockInput.pressEnter();
+    await t.frameWith("▹ second");
+    t.mockInput.pressArrow("up");
+    await t.renderOnce();
+    expect(t.view.inputText).toBe("second");
+    t.release();
+  });
+
+  test("Up on the second line does not take the queue back", async () => {
+    const t = await busySetup();
+    await t.mockInput.typeText("second");
+    t.mockInput.pressEnter();
+    await t.frameWith("▹ second");
+    await t.mockInput.typeText("a");
+    t.mockInput.pressKey("LINEFEED");
+    await t.mockInput.typeText("b");
+    t.mockInput.pressArrow("up");
+    await t.renderOnce();
+    expect(t.model.queue).toEqual(["second"]);
+    expect(t.view.inputText).toBe("a\nb");
+    t.release();
+  });
+
+  test("Up with an empty queue reaches the textarea", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("a");
+    t.mockInput.pressKey("LINEFEED");
+    await t.mockInput.typeText("b");
+    t.mockInput.pressArrow("up");
+    await t.mockInput.typeText("X");
+    await t.renderOnce();
+    expect(t.view.inputText).toBe("aX\nb");
+  });
 });
