@@ -21,7 +21,8 @@ export function truncatedNote(droppedBytes: number): string {
  *   <output>
  *   ```
  *   exit code: N                        ← only when non-zero
- *   interrupted                         ← only when stopped or killed
+ *   killed by SIGKILL                   ← only when a signal we did not send ended it
+ *   interrupted                         ← only when stopped or killed by the cap
  */
 export function formatShellSection(result: ShellResult): string {
   const body =
@@ -37,6 +38,7 @@ export function formatShellSection(result: ShellResult): string {
   if (result.exitCode !== undefined && result.exitCode !== 0) {
     lines.push(`exit code: ${result.exitCode}`);
   }
+  if (result.signal !== undefined) lines.push(`killed by ${result.signal}`);
   if (result.interrupted) lines.push("interrupted");
   return lines.join("\n");
 }

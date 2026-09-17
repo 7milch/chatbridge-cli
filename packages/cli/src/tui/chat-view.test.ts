@@ -914,6 +914,21 @@ describe("ChatView shell mode", () => {
     expect(frame).toContain("… (truncated: first 2 KB dropped)");
   });
 
+  test("a signal death is shown as a footer", async () => {
+    const runner = fakeRunner();
+    const t = await setup({
+      runCommand: runner.runCommand,
+      shell: { leadIn: "x", autoSend: false },
+    });
+    await t.mockInput.typeText("!./crashy");
+    t.mockInput.pressEnter();
+    await t.frameWith("Running…");
+    runner.finish({ exitCode: undefined, signal: "SIGSEGV" });
+    const frame = await t.frameWith("killed by SIGSEGV");
+    expect(frame).not.toContain("exit code");
+    expect(frame).not.toContain("interrupted");
+  });
+
   test("autoSend off: held footer, held count in the guide, cleared on send", async () => {
     const runner = fakeRunner();
     const t = await setup({

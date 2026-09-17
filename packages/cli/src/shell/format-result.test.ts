@@ -68,6 +68,12 @@ describe("formatShellSection", () => {
     );
   });
 
+  test("a signal death is named instead of an exit code", () => {
+    expect(
+      formatShellSection(result({ exitCode: undefined, signal: "SIGKILL" })),
+    ).toBe("### $ npm test\n```\nok\n```\nkilled by SIGKILL");
+  });
+
   test("a multi-line command is shown on one heading line", () => {
     expect(
       formatShellSection(result({ command: "echo a\necho b" })),

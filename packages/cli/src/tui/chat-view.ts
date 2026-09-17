@@ -76,6 +76,7 @@ function shellFooter(message: Message): string {
   if (r.exitCode !== undefined && r.exitCode !== 0) {
     parts.push(`exit code: ${r.exitCode}`);
   }
+  if (r.signal !== undefined) parts.push(`killed by ${r.signal}`);
   if (r.interrupted) parts.push("interrupted");
   if (message.held) parts.push(HELD_FOOTER);
   return parts.join(" · ");

@@ -25,6 +25,10 @@ export interface ShellResult {
   exitCode: number | undefined;
   /** True when stop() ran or the cap killed the command. */
   interrupted: boolean;
+  /** The signal that ended the command when something other than stop()
+   * killed it — a `kill` from elsewhere, a crash of the shell itself.
+   * Absent on a normal exit and on an interrupted result. */
+  signal?: NodeJS.Signals;
   durationMs: number;
 }
 
@@ -130,12 +134,12 @@ export function runCommand(command: string, opts: RunOptions): RunningCommand {
   };
 
   const done = new Promise<ShellResult>((resolve, reject) => {
-    const settle = (code: number | null) => {
+    const settle = (code: number | null, sig: NodeJS.Signals | null) => {
       finish();
       // The last throttled tick may still be pending: deliver the final
       // output before resolving so onOutput never lags the result.
       if (unnotified) flush();
-      resolve({
+      const result: ShellResult = {
         command,
         output: text(),
         droppedBytes: dropped,
@@ -144,7 +148,11 @@ export function runCommand(command: string, opts: RunOptions): RunningCommand {
         exitCode: interrupted ? undefined : (code ?? undefined),
         interrupted,
         durationMs: Date.now() - startedAt,
-      });
+      };
+      // Our own SIGTERM/SIGKILL is `interrupted`; only a signal we did
+      // not send is worth naming.
+      if (!interrupted && sig !== null) result.signal = sig;
+      resolve(result);
     };
 
     const start = async () => {
@@ -155,7 +163,7 @@ export function runCommand(command: string, opts: RunOptions): RunningCommand {
       // wrapper's PATH lookup and surfaces as 127 in the output.
       if (shell.includes("/")) await access(shell, constants.X_OK);
       if (stopRequested) {
-        settle(null);
+        settle(null, null);
         return;
       }
 
@@ -193,9 +201,9 @@ export function runCommand(command: string, opts: RunOptions): RunningCommand {
         reject(err);
       });
       // "close": every stdio pipe has drained, so the output is complete.
-      child.on("close", (code) => {
+      child.on("close", (code, sig) => {
         if (settled) return;
-        settle(code);
+        settle(code, sig);
       });
     };
 

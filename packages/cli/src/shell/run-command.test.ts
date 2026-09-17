@@ -102,6 +102,8 @@ describe("runCommand", () => {
     expect(r.interrupted).toBe(true);
     expect(r.exitCode).toBeUndefined();
     expect(r.output).toBe("started\n");
+    // Our own SIGTERM is not reported as a signal death.
+    expect(r.signal).toBeUndefined();
   });
 
   test("stop() after exit is a no-op", async () => {
@@ -240,5 +242,18 @@ describe("runCommand", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  test("a command killed by a signal stop() did not send reports the signal", async () => {
+    // `$$` is the user's shell itself (the wrapper exec'd into it), so the
+    // kill reaches our direct child and "close" fires with code null.
+    const r = await runCommand("echo hi; kill -9 $$", {
+      cwd: process.cwd(),
+      shell: SH,
+    }).done;
+    expect(r.output).toBe("hi\n");
+    expect(r.exitCode).toBeUndefined();
+    expect(r.interrupted).toBe(false);
+    expect(r.signal).toBe("SIGKILL");
   });
 });

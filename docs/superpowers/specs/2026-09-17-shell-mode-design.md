@@ -97,6 +97,9 @@ export interface ShellResult {
   exitCode: number | undefined;
   /** True when stop() ran or the cap killed the command. */
   interrupted: boolean;
+  /** The signal that ended the command when something other than stop()
+   * killed it; absent on a normal exit and on an interrupted result. */
+  signal?: NodeJS.Signals;
   durationMs: number;
 }
 export interface RunningCommand {
@@ -145,6 +148,7 @@ export function formatShellPrompt(leadIn: string, result: ShellResult): string;
 <output, trailing newline added when missing>
 ```
 exit code: 1                             ← only when exitCode is non-zero
+killed by SIGKILL                        ← only when a signal we did not send ended it
 interrupted                              ← only when interrupted
 ````
 
@@ -283,9 +287,9 @@ line `$ <command>`, and an output `TextRenderable`. The view remembers the
 output renderable of the last drawn shell entry; `update()` rewrites its
 content from `result.output` while that entry is the last message. When
 the result is final, one muted footer line is added as applicable:
-`exit code: N`, `interrupted`, `… (truncated: first N KB dropped)`, and
-`📎 held, sent with your next message` for a held result (cleared when it
-is sent).
+`exit code: N`, `killed by SIGKILL`, `interrupted`, `… (truncated: first N
+KB dropped)`, and `📎 held, sent with your next message` for a held result
+(cleared when it is sent).
 
 ### Status row
 
@@ -364,6 +368,7 @@ and the config note mentions `"shell": { "leadIn", "autoSend" }`.
 | Non-zero exit | not an error; `exit code: N` appended; sent or held as usual |
 | Output over the cap | command killed; `interrupted`, `droppedBytes > 0`; sent or held with the note |
 | Ctrl+C while running | `interrupted`; output so far is sent or held |
+| Killed by a signal stop() did not send (`kill -9` from elsewhere, a crash of the shell) | not `interrupted`; `killed by <SIGNAL>` appended; sent or held as usual |
 | No exit 2 s after SIGTERM | SIGKILL to the process group |
 | Ctrl+R while running | command killed, browser reopened, output dropped; the entry shows `interrupted` |
 | Non-UTF-8 output | decoded with replacement characters; never throws |
