@@ -19,6 +19,15 @@ for tgz in "$out"/*.tgz; do
     *package/LICENSE*) ;;
     *) echo "$tgz: missing LICENSE" >&2; exit 1 ;;
   esac
+  # The VSCode package ships a bundled webview; dist/index.js alone is not enough.
+  case "$tgz" in
+    *chatbridge-vscode-*.tgz)
+      case "$listing" in
+        *package/dist/webview/main.js*) ;;
+        *) echo "$tgz: missing dist/webview/main.js" >&2; exit 1 ;;
+      esac
+      ;;
+  esac
   manifest=$(tar -xOf "$tgz" package/package.json)
   case "$manifest" in
     *workspace:*) echo "$tgz: unresolved workspace: dependency" >&2; exit 1 ;;
