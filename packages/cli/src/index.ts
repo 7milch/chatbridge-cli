@@ -4,4 +4,9 @@ export {
   DEFAULT_SHELL_CONFIG,
   type ShellConfig,
 } from "./shell/shell-config.js";
-export { type CliConfig, configPath, loadConfig } from "./config.js";
+export {
+  type CliConfig,
+  configPath,
+  loadConfig,
+  type LoadConfigOptions,
+} from "./config.js";

@@ -156,7 +156,7 @@ chat.
   CLI), so the assistant reacts to it in the same turn. A non-zero
   exit code is appended as `exit code: N`; a stopped command is marked
   `interrupted`, and one killed from outside (or crashed) is marked
-  `killed by SIGKILL` with the signal name. Output is capped at 200 KB:
+  `killed by <SIGNAL>` (for example `killed by SIGKILL`). Output is capped at 200 KB:
   past that the command is killed and only the tail is kept, with a
   `truncated` note. Shell mode stays on for the next command; **Esc**,
   **Backspace**, or **Ctrl+U** on an empty input leave it. `@` has no
