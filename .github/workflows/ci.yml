@@ -49,3 +49,41 @@ jobs:
         run: node packages/cli/dist/bin.js --help
       - if: steps.changes.outputs.code == 'true'
         run: scripts/pack-all.sh packs
+
+  vscode-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Downloading VSCode and Chromium is slow, so only run when the
+      # extension or what it builds on actually changed.
+      - id: changes
+        name: Detect extension changes
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="origin/${{ github.base_ref }}"
+          else
+            base="${{ github.event.before }}"
+          fi
+          if ! git cat-file -e "$base" 2>/dev/null; then
+            echo "ext=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if git diff --name-only "$base...HEAD" | grep -E '^(packages/(vscode|core|runtime)/|examples/(vscode-dummy-chat|dummy-chat)/|\.github/workflows/ci\.yml)' | grep -q .; then
+            echo "ext=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ext=false" >> "$GITHUB_OUTPUT"
+            echo "No extension-related change; skipping the VSCode E2E."
+          fi
+      - if: steps.changes.outputs.ext == 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - if: steps.changes.outputs.ext == 'true'
+        run: bun install --frozen-lockfile
+      - if: steps.changes.outputs.ext == 'true'
+        run: ./packages/runtime/node_modules/.bin/playwright install --with-deps chromium
+      - if: steps.changes.outputs.ext == 'true'
+        run: xvfb-run -a bun run e2e:vscode
+      - if: steps.changes.outputs.ext == 'true'
+        run: bun run --filter chatbridge-example-vscode-dummy-chat package

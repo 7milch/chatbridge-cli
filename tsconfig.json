@@ -6,6 +6,7 @@
     { "path": "packages/core" },
     { "path": "packages/cli" },
     { "path": "packages/vscode" },
-    { "path": "examples/dummy-chat" }
+    { "path": "examples/dummy-chat" },
+    { "path": "examples/vscode-dummy-chat" }
   ]
 }

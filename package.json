@@ -6,7 +6,8 @@
     "lint": "biome check .",
     "build": "tsc --build && bun run --filter @chatbridge/vscode build:webview",
     "test": "bun run build && bun test",
-    "check": "bun run lint && bun run test"
+    "check": "bun run lint && bun run test",
+    "e2e:vscode": "bun run build && bun run --filter chatbridge-example-vscode-dummy-chat e2e"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

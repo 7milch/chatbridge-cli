@@ -17,3 +17,6 @@ packs/
 
 # Playwright MCP session snapshots
 .playwright-mcp/
+
+# VSCode E2E: downloaded VSCode builds
+.vscode-test/
