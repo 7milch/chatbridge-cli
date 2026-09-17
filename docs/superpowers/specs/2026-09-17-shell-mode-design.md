@@ -281,9 +281,11 @@ A view-level `shellMode` flag; the model does not know about it.
 ### Submit
 
 `onSubmit` branches on `shellMode`: blank text or a non-`idle` model is
-ignored; otherwise the textarea is cleared, shell mode is kept so the next
-command can be typed at once, and `model.runShell(text)` is called. The
-normal branch is unchanged.
+ignored; otherwise the textarea is cleared, shell mode is left at once (the
+prompt and placeholder return to message mode; `!` re-enters it), and
+`model.runShell(text)` is called. Changed in issue #55: originally the mode
+was kept for the next command, but what follows a command is almost always a
+message about its output. The normal branch is unchanged.
 
 ### Live output
 
@@ -408,9 +410,9 @@ Same two layers as milestones 6–8; no new E2E.
   completion ignored after `reset`, `stopShell` no-op when idle.
 - `tui/chat-view.test.ts` — `!` on empty input switches the prompt and
   strips the `!`; a mid-text `!` does not; `Escape` / `Backspace` on empty
-  exit; `@` shows no popup in shell mode; Enter calls `runShell` and keeps
-  the mode; live rewrite of the shell entry; each status row text; Ctrl+C
-  while `running` does not quit.
+  exit; `@` shows no popup in shell mode; Enter calls `runShell` and leaves
+  the mode; `!` re-enters it; live rewrite of the shell entry; each status
+  row text; Ctrl+C while `running` does not quit.
 - `cli.e2e.test.ts` — unchanged.
 
 ### Spike (first plan task)

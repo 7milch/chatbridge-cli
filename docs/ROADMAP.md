@@ -153,7 +153,8 @@ Everything lives in `@chatbridge/cli`. A message typed while a command runs
 is queued (milestone 9) and drains when the command's turn ends; a command
 itself is never queued. Left for later: `Tab` command history, `/` path
 completion, `Ctrl+B` backgrounding, `cd` carry-over, ANSI stripping, running
-commands while a turn is in flight.
+commands while a turn is in flight. Enter leaves shell mode after running
+the command (issue #55).
 Spec: `docs/superpowers/specs/2026-09-17-shell-mode-design.md`.
 
 ### 5. Company adoption

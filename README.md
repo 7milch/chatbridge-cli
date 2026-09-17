@@ -168,10 +168,12 @@ chat.
   `interrupted`, and one killed from outside (or crashed) is marked
   `killed by <SIGNAL>` (for example `killed by SIGKILL`). Output is capped at 200 KB:
   past that the command is killed and only the tail is kept, with a
-  `truncated` note. Shell mode stays on for the next command; **Esc**,
-  **Backspace**, or **Ctrl+U** on an empty input leave it. `@` has no
-  special meaning in shell mode. Each command starts fresh in the start
-  directory (`cd` does not carry over).
+  `truncated` note. Enter returns the input to message mode, so you can
+  comment on the output right away; type `!` again for another command.
+  **Esc**, **Backspace**, or **Ctrl+U** on an empty shell input leave the
+  mode without running anything. `@` has no special meaning in shell mode.
+  Each command starts fresh in the start directory (`cd` does not carry
+  over).
 - With `"shell": { "autoSend": false }` in `config.json` the output is held
   instead of sent: the entry shows `📎 held, sent with your next message`,
   the status row counts the held results, and they are appended to the next
