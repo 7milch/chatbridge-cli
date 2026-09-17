@@ -238,8 +238,11 @@ export function createCli(opts: CreateCliOptions) {
         }
         const timeoutMs = parseTimeoutMs(values.timeout);
         // Read even with a pinned provider: the shell section is the
-        // user's to override regardless of who ships the CLI.
-        const config = await loadConfig(location);
+        // user's to override regardless of who ships the CLI. The provider
+        // key is that CLI's own business, so it is not validated then.
+        const config = await loadConfig(location, {
+          providerPinned: opts.provider !== undefined,
+        });
         const provider = await getProvider(values.provider, config);
         const authStore = createAuthStore({
           configDir,

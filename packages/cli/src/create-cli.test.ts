@@ -202,6 +202,40 @@ describe("interactive mode gate", () => {
     expect(stderrChunks.join("")).toContain('"shell.leadIn" must be a string');
   });
 
+  test("a pinned-provider CLI ignores config.json's defaultProvider, valid or not", async () => {
+    captureStderr();
+    const dir = setup();
+    mkdirSync(join(dir, "test-cli"), { recursive: true });
+    writeFileSync(
+      join(dir, "test-cli", "config.json"),
+      JSON.stringify({ defaultProvider: 5 }),
+    );
+    const cli = createCli({
+      name: "test-cli",
+      provider: stubProvider(),
+      baseDir: dir,
+      isTerminal: true,
+    });
+    // Past the config stage: the next gate is the missing auth state.
+    expect(await cli.run(["bun", "cli"])).toBe(2);
+    expect(stderrChunks.join("")).toContain("auth login");
+  });
+
+  test("a pinned-provider CLI still rejects a config.json that is not JSON", async () => {
+    captureStderr();
+    const dir = setup();
+    mkdirSync(join(dir, "test-cli"), { recursive: true });
+    writeFileSync(join(dir, "test-cli", "config.json"), "{ nope");
+    const cli = createCli({
+      name: "test-cli",
+      provider: stubProvider(),
+      baseDir: dir,
+      isTerminal: true,
+    });
+    expect(await cli.run(["bun", "cli"])).toBe(1);
+    expect(stderrChunks.join("")).toContain("not valid JSON");
+  });
+
   test("createCli accepts vendor shell defaults", async () => {
     const cli = createCli({
       name: "test-cli",

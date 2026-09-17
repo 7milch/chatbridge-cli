@@ -110,4 +110,16 @@ describe("loadConfig", () => {
     expect((caught as ChatBridgeError).code).toBe("INVALID_CONFIG");
     expect((caught as ChatBridgeError).message).toContain(why);
   });
+
+  test("providerPinned: defaultProvider is ignored even when invalid", async () => {
+    writeFileSync(
+      setup(),
+      JSON.stringify({ defaultProvider: 5, shell: { autoSend: false } }),
+    );
+    const cfg = await loadConfig(
+      { configDir: "test-cli", baseDir },
+      { providerPinned: true },
+    );
+    expect(cfg).toEqual({ shell: { autoSend: false } });
+  });
 });

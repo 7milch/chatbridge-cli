@@ -74,6 +74,12 @@ that provider is installed globally as well.
 command's output, `autoSend: false` holds the output back until your next
 message. Both override the defaults a derived CLI ships.
 
+Interactive mode reads `config.json` even when the CLI ships its own
+provider (the `shell` section still applies), so a file that is not valid
+JSON stops it at startup with exit 1. A derived CLI ignores
+`defaultProvider` entirely; one-shot mode (`-p`) and `auth` never read the
+file when the provider is pinned.
+
 A derived CLI passes its own identity to `createCli`:
 
 ```ts

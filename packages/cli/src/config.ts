@@ -20,6 +20,12 @@ export interface ConfigLocation {
   baseDir?: string;
 }
 
+export interface LoadConfigOptions {
+  /** The CLI ships a pinned provider: "defaultProvider" is documented as
+   * ignored, so it is neither validated nor returned. */
+  providerPinned?: boolean;
+}
+
 export function configPath(loc: ConfigLocation): string {
   const base = loc.baseDir ?? join(homedir(), ".config");
   return join(base, loc.configDir, "config.json");
@@ -35,8 +41,13 @@ function invalid(file: string, why: string, cause?: unknown): ChatBridgeError {
   );
 }
 
-/** Reads <base>/<configDir>/config.json. Missing file → {}. */
-export async function loadConfig(loc: ConfigLocation): Promise<CliConfig> {
+/** Reads <base>/<configDir>/config.json. Missing file → {}. A file that
+ * exists must be valid JSON with the documented shapes; every mode that
+ * reads it fails the same way on a broken file. */
+export async function loadConfig(
+  loc: ConfigLocation,
+  opts: LoadConfigOptions = {},
+): Promise<CliConfig> {
   const file = configPath(loc);
   let raw: string;
   try {
@@ -56,7 +67,7 @@ export async function loadConfig(loc: ConfigLocation): Promise<CliConfig> {
   }
   const { defaultProvider, shell } = doc as Record<string, unknown>;
   const cfg: CliConfig = {};
-  if (defaultProvider !== undefined) {
+  if (defaultProvider !== undefined && !opts.providerPinned) {
     if (typeof defaultProvider !== "string") {
       throw invalid(file, '"defaultProvider" must be a string');
     }
