@@ -6,8 +6,8 @@ Issue: #49 (backlog entry: #44).
 
 Let a vendor CLI built on `createCli` replace the spinner shown in the
 status row while a turn is in flight: the animation frames, their interval,
-and the label. The label may be a list, from which one entry is picked at
-random for each turn.
+the label, and the colours of the frame and of the label. The label may be a
+list, from which one entry is picked at random for each turn.
 
 ## Scope
 
@@ -34,7 +34,16 @@ export interface SpinnerOptions {
   /** Text after the frame. An array picks one entry at random when a turn
    * starts; it stays for that turn. Default: "Thinking…". */
   label?: string | string[];
+  /** Colour of the frame: "#rrggbb" or an ANSI palette index 0–255.
+   * Unset: the terminal's foreground. */
+  frameColor?: SpinnerColor;
+  /** Colour of the label, same values. Unset: the terminal's foreground. */
+  labelColor?: SpinnerColor;
 }
+
+/** A hex string ("#rrggbb") or an ANSI palette index (0–255). Indexed
+ * colours follow the terminal palette, as the rest of the theme does. */
+export type SpinnerColor = string | number;
 
 export interface CreateCliOptions {
   // ...
@@ -53,9 +62,15 @@ createCli({
     frames: ["⠋", "⠙", "⠹", "⠸"],
     intervalMs: 80,
     label: ["Thinking…", "Pondering…", "Consulting the oracle…"],
+    frameColor: 4,
+    labelColor: "#8a8a8a",
   },
 });
 ```
+
+The elapsed / budget counter and the queue suffix stay uncoloured.
+Colour values are not validated; an unparsable hex string behaves as
+OpenTUI's `RGBA.fromHex` does.
 
 ## Resolution
 
@@ -66,13 +81,19 @@ export interface ResolvedSpinner {
   frames: string[];
   intervalMs: number;
   labels: string[];
+  frameColor?: SpinnerColor;
+  labelColor?: SpinnerColor;
 }
 export function resolveSpinner(input?: SpinnerOptions): ResolvedSpinner;
 ```
 
 Each field falls back to its default independently. `label` is normalised
 to `labels: string[]` (a string becomes a one-element array). An empty
-`labels` array is passed through; the view then shows an empty label.
+`labels` array is passed through; the view then shows an empty label. The
+colours are carried as given; converting them to OpenTUI's `RGBA` happens in
+the view (`theme.ts` gains a `colored(color)` styler that maps a string to
+`RGBA.fromHex` and a number to `RGBA.fromIndex`), so `spinner.ts` stays free
+of OpenTUI.
 
 ## Wiring
 
@@ -84,7 +105,8 @@ spinner from its options:
 - `startSpinner` picks the label with `Math.random` once per turn and uses
   `intervalMs` for the interval.
 - `paintBusyStatus` renders `<frame> <label>  <elapsed>s / <budget>s` plus
-  the queue suffix, unchanged in shape.
+  the queue suffix, unchanged in shape, as a `StyledText` whose frame and
+  label chunks carry the configured colours (plain chunks when unset).
 
 The label is chosen when the spinner starts, not per frame, so the row is
 readable during a turn and changes only between turns.
@@ -92,11 +114,13 @@ readable during a turn and changes only between turns.
 ## Testing
 
 - `spinner.test.ts`: defaults, partial override, full override, string and
-  array labels.
+  array labels, colours passed through.
+- `theme.test.ts`: `colored("#ff0000")` and `colored(4)` produce chunks
+  with the expected `fg`.
 - `chat-view.test.ts`: custom frames and label appear in the busy row; a
   custom interval advances to the next frame; with `Math.random` stubbed the
   expected label index is picked; the label does not change across frames
-  within a turn.
+  within a turn; a coloured spinner still renders the same text.
 - `run-interactive.test.ts` / `create-cli.test.ts`: `spinner` reaches the
   view.
 
