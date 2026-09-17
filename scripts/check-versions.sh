@@ -3,7 +3,7 @@
 set -euo pipefail
 expected="$1"
 status=0
-for dir in packages/provider packages/runtime packages/core packages/cli; do
+for dir in packages/provider packages/runtime packages/core packages/cli packages/vscode; do
   actual=$(node -p "require('./$dir/package.json').version")
   if [ "$actual" != "$expected" ]; then
     echo "$dir: version $actual != $expected" >&2
@@ -12,7 +12,7 @@ for dir in packages/provider packages/runtime packages/core packages/cli; do
 done
 
 if [ -f bun.lock ]; then
-  for dir in packages/provider packages/runtime packages/core packages/cli; do
+  for dir in packages/provider packages/runtime packages/core packages/cli packages/vscode; do
     locked=$(node -e '
       const fs = require("fs");
       const lock = fs.readFileSync("bun.lock", "utf8");

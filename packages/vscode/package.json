@@ -1,0 +1,29 @@
+{
+  "name": "@chatbridge/vscode",
+  "version": "0.6.0",
+  "description": "VSCode extension factory for chatbridge: a sidebar chat view on top of ChatSession",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/7milch/chatbridge-cli.git",
+    "directory": "packages/vscode"
+  },
+  "keywords": ["chatbridge", "vscode", "playwright", "chat"],
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "publishConfig": { "access": "public" },
+  "scripts": {
+    "build:webview": "esbuild src/webview/main.ts --bundle --format=iife --target=es2022 --outfile=dist/webview/main.js && mkdir -p dist/webview && cp src/webview/style.css dist/webview/style.css"
+  },
+  "dependencies": {
+    "@chatbridge/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/vscode": "1.138.0",
+    "esbuild": "0.25.12"
+  }
+}

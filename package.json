@@ -4,7 +4,7 @@
   "workspaces": ["packages/*", "examples/*"],
   "scripts": {
     "lint": "biome check .",
-    "build": "tsc --build",
+    "build": "tsc --build && bun run --filter @chatbridge/vscode build:webview",
     "test": "bun run build && bun test",
     "check": "bun run lint && bun run test"
   },
