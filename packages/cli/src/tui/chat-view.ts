@@ -264,7 +264,12 @@ export class ChatView {
     }
     for (; this.rendered < this.model.messages.length; this.rendered++) {
       const message = this.model.messages[this.rendered];
-      if (message) this.history.add(this.messageBox(message));
+      if (!message) continue;
+      this.history.add(this.messageBox(message));
+      // A drained turn starts while the view is still busy, so the spinner
+      // is never restarted; the user message drawn exactly once per turn is
+      // what restarts the elapsed timer.
+      if (message.role === "user") this.startedAt = Date.now();
     }
     this.renderQueue();
     if (this.statusPinned) return;

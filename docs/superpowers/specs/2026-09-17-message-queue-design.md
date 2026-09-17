@@ -46,7 +46,7 @@ messages while Claude works" (read 2026-09-17).
 - **Take-back.** `Up` while the cursor is on the first line of the input box
   and the queue is not empty removes every entry from the queue and inserts
   them into the input box, one per line, ahead of any text already typed. The
-  cursor ends up after the inserted text. `Enter` then queues (or sends, when idle) the
+  cursor ends up at the end of the box, after the typed text. `Enter` then queues (or sends, when idle) the
   whole box as one entry, as in Claude Code; clearing the box drops it. `Up`
   on any other line, or with an empty queue, reaches the textarea as usual.
   While the mention popup is open `Up` keeps moving the popup selection.
@@ -101,7 +101,7 @@ input box / mention popup / status line.
   before `cursorOffset` in `plainText`) is prevented, the queue is taken
   back, and `entries.join("\n")` plus a trailing `\n` (only when the box was
   not empty) replaces the box content (the typed text follows the entries) with the
-  cursor after the inserted entries.
+  cursor at the end of the box, after the typed text.
   `fitInput()` runs afterwards.
 - The status line while `busy` appends `· N queued` when the queue is not
   empty. The idle guide gains `Up take back` only while the queue is not

@@ -838,4 +838,32 @@ describe("ChatView queue", () => {
     await t.renderOnce();
     expect(t.view.inputText).toBe("aX\nb");
   });
+  test("the elapsed timer restarts for a drained turn", async () => {
+    const replies: Array<ReturnType<typeof deferred<string>>> = [];
+    const t = await setup({
+      session: {
+        async send() {
+          const d = deferred<string>();
+          replies.push(d);
+          return d.promise;
+        },
+        async close() {},
+        async kill() {},
+      },
+    });
+    await t.mockInput.typeText("first");
+    t.mockInput.pressEnter();
+    await t.frameWith("Thinking…");
+    await t.mockInput.typeText("second");
+    t.mockInput.pressEnter();
+    await t.frameWith("▹ second");
+    // Let the first turn's timer run past a second, so a carried-over
+    // startedAt would be visible on the drained turn's status row.
+    await t.frameWith("1s /");
+    replies[0]?.resolve("reply one");
+    await t.frameWith("reply one");
+    expect(await t.frameWith("0s /")).toContain("0s /");
+    replies[1]?.resolve("reply two");
+    await t.frameWith("reply two");
+  });
 });

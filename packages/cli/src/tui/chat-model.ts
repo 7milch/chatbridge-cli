@@ -154,7 +154,10 @@ export class ChatModel {
       }
     }
     // Claim the next turn before the view sees this one end, so it never
-    // draws an idle frame with entries still waiting.
+    // draws an idle frame with entries still waiting. The one exception is a
+    // MentionError on a dequeued entry: that puts the entry back at the front
+    // of the queue while the model is idle, and the view shows the take-back
+    // guide.
     if (this.status === "idle") this.drain();
     this.onChange();
     return true;
