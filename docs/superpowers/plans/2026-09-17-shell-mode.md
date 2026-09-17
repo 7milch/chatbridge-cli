@@ -2891,7 +2891,7 @@ message. Both override the defaults a derived CLI ships.
 In the `createCli` example add a line after `banner:`:
 
 ```ts
-  shell: { leadIn: "実行結果を確認してください。" }, // optional: default lead-in for ! shell mode
+  shell: { leadIn: "Here is the output of a command I ran:" }, // optional: default lead-in for ! shell mode
 ```
 
 - [ ] **Step 2: README — Interactive mode**
