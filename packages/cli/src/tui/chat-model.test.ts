@@ -778,6 +778,7 @@ describe("ChatModel.runShell", () => {
     expect(model.fatal).toBeUndefined();
     expect(calls).toEqual([]);
     expect(model.messages.map((m) => m.role)).toEqual(["shell", "error"]);
+    expect(model.messages[0]).toMatchObject({ role: "shell", failed: true });
     expect(model.messages[1]?.text).toBe(
       "could not start shell: spawn /no/sh ENOENT",
     );

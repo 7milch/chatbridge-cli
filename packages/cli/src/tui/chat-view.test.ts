@@ -54,6 +54,7 @@ function fakeRunner() {
   const calls: string[] = [];
   let output = "";
   let resolve: ((r: ShellResult) => void) | undefined;
+  let reject: ((e: unknown) => void) | undefined;
   let onOutput: ((t: string) => void) | undefined;
   let current: ShellResult | undefined;
   const runCommand = (command: string, opts: RunOptions): RunningCommand => {
@@ -68,8 +69,9 @@ function fakeRunner() {
       interrupted: false,
       durationMs: 1,
     };
-    const done = new Promise<ShellResult>((res) => {
+    const done = new Promise<ShellResult>((res, rej) => {
       resolve = res;
+      reject = rej;
     });
     return {
       done,
@@ -93,6 +95,9 @@ function fakeRunner() {
     },
     finish(over: Partial<ShellResult> = {}) {
       if (current) resolve?.({ ...current, output, ...over });
+    },
+    fail(err: unknown) {
+      reject?.(err);
     },
   };
 }
@@ -1075,6 +1080,20 @@ describe("ChatView shell mode", () => {
     expect(idleGuide(false, 0, 1)).toBe(QUEUE_GUIDE);
     expect(idleGuide(false, 2, 1)).toBe(`📎 2 held · ${QUEUE_GUIDE}`);
     expect(idleGuide(true, 0, 1)).toBe(SHELL_GUIDE);
+  });
+
+  test("a shell that cannot start is marked on its entry and explained after it", async () => {
+    const runner = fakeRunner();
+    const t = await setup({ runCommand: runner.runCommand });
+    await t.mockInput.typeText("!ls");
+    t.mockInput.pressEnter();
+    await t.frameWith("Running…");
+    runner.fail(new Error("spawn /no/sh ENOENT"));
+    const frame = await t.frameWith(
+      "could not start shell: spawn /no/sh ENOENT",
+    );
+    expect(frame).toContain("did not start");
+    expect(t.model.status).toBe("idle");
   });
 });
 

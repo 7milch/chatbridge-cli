@@ -38,6 +38,9 @@ export interface Message {
   result?: ShellResult;
   /** `shell` entries: the result is waiting for the next submit. */
   held?: boolean;
+  /** `shell` entries: the shell could not be started; the error entry
+   * pushed right after it says why. */
+  failed?: boolean;
 }
 /** idle: accepting input. busy: a turn is in flight; input is queued.
  * running: a shell command is in flight (the input box is locked to shell
@@ -233,6 +236,9 @@ export class ChatModel {
       result = await running.done;
     } catch (err) {
       if (this.running === running) this.running = undefined;
+      // The entry belongs to the history, which survives a reset, so it is
+      // marked even when the reset makes the rest stale.
+      entry.failed = true;
       if (generation !== this.generation) return true; // stale: reset ran
       const message = err instanceof Error ? err.message : String(err);
       this.messages.push({

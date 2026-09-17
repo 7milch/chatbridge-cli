@@ -36,6 +36,8 @@ const RUNNING_LABEL = "Running…";
 export const SHELL_PLACEHOLDER = "Run a shell command";
 const PLACEHOLDER = "Type a message";
 const HELD_FOOTER = "📎 held, sent with your next message";
+/** Footer of a shell entry whose shell could not be spawned. */
+const FAILED_FOOTER = "did not start";
 /** Three fixed cells so legacy terminals keep the line aligned. */
 const FRAMES = ["●○○", "○●○", "○○●", "○●○"];
 const FRAME_INTERVAL_MS = 120;
@@ -78,6 +80,7 @@ function shellFooter(message: Message): string {
   }
   if (r.signal !== undefined) parts.push(`killed by ${r.signal}`);
   if (r.interrupted) parts.push("interrupted");
+  if (message.failed) parts.push(FAILED_FOOTER);
   if (message.held) parts.push(HELD_FOOTER);
   return parts.join(" · ");
 }

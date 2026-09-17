@@ -191,7 +191,8 @@ idle ──runShell()──▶ running ──done, autoSend──▶ busy ──
 - `Status` gains `"running"`. `submit()` and `runShell()` return `false`
   in every state but `idle`.
 - `Role` gains `"shell"`. `Message` gains `result?: ShellResult` (the
-  live result while running, the final one after) and `held?: boolean`.
+  live result while running, the final one after), `held?: boolean` and
+  `failed?: boolean` (the shell could not be spawned).
 
 ### API
 
@@ -230,8 +231,9 @@ export class ChatModel {
    No `user` entry is pushed; the `shell` entry stands for the turn.
 6. `autoSend: false`: push the result to `heldResults`, mark the entry
    `held`, set `status` to `idle`, `onChange`.
-7. A rejected `done` (the shell could not start) pushes an error entry
-   `could not start shell: <message>` and returns to `idle`; not fatal.
+7. A rejected `done` (the shell could not start) marks the entry `failed`,
+   pushes an error entry `could not start shell: <message>` and returns to
+   `idle`; not fatal.
 
 ### `submit(text)`
 
@@ -290,8 +292,9 @@ output renderable of the last drawn shell entry; `update()` rewrites its
 content from `result.output` while that entry is the last message. When
 the result is final, one muted footer line is added as applicable:
 `exit code: N`, `killed by SIGKILL`, `interrupted`, `… (truncated: first N
-KB dropped)`, and `📎 held, sent with your next message` for a held result
-(cleared when it is sent).
+KB dropped)`, `did not start` for a shell that could not be spawned, and
+`📎 held, sent with your next message` for a held result (cleared when it
+is sent).
 
 ### Status row
 
@@ -366,7 +369,7 @@ and the config note mentions `"shell": { "leadIn", "autoSend" }`.
 
 | Situation | Handling |
 |---|---|
-| Shell cannot start | error entry `could not start shell: <message>`; back to `idle`; not fatal |
+| Shell cannot start | entry footer `did not start`; error entry `could not start shell: <message>`; back to `idle`; not fatal |
 | Non-zero exit | not an error; `exit code: N` appended; sent or held as usual |
 | Output over the cap | command killed; `interrupted`, `droppedBytes > 0`; sent or held with the note |
 | Ctrl+C while running | `interrupted`; output so far is sent or held |
