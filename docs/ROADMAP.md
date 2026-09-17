@@ -120,6 +120,15 @@ and quitting reports the error. Core stays UI-free; the state machine and
 the close cap live in `@chatbridge/cli`.
 Spec: `docs/superpowers/specs/2026-09-10-browser-reopen-design.md`.
 
+### 9. Message queue while a turn is in flight — done (issue #46, PR #48, 2026-09-17)
+
+Claude Code-style: `Enter` while a turn is in flight queues the message
+instead of dropping it; the queue is listed above the input box and drained
+one entry per turn. `Up` from the first line of the input takes the queue
+back into the box for editing. `@` mentions expand at send time; the queue
+survives `dead` and a Ctrl+R reopen. `Esc` is untouched.
+Spec: `docs/superpowers/specs/2026-09-17-message-queue-design.md`.
+
 ### 5. Company adoption
 
 Company repository builds `company-ai-cli` via `createCli({ name, provider, configDir })`
@@ -171,18 +180,6 @@ Not scheduled. Each item becomes a milestone when picked up.
   take, key conflicts with the `@` popup and `Ctrl+R`, timeout / output cap,
   stderr and exit-code labelling, per-turn lead-in override, streaming) are
   recorded in issue #38.
-- **Message queue while a turn is in flight.** Claude Code-style: `Enter`
-  while the status is `busy` queues the message instead of being rejected
-  (as `ChatModel.submit()` does today), and the queued entries are listed
-  above the input box. When the turn ends, the oldest entry is sent as the
-  next turn, one per turn. `Up` from the first line of the input takes the
-  queue back into the input box for editing, one entry per line; `Enter`
-  re-queues the edited text as one entry, clearing the input drops it.
-  Everything lives in `@chatbridge/cli`; one-shot mode is out of scope.
-  Claude Code's verified behaviour and the open questions (`Esc` semantics,
-  `@` expansion at queue vs. send time, queuing `!` shell commands, survival
-  across `Ctrl+R` and `resetting` / `dead`, take-back granularity) are
-  recorded in issue #40.
 - **Configurable retry and timeout for opening the browser.** Today
   `ChatSession.open()` runs launch → goto → isLoggedIn → startNewChat once,
   under the single `--timeout` that also covers turns, and `auth login`

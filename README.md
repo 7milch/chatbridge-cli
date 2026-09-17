@@ -101,6 +101,12 @@ chat.
   not remember the earlier turns, so re-send what you need. Use it when a
   response hangs. If a fatal error happens mid-conversation the status row
   shows `Ctrl+R reopen · Ctrl+C quit`; quitting then exits with that error.
+- **Enter while a reply is pending** queues the message instead of dropping
+  it. Queued messages are listed above the input box and sent one per turn,
+  oldest first, once the current reply arrives (also after a Ctrl+R reopen).
+  **Up** from the first line of the input takes the whole queue back into the
+  box, one message per line, ahead of anything you have typed; Enter then
+  queues the box again as one message, and clearing it drops them.
 - The screen is a header (CLI name, provider, headless/headful, timeout
   budget), the conversation with `user` / `assistant` / `error` labels, and
   a `>` input between two rules that grows to five rows as you add

@@ -10,6 +10,8 @@ import {
   DEAD_GUIDE,
   GUIDE,
   MAX_INPUT_ROWS,
+  MAX_QUEUE_ROWS,
+  QUEUE_GUIDE,
   RESETTING_STATUS,
 } from "./chat-view.js";
 import { POPUP_HINT } from "./mention-popup.js";
@@ -181,7 +183,7 @@ describe("ChatView", () => {
     expect(t.model.messages[0]).toEqual({ role: "user", text: "one\ntwo" });
   });
 
-  test("Enter while busy keeps the typed text", async () => {
+  test("Enter while busy queues the text", async () => {
     const t = await setup({ delayMs: 300 });
     await t.mockInput.typeText("first");
     t.mockInput.pressEnter();
@@ -189,9 +191,10 @@ describe("ChatView", () => {
     await t.mockInput.typeText("second");
     t.mockInput.pressEnter();
     await t.renderOnce();
+    expect(t.model.queue).toEqual(["second"]);
     expect(t.model.messages.map((m) => m.text)).toEqual(["first"]);
-    const frame = await t.frameWith("Echo: first");
-    expect(frame).toContain("second");
+    await t.frameWith("Echo: first");
+    expect(await t.frameWith("Echo: second")).toContain("Echo: second");
   });
 
   test("error messages are labelled error", async () => {
@@ -247,7 +250,7 @@ describe("ChatView", () => {
     ]);
   });
 
-  test("Enter after a fatal error keeps the typed text", async () => {
+  test("Enter after a fatal error queues the text", async () => {
     const t = await setup({
       session: {
         async send() {
@@ -265,12 +268,14 @@ describe("ChatView", () => {
     await t.mockInput.typeText("second");
     t.mockInput.pressEnter();
     await t.renderOnce();
-    // The model would have dropped it, so the view must not clear the box.
+    // A dead model queues rather than sends: the text survives in the queue
+    // and Ctrl+R replays it, so the box is cleared like anywhere else.
     expect(t.model.messages.map((m) => m.text)).toEqual([
       "first",
       "page closed",
     ]);
-    expect(t.captureCharFrame()).toContain("second");
+    expect(t.model.queue).toEqual(["second"]);
+    expect(await t.frameWith("▹ second")).toContain("▹ second");
   });
 
   test("setStatus replaces the guide on the status line", async () => {
@@ -682,5 +687,183 @@ describe("ChatView", () => {
     await t.model.reset();
     const frame = await t.frameWith("── reopened ──");
     expect(frame).not.toContain("separator");
+  });
+});
+
+describe("ChatView queue", () => {
+  /** Starts a turn that stays busy until `release` is called. */
+  async function busySetup() {
+    const reply = deferred<string>();
+    const t = await setup({
+      session: {
+        async send() {
+          return reply.promise;
+        },
+        async close() {},
+        async kill() {},
+      },
+    });
+    await t.mockInput.typeText("first");
+    t.mockInput.pressEnter();
+    await t.frameWith("Thinking…");
+    return { ...t, release: () => reply.resolve("done") };
+  }
+
+  test("Enter while busy queues the text, clears the box and lists it above the input", async () => {
+    const t = await busySetup();
+    await t.mockInput.typeText("second line one\nmore");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("▹ second line one");
+    expect(t.model.queue).toEqual(["second line one\nmore"]);
+    expect(frame).not.toContain("more");
+    const rows = frame.split("\n");
+    const list = rows.findIndex((r) => r.includes("▹ second line one"));
+    const topRule = rows.findIndex((r, i) => i > list && r.startsWith("─"));
+    expect(topRule).toBe(list + 1);
+    expect(frame).toContain("· 1 queued");
+    t.release();
+    await t.frameWith("done");
+  });
+
+  test("shows at most MAX_QUEUE_ROWS rows, the last one a +N more line", async () => {
+    const t = await busySetup();
+    for (let i = 1; i <= MAX_QUEUE_ROWS + 2; i++) {
+      await t.mockInput.typeText(`q${i}`);
+      t.mockInput.pressEnter();
+    }
+    const frame = await t.frameWith("… +3 more");
+    for (let i = 1; i < MAX_QUEUE_ROWS; i++) expect(frame).toContain(`▹ q${i}`);
+    expect(frame).not.toContain(`▹ q${MAX_QUEUE_ROWS}`);
+    expect(frame).toContain(`· ${MAX_QUEUE_ROWS + 2} queued`);
+    t.release();
+  });
+
+  test("the list disappears once the queue drains", async () => {
+    const t = await busySetup();
+    await t.mockInput.typeText("second");
+    t.mockInput.pressEnter();
+    await t.frameWith("▹ second");
+    t.release();
+    // The fake session resolves every send with the same settled promise,
+    // so the drained turn also replies "done": two replies on screen.
+    let frame = "";
+    for (let i = 0; i < 100; i++) {
+      frame = await t.frameWith("done");
+      if (frame.split("done").length - 1 >= 2) break;
+    }
+    expect(frame.split("done").length - 1).toBe(2);
+    expect(frame).not.toContain("▹");
+    expect(frame).toContain(GUIDE);
+  });
+
+  test("a dead model with a queue shows the take-back guide", async () => {
+    const reply = deferred<string>();
+    const t = await setup({
+      session: {
+        async send() {
+          return reply.promise;
+        },
+        async close() {},
+        async kill() {},
+      },
+    });
+    await t.mockInput.typeText("first");
+    t.mockInput.pressEnter();
+    await t.frameWith("Thinking…");
+    await t.mockInput.typeText("second");
+    t.mockInput.pressEnter();
+    await t.frameWith("▹ second");
+    reply.reject(new Error("boom"));
+    const frame = await t.frameWith("boom");
+    expect(frame).toContain(QUEUE_GUIDE);
+    // DEAD_GUIDE is a suffix of QUEUE_GUIDE, so only the take-back prefix
+    // tells the two apart on screen.
+    expect(QUEUE_GUIDE).toStartWith("Up take back ·");
+  });
+
+  test("Up on the first line takes the queue back ahead of the typed text", async () => {
+    const t = await busySetup();
+    await t.mockInput.typeText("second");
+    t.mockInput.pressEnter();
+    await t.mockInput.typeText("third");
+    t.mockInput.pressEnter();
+    await t.frameWith("▹ third");
+    await t.mockInput.typeText("typed");
+    t.mockInput.pressArrow("up");
+    await t.renderOnce();
+    expect(t.model.queue).toEqual([]);
+    expect(t.view.inputText).toBe("second\nthird\ntyped");
+    const frame = t.captureCharFrame();
+    expect(frame).not.toContain("▹");
+    // Enter re-queues the whole box as one entry.
+    t.mockInput.pressEnter();
+    await t.frameWith("▹ second");
+    expect(t.model.queue).toEqual(["second\nthird\ntyped"]);
+    t.release();
+  });
+
+  test("Up with an empty box takes the queue back without a trailing newline", async () => {
+    const t = await busySetup();
+    await t.mockInput.typeText("second");
+    t.mockInput.pressEnter();
+    await t.frameWith("▹ second");
+    t.mockInput.pressArrow("up");
+    await t.renderOnce();
+    expect(t.view.inputText).toBe("second");
+    t.release();
+  });
+
+  test("Up on the second line does not take the queue back", async () => {
+    const t = await busySetup();
+    await t.mockInput.typeText("second");
+    t.mockInput.pressEnter();
+    await t.frameWith("▹ second");
+    await t.mockInput.typeText("a");
+    t.mockInput.pressKey("LINEFEED");
+    await t.mockInput.typeText("b");
+    t.mockInput.pressArrow("up");
+    await t.renderOnce();
+    expect(t.model.queue).toEqual(["second"]);
+    expect(t.view.inputText).toBe("a\nb");
+    t.release();
+  });
+
+  test("Up with an empty queue reaches the textarea", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("a");
+    t.mockInput.pressKey("LINEFEED");
+    await t.mockInput.typeText("b");
+    t.mockInput.pressArrow("up");
+    await t.mockInput.typeText("X");
+    await t.renderOnce();
+    expect(t.view.inputText).toBe("aX\nb");
+  });
+  test("the elapsed timer restarts for a drained turn", async () => {
+    const replies: Array<ReturnType<typeof deferred<string>>> = [];
+    const t = await setup({
+      session: {
+        async send() {
+          const d = deferred<string>();
+          replies.push(d);
+          return d.promise;
+        },
+        async close() {},
+        async kill() {},
+      },
+    });
+    await t.mockInput.typeText("first");
+    t.mockInput.pressEnter();
+    await t.frameWith("Thinking…");
+    await t.mockInput.typeText("second");
+    t.mockInput.pressEnter();
+    await t.frameWith("▹ second");
+    // Let the first turn's timer run past a second, so a carried-over
+    // startedAt would be visible on the drained turn's status row.
+    await t.frameWith("1s /");
+    replies[0]?.resolve("reply one");
+    await t.frameWith("reply one");
+    expect(await t.frameWith("0s /")).toContain("0s /");
+    replies[1]?.resolve("reply two");
+    await t.frameWith("reply two");
   });
 });
