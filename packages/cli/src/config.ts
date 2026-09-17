@@ -2,11 +2,15 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { ChatBridgeError } from "@chatbridge/core";
+import type { ShellConfig } from "./shell/shell-config.js";
 
 export interface CliConfig {
   /** Provider spec used when --provider is absent. Relative paths are
    * already resolved against the config file's directory. */
   defaultProvider?: string;
+  /** `!` shell mode overrides; each key is optional and wins over the
+   * vendor default from createCli. */
+  shell?: Partial<ShellConfig>;
 }
 
 export interface ConfigLocation {
@@ -50,7 +54,7 @@ export async function loadConfig(loc: ConfigLocation): Promise<CliConfig> {
   if (typeof doc !== "object" || doc === null || Array.isArray(doc)) {
     throw invalid(file, "top level must be a JSON object");
   }
-  const { defaultProvider } = doc as Record<string, unknown>;
+  const { defaultProvider, shell } = doc as Record<string, unknown>;
   const cfg: CliConfig = {};
   if (defaultProvider !== undefined) {
     if (typeof defaultProvider !== "string") {
@@ -61,6 +65,26 @@ export async function loadConfig(loc: ConfigLocation): Promise<CliConfig> {
     cfg.defaultProvider = isRelative
       ? resolve(dirname(file), defaultProvider)
       : defaultProvider;
+  }
+  if (shell !== undefined) {
+    if (typeof shell !== "object" || shell === null || Array.isArray(shell)) {
+      throw invalid(file, '"shell" must be an object');
+    }
+    const { leadIn, autoSend } = shell as Record<string, unknown>;
+    const out: Partial<ShellConfig> = {};
+    if (leadIn !== undefined) {
+      if (typeof leadIn !== "string") {
+        throw invalid(file, '"shell.leadIn" must be a string');
+      }
+      out.leadIn = leadIn;
+    }
+    if (autoSend !== undefined) {
+      if (typeof autoSend !== "boolean") {
+        throw invalid(file, '"shell.autoSend" must be a boolean');
+      }
+      out.autoSend = autoSend;
+    }
+    cfg.shell = out;
   }
   return cfg;
 }
