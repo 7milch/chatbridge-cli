@@ -1,6 +1,6 @@
 {
   "name": "@chatbridge/provider",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Provider contract for chatbridge: service-specific browser behaviour behind one interface",
   "license": "MIT",
   "repository": {
