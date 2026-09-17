@@ -10,3 +10,4 @@ export {
   loadConfig,
   type LoadConfigOptions,
 } from "./config.js";
+export type { SpinnerColor, SpinnerOptions } from "./tui/spinner.js";

@@ -129,6 +129,16 @@ back into the box for editing. `@` mentions expand at send time; the queue
 survives `dead` and a Ctrl+R reopen. `Esc` is untouched.
 Spec: `docs/superpowers/specs/2026-09-17-message-queue-design.md`.
 
+### 10. Customizable busy spinner — done (issue #49, 2026-09-17)
+
+`createCli({ spinner: { frames, intervalMs, label, frameColor, labelColor } })`
+replaces the three-dot spinner and the `Thinking…` label of the busy status
+row and colours them (`"#rrggbb"` or an ANSI index); `label` may be a list,
+one entry picked at random per turn. Built-in default →
+`createCli` only: the provider carries no presentation data and there is no
+`config.json` layer. Frames are not validated; they must share a display
+width. Spec: `docs/superpowers/specs/2026-09-17-custom-spinner-design.md`.
+
 ### 10. `!` shell mode in the TUI — done (issue #47, PR #50, 2026-09-17)
 
 Claude Code-style: `!` on an empty input switches the input box into shell
@@ -194,18 +204,6 @@ Not scheduled. Each item becomes a milestone when picked up.
   (per-step vs. whole-phase timeout and the relation to `--timeout`, whether
   `auth login` and `Ctrl+R` share the knobs, a `config.json` layer, backoff,
   vendor defaults via `createCli`) are recorded in issue #42.
-- **Customizable busy spinner in the TUI.** The three-dot frames
-  (`●○○` / `○●○` / `○○●`), their interval, and the `Thinking…` label are
-  constants in `chat-view.ts` today. Make them data with layered defaults:
-  built-in → the provider's default as plain data (strings and a number, no
-  OpenTUI dependency, read only by `@chatbridge/cli`) → a vendor override
-  through `createCli` in the style of `banner` → possibly the user's
-  `config.json`. Frames are validated for equal display width so the status
-  line does not shift. Core and runtime are unchanged. Open questions
-  (whether the provider should carry presentation data at all given boundary
-  1, width measurement for wide characters and emoji, whether the label and
-  the `Reopening browser...` / `Opening browser...` lines share the knob)
-  are recorded in issue #44.
 
 ## Standing design rules
 

@@ -11,6 +11,7 @@ import { type CliConfig, configPath, loadConfig } from "./config.js";
 import { resolveProvider } from "./resolve-provider.js";
 import { type ShellConfig, resolveShellConfig } from "./shell/shell-config.js";
 import { supportsInteractive } from "./tui/runtime-check.js";
+import type { SpinnerOptions } from "./tui/spinner.js";
 
 export interface CreateCliOptions {
   /** CLI name shown in help and errors, e.g. "chatbridge" or "company-ai-cli". */
@@ -20,6 +21,10 @@ export interface CreateCliOptions {
   /** Interactive startup banner, one element per row; replaces the default
    * (name, version and a one-line hint). Used verbatim. */
   banner?: string[];
+  /** Busy-status spinner shown while a turn is in flight, in the style of
+   * `banner`; fields not set keep their default. Frames must share a
+   * display width. */
+  spinner?: SpinnerOptions;
   /** Vendor defaults for `!` shell mode in the interactive TUI; the user's
    * config.json overrides them key by key. */
   shell?: Partial<ShellConfig>;
@@ -255,6 +260,7 @@ export function createCli(opts: CreateCliOptions) {
           title: opts.name,
           version: opts.version,
           banner: opts.banner,
+          spinner: opts.spinner,
           shell: resolveShellConfig(opts.shell, config.shell),
           provider,
           authStore,

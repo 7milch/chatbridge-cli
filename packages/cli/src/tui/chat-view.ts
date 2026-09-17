@@ -13,7 +13,8 @@ import { mentionAtCursor } from "../mentions/parse-mentions.js";
 import { truncatedNote } from "../shell/format-result.js";
 import type { ChatModel, Message, Role } from "./chat-model.js";
 import { MAX_ROWS, MentionPopup } from "./mention-popup.js";
-import { MUTED_COLOR, styled, theme } from "./theme.js";
+import type { ResolvedSpinner } from "./spinner.js";
+import { MUTED_COLOR, type Styler, colored, styled, theme } from "./theme.js";
 
 // Status-row texts must fit 80 columns: the row is one fixed line and
 // clips. Shift+Enter is left out for room (README documents it).
@@ -38,9 +39,6 @@ const PLACEHOLDER = "Type a message";
 const HELD_FOOTER = "📎 held, sent with your next message";
 /** Footer of a shell entry whose shell could not be spawned. */
 const FAILED_FOOTER = "did not start";
-/** Three fixed cells so legacy terminals keep the line aligned. */
-const FRAMES = ["●○○", "○●○", "○○●", "○●○"];
-const FRAME_INTERVAL_MS = 120;
 const LABELS: Record<Exclude<Role, "separator">, () => StyledText> = {
   user: () => styled(theme.user("user")),
   assistant: () => styled(theme.assistant("assistant")),
@@ -94,6 +92,8 @@ export interface ChatViewOptions {
   headless: boolean;
   /** Startup banner lines, shown centred until the first message. */
   banner: StyledText[];
+  /** Busy-status spinner; see resolveSpinner(). */
+  spinner: ResolvedSpinner;
   /** Candidates for `@` mentions. */
   index: FileIndex;
 }
@@ -139,6 +139,11 @@ export class ChatView {
   private spinner: ReturnType<typeof setInterval> | undefined;
   private spinnerMode: "busy" | "running" | undefined;
   private frame = 0;
+  private readonly spinnerSpec: ResolvedSpinner;
+  /** Built once from the vendor colours so a tick does not rebuild them. */
+  private readonly frameStyler: Styler | undefined;
+  private readonly labelStyler: Styler | undefined;
+  private label = "";
   private readonly budgetSec: number;
   private startedAt = 0;
   private destroyed = false;
@@ -156,6 +161,15 @@ export class ChatView {
   ) {
     this.budgetSec = Math.round(opts.timeoutMs / 1000);
     this.index = opts.index;
+    this.spinnerSpec = opts.spinner;
+    this.frameStyler =
+      opts.spinner.frameColor === undefined
+        ? undefined
+        : colored(opts.spinner.frameColor);
+    this.labelStyler =
+      opts.spinner.labelColor === undefined
+        ? undefined
+        : colored(opts.spinner.labelColor);
     const root = new BoxRenderable(renderer, {
       id: "root",
       flexDirection: "column",
@@ -325,8 +339,8 @@ export class ChatView {
       this.history.add(this.messageBox(message));
       // A drained turn starts while the view is still busy, so the spinner
       // is never restarted; the user message drawn exactly once per turn is
-      // what restarts the elapsed timer.
-      if (message.role === "user") this.startedAt = Date.now();
+      // what restarts the elapsed timer, the frame cycle and the label.
+      if (message.role === "user") this.beginTurn();
     }
     for (const entry of this.shellEntries) this.refreshShell(entry);
     this.renderQueue();
@@ -709,32 +723,63 @@ export class ChatView {
     if (this.spinner && this.spinnerMode === mode) return;
     this.stopSpinner();
     this.spinnerMode = mode;
-    this.startedAt = Date.now();
+    this.beginTurn();
     const tick = () => {
       // The renderer can be destroyed from under a running turn (SIGINT);
       // the interval outlives it until teardown reaches this view.
       if (this.torn) return this.stopSpinner();
-      this.frame = (this.frame + 1) % FRAMES.length;
+      this.frame = (this.frame + 1) % this.spinnerSpec.frames.length;
       this.paintSpinnerStatus();
     };
     tick();
-    this.spinner = setInterval(tick, FRAME_INTERVAL_MS);
+    this.spinner = setInterval(tick, this.spinnerSpec.intervalMs);
+  }
+
+  /** Resets the per-turn spinner state: elapsed timer, frame cycle and
+   * label. Called for every turn, including one drained from the queue
+   * while the spinner is already running. */
+  private beginTurn(): void {
+    this.startedAt = Date.now();
+    this.frame = 0;
+    this.label = this.pickLabel();
+  }
+
+  /** One label per turn, chosen when the turn starts so the row does not
+   * flicker between frames. Empty list: no label. */
+  private pickLabel(): string {
+    const { labels } = this.spinnerSpec;
+    if (labels.length === 0) return "";
+    return labels[Math.floor(Math.random() * labels.length)] ?? "";
   }
 
   /** Draws the current spinner frame, elapsed time and queue count, for
-   * whichever spinner is running. */
+   * whichever spinner is running. The frame takes the vendor colour in both
+   * modes and the vendor label only in the busy row, which is the one it
+   * describes; the counter never does.  */
   private paintSpinnerStatus(): void {
     const elapsed = Math.floor((Date.now() - this.startedAt) / 1000);
     const n = this.queued;
+    const raw = this.spinnerSpec.frames[this.frame] ?? "";
+    const frame = this.frameStyler === undefined ? raw : this.frameStyler(raw);
     if (this.spinnerMode === "running") {
       // The running row already separates its parts with " · ", so the count
       // joins with one space; the busy row keeps its wider gap.
       const queued = n > 0 ? ` · ${n} queued` : "";
-      this.status.content = `${FRAMES[this.frame]} ${RUNNING_LABEL}  ${elapsed}s · Ctrl+C stop${queued}`;
+      this.status.content = styled(
+        frame,
+        ` ${RUNNING_LABEL}  ${elapsed}s · Ctrl+C stop${queued}`,
+      );
       return;
     }
     const queued = n > 0 ? `  · ${n} queued` : "";
-    this.status.content = `${FRAMES[this.frame]} Thinking…  ${elapsed}s / ${this.budgetSec}s${queued}`;
+    this.status.content = styled(
+      frame,
+      " ",
+      this.labelStyler === undefined
+        ? this.label
+        : this.labelStyler(this.label),
+      `  ${elapsed}s / ${this.budgetSec}s${queued}`,
+    );
   }
 
   private stopSpinner(): void {
