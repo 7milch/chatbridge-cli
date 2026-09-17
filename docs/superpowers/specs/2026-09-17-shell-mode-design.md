@@ -308,7 +308,7 @@ every terminal; README documents both) and why the held variant is shorter.
 | idle, normal | `Enter send · Ctrl+J newline · @ file · ! shell · Ctrl+R reopen · Ctrl+C quit` |
 | idle, shell mode | `Enter run · Esc exit shell · Ctrl+R reopen · Ctrl+C quit` |
 | idle, N held results | `📎 N held · Enter send · @ file · ! shell · Ctrl+R reopen · Ctrl+C quit` (or `📎 N held · ` + the shell-mode text) |
-| running | `●○○ Running…  12s · Ctrl+C stop` (spinner frames as today), plus ` · N queued` while messages wait |
+| running | `●○○ Running…  12s · Ctrl+C stop` (the same frames, interval and frame colour as the busy row: a vendor `spinner` drives both), plus ` · N queued` while messages wait |
 | busy / resetting / dead | unchanged |
 
 ### Ctrl+C

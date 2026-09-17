@@ -129,7 +129,7 @@ back into the box for editing. `@` mentions expand at send time; the queue
 survives `dead` and a Ctrl+R reopen. `Esc` is untouched.
 Spec: `docs/superpowers/specs/2026-09-17-message-queue-design.md`.
 
-### 10. Customizable busy spinner — done (issue #49, 2026-09-17)
+### 10a. Customizable busy spinner — done (issue #49, 2026-09-17)
 
 `createCli({ spinner: { frames, intervalMs, label, frameColor, labelColor } })`
 replaces the three-dot spinner and the `Thinking…` label of the busy status
@@ -139,7 +139,7 @@ one entry picked at random per turn. Built-in default →
 `config.json` layer. Frames are not validated; they must share a display
 width. Spec: `docs/superpowers/specs/2026-09-17-custom-spinner-design.md`.
 
-### 10. `!` shell mode in the TUI — done (issue #47, PR #50, 2026-09-17)
+### 10b. `!` shell mode in the TUI — done (issue #47, PR #50, 2026-09-17)
 
 Claude Code-style: `!` on an empty input switches the input box into shell
 mode; Enter runs the command in the start directory (own privileges, no
