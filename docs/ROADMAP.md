@@ -120,7 +120,7 @@ and quitting reports the error. Core stays UI-free; the state machine and
 the close cap live in `@chatbridge/cli`.
 Spec: `docs/superpowers/specs/2026-09-10-browser-reopen-design.md`.
 
-### 9. Message queue while a turn is in flight — done (issue #46, 2026-09-17)
+### 9. Message queue while a turn is in flight — done (issue #46, PR #48, 2026-09-17)
 
 Claude Code-style: `Enter` while a turn is in flight queues the message
 instead of dropping it; the queue is listed above the input box and drained
