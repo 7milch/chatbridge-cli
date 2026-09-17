@@ -64,7 +64,7 @@ packages/cli/src/create-cli.ts           CreateCliOptions gains shell?: Partial<
 packages/cli/src/tui/
   chat-model.ts      status "running", role "shell", runShell() / stopShell(), held results
   chat-view.ts       shell mode switch and display, live output, status row
-  run-interactive.ts InteractiveOptions gains shell: ShellConfig
+  run-interactive.ts InteractiveOptions gains shell?: ShellConfig
 ```
 
 ### `run-command.ts`
@@ -180,9 +180,12 @@ idle ──runShell()──▶ running ──done, autoSend──▶ busy ──
 ```typescript
 export interface ChatModelOptions {
   // ...existing
-  shell: ShellConfig;
+  /** Default: DEFAULT_SHELL_CONFIG, so existing callers need no change. */
+  shell?: ShellConfig;
   /** Test-only: replaces runCommand. */
   runCommand?: (cmd: string, opts: RunOptions) => RunningCommand;
+  /** Directory commands start in. Default: process.cwd(). */
+  cwd?: string;
 }
 export class ChatModel {
   /** Results waiting for the next submit (autoSend: false). */
@@ -272,11 +275,15 @@ is sent).
 
 ### Status row
 
+The row is one fixed line and clips, so every text must fit 80 columns.
+That is why the idle guide drops the Shift+Enter mention (Ctrl+J works on
+every terminal; README documents both) and why the held variant is shorter.
+
 | State | Text |
 |---|---|
-| idle, normal | existing GUIDE with ` · ! shell` inserted after `@ file` |
+| idle, normal | `Enter send · Ctrl+J newline · @ file · ! shell · Ctrl+R reopen · Ctrl+C quit` |
 | idle, shell mode | `Enter run · Esc exit shell · Ctrl+R reopen · Ctrl+C quit` |
-| idle, held results | either of the above followed by ` · 📎 N held` |
+| idle, N held results | `📎 N held · Enter send · @ file · ! shell · Ctrl+R reopen · Ctrl+C quit` (or `📎 N held · ` + the shell-mode text) |
 | running | `●○○ Running…  12s · Ctrl+C stop` (spinner frames as today) |
 | busy / resetting / dead | unchanged |
 
@@ -288,8 +295,9 @@ routed to `stopShell()` (a no-op) rather than quitting.
 
 ### Banner
 
-`BANNER_HINT` becomes
-`Type a message, @ to attach a file, or ! to run a command.`
+`BANNER_HINT` becomes `Type a message, @ to attach a file, ! to run a
+command.` (with `Connected to <provider>. ` in front it must still fit 80
+columns).
 
 ## 4. Configuration
 
