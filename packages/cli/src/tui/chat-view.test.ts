@@ -569,8 +569,9 @@ describe("ChatView", () => {
     const rows = t.captureCharFrame().split("\n");
     const title = rows.findIndex((r) => r.includes("test-cli v0.0.1"));
     expect(title).toBeGreaterThan(2);
-    expect(rows[title + 1]).toContain(
-      "Connected to dummy-chat. Type a message, @ to attach a file, ! to run a command.",
+    expect(rows[title + 1]).toContain("Connected to dummy-chat.");
+    expect(rows[title + 2]).toContain(
+      "Type a message, @ to attach a file, ! to run a command.",
     );
     // Centred: roughly as much blank space left as right.
     const line = rows[title] ?? "";

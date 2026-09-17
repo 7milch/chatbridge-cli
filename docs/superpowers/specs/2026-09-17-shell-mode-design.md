@@ -320,8 +320,9 @@ routed to `stopShell()` (a no-op) rather than quitting.
 ### Banner
 
 `BANNER_HINT` becomes `Type a message, @ to attach a file, ! to run a
-command.` (with `Connected to <provider>. ` in front it must still fit 80
-columns).
+command.` and moves to its own line under `Connected to <provider>.`: banner
+lines do not wrap and the provider name has no length budget, so the hint (55
+cells) must not share a line with it.
 
 ## 4. Configuration
 
