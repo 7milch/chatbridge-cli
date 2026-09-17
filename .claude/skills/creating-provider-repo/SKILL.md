@@ -34,7 +34,7 @@ package.json          bin: { "<vendor>": "./dist/bin.js" }; deps as in Rules
 .gitignore            node_modules/, dist/, *.tsbuildinfo, *.log, storage-state*.json, .auth/, .superpowers/
 src/selectors.ts      every URL and selector as a named constant; each cites a docs/dom-notes.md section
 src/provider.ts       defineProvider({ name, chatUrl, five methods }); default export
-src/bin.ts            process.exitCode = await createCli({ name, version, provider, banner? }).run(process.argv) — see Derived CLI identity
+src/bin.ts            process.exitCode = await createCli({ name, version, provider, banner?, shell? }).run(process.argv) — see Derived CLI identity
 src/selectors.test.ts smoke: every export is a non-empty string
 src/provider.test.ts  smoke: shape (name, https chatUrl on the vendor host, five functions)
 src/provider.e2e.test.ts  real service; skipped unless <NAME>_E2E=1 and the auth store has a file
@@ -71,11 +71,18 @@ process.exitCode = await createCli({
   // dim; rows wider than the terminal are cut on the right. Used verbatim:
   // no placeholders, no colours. Omit for the default (name, version, hint).
   banner: ["<Vendor> internal assistant", "Conversations are not stored by this CLI."],
+  // Optional `{ leadIn?: string; autoSend?: boolean }`: vendor defaults for
+  // `!` shell mode in the interactive TUI. `leadIn` is the first line of
+  // the message sent with a command's output (default "Please check the
+  // execution result."); `autoSend: false` holds the output back until the
+  // user's next message. The user's config.json overrides each key.
+  shell: { leadIn: "Here is the output of a command I ran:" },
 }).run(process.argv);
 ```
 
-`version` and `banner` are the only vendor-facing TUI knobs; colours and
-layout are fixed by the framework.
+`version`, `banner` and `shell` are the only vendor-facing TUI knobs
+(`shell` needs the `@chatbridge/cli` release that ships milestone 10, the
+first after 0.6.0); colours and layout are fixed by the framework.
 
 ### Runtime and shebang
 

@@ -5,6 +5,7 @@ import {
   createCliRenderer,
 } from "@opentui/core";
 import { FileIndex } from "../mentions/file-index.js";
+import type { ShellConfig } from "../shell/shell-config.js";
 import { resolveBanner } from "./banner.js";
 import { ChatModel } from "./chat-model.js";
 import { ChatView } from "./chat-view.js";
@@ -20,6 +21,8 @@ export interface InteractiveOptions extends ChatSessionOptions {
   banner?: string[];
   /** Vendor busy spinner; unset fields keep the default. */
   spinner?: SpinnerOptions;
+  /** Resolved `!` shell mode settings. Default: DEFAULT_SHELL_CONFIG. */
+  shell?: ShellConfig;
   /** Test-only: replaces createCliRenderer. */
   createRenderer?: () => Promise<CliRenderer>;
   /** Test-only: replaces the working-directory index. */
@@ -46,9 +49,11 @@ interface DestroySource {
  * destroyed from outside — OpenTUI installs its own SIGINT/SIGTERM/SIGHUP
  * handlers that destroy the renderer without exiting the process, so
  * without this the caller's promise would stay pending and the browser
- * would keep the process alive. A fatal model error does not quit (the
- * model goes `dead` and Ctrl+R can recover); the resolved value is the
- * model's `fatal` at quit time so a quit from `dead` reports the error.
+ * would keep the process alive. While a shell command is running, Ctrl+C
+ * stops the command instead of quitting. A fatal model error does not
+ * quit (the model goes `dead` and Ctrl+R can recover); the resolved value
+ * is the model's `fatal` at quit time so a quit from `dead` reports the
+ * error.
  */
 export function waitForQuit(
   renderer: CliRenderer,
@@ -56,7 +61,12 @@ export function waitForQuit(
 ): Promise<unknown> {
   return new Promise<unknown>((resolve) => {
     (renderer.keyInput as unknown as KeypressSource).on("keypress", (key) => {
-      if (key.ctrl && key.name === "c") resolve(model.fatal);
+      if (!key.ctrl || key.name !== "c") return;
+      if (model.status === "running") {
+        model.stopShell();
+        return;
+      }
+      resolve(model.fatal);
     });
     (renderer as unknown as DestroySource).on("destroy", () =>
       resolve(model.fatal),
@@ -128,6 +138,7 @@ export async function runInteractive(
   try {
     model = new ChatModel(session, {
       openSession: () => ChatSession.open(sessionOpts),
+      shell: opts.shell,
     });
     view = new ChatView(renderer, model, {
       title: opts.title,
@@ -149,6 +160,8 @@ export async function runInteractive(
     const fatal = await quit;
     return fatal === undefined ? {} : { fatal };
   } finally {
+    // A shell command must not outlive the TUI.
+    model?.stopShell();
     view?.setStatus(CLOSING_STATUS);
     // A reset in flight has already closed the old session and is about to
     // assign a new one; closing model.session now would leak that new browser

@@ -129,7 +129,7 @@ back into the box for editing. `@` mentions expand at send time; the queue
 survives `dead` and a Ctrl+R reopen. `Esc` is untouched.
 Spec: `docs/superpowers/specs/2026-09-17-message-queue-design.md`.
 
-### 10. Customizable busy spinner — done (issue #49, 2026-09-17)
+### 10a. Customizable busy spinner — done (issue #49, 2026-09-17)
 
 `createCli({ spinner: { frames, intervalMs, label, frameColor, labelColor } })`
 replaces the three-dot spinner and the `Thinking…` label of the busy status
@@ -138,6 +138,23 @@ one entry picked at random per turn. Built-in default →
 `createCli` only: the provider carries no presentation data and there is no
 `config.json` layer. Frames are not validated; they must share a display
 width. Spec: `docs/superpowers/specs/2026-09-17-custom-spinner-design.md`.
+
+### 10b. `!` shell mode in the TUI — done (issue #47, PR #50, 2026-09-17)
+
+Claude Code-style: `!` on an empty input switches the input box into shell
+mode; Enter runs the command in the start directory (own privileges, no
+sandbox) and streams its output into the history; the result is sent as a
+`### $ <command>` fenced section under a configurable lead-in, or held and
+attached to the next message with `autoSend: false`. Lead-in and switch are
+resolved built-in → `createCli({ shell })` → `config.json`. Output is
+capped at 200 KiB (tail kept), stdout/stderr merged, `exit code` /
+`interrupted` labelled; Ctrl+C stops a running command; Ctrl+R kills it.
+Everything lives in `@chatbridge/cli`. A message typed while a command runs
+is queued (milestone 9) and drains when the command's turn ends; a command
+itself is never queued. Left for later: `Tab` command history, `/` path
+completion, `Ctrl+B` backgrounding, `cd` carry-over, ANSI stripping, running
+commands while a turn is in flight.
+Spec: `docs/superpowers/specs/2026-09-17-shell-mode-design.md`.
 
 ### 5. Company adoption
 
@@ -172,24 +189,6 @@ Not scheduled. Each item becomes a milestone when picked up.
   through `ChatSession` from the extension host, including headful `login()`,
   to confirm Playwright works under VSCode's Electron Node and how Chromium
   installation should be surfaced.
-- **`!` shell mode in the TUI.** Claude Code-style: `!` on an empty input
-  switches the input box into shell mode (`Escape` / `Backspace` / `Ctrl+U`
-  on an empty prompt exits). The command runs in the directory `chatbridge`
-  was started in, with the user's own privileges and no sandbox; the command
-  line and its output appear in the history. The output is then sent to the
-  service verbatim as a fenced block labelled with the command line (the
-  milestone 6 attachment shape) under a lead-in such as "Please check the
-  execution result.", so the model reacts to it in the same turn. The lead-in
-  is configurable in three layers: built-in default → vendor default through
-  `createCli` (like `banner`) → the user's `config.json`. Claude Code's
-  `respondToBashCommands: false` needs a different shape here, since every
-  message goes to the service: the off switch holds the output back and
-  attaches it to the next message the user composes. Everything lives in
-  `@chatbridge/cli`; one-shot mode is out of scope. Claude Code's verified
-  behaviour and the open questions for the design session (which extras to
-  take, key conflicts with the `@` popup and `Ctrl+R`, timeout / output cap,
-  stderr and exit-code labelling, per-turn lead-in override, streaming) are
-  recorded in issue #38.
 - **Configurable retry and timeout for opening the browser.** Today
   `ChatSession.open()` runs launch → goto → isLoggedIn → startNewChat once,
   under the single `--timeout` that also covers turns, and `auth login`

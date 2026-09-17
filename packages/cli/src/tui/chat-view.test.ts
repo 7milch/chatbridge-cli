@@ -3,16 +3,26 @@ import type { StyledText } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { type Expansion, MentionError } from "../mentions/expand-mentions.js";
 import { FileIndex } from "../mentions/file-index.js";
+import type {
+  RunOptions,
+  RunningCommand,
+  ShellResult,
+} from "../shell/run-command.js";
+import type { ShellConfig } from "../shell/shell-config.js";
 import { resolveBanner } from "./banner.js";
 import { ChatModel, type ChatSessionLike } from "./chat-model.js";
 import {
   ChatView,
   DEAD_GUIDE,
   GUIDE,
+  HELD_GUIDE,
   MAX_INPUT_ROWS,
   MAX_QUEUE_ROWS,
   QUEUE_GUIDE,
   RESETTING_STATUS,
+  SHELL_GUIDE,
+  SHELL_PLACEHOLDER,
+  idleGuide,
 } from "./chat-view.js";
 import { POPUP_HINT } from "./mention-popup.js";
 import { type ResolvedSpinner, resolveSpinner } from "./spinner.js";
@@ -41,6 +51,58 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+function fakeRunner() {
+  const calls: string[] = [];
+  let output = "";
+  let resolve: ((r: ShellResult) => void) | undefined;
+  let reject: ((e: unknown) => void) | undefined;
+  let onOutput: ((t: string) => void) | undefined;
+  let current: ShellResult | undefined;
+  const runCommand = (command: string, opts: RunOptions): RunningCommand => {
+    calls.push(command);
+    output = "";
+    onOutput = opts.onOutput;
+    current = {
+      command,
+      output: "",
+      droppedBytes: 0,
+      exitCode: 0,
+      interrupted: false,
+      durationMs: 1,
+    };
+    const done = new Promise<ShellResult>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return {
+      done,
+      stop() {
+        if (current)
+          resolve?.({
+            ...current,
+            output,
+            exitCode: undefined,
+            interrupted: true,
+          });
+      },
+    };
+  };
+  return {
+    runCommand,
+    calls,
+    emit(text: string) {
+      output += text;
+      onOutput?.(output);
+    },
+    finish(over: Partial<ShellResult> = {}) {
+      if (current) resolve?.({ ...current, output, ...over });
+    },
+    fail(err: unknown) {
+      reject?.(err);
+    },
+  };
+}
+
 let teardown: (() => void) | undefined;
 afterEach(() => {
   teardown?.();
@@ -59,6 +121,8 @@ async function setup(
     banner?: StyledText[];
     spinner?: ResolvedSpinner;
     width?: number;
+    runCommand?: (c: string, o: RunOptions) => RunningCommand;
+    shell?: ShellConfig;
   } = {},
 ) {
   const t = await createTestRenderer({
@@ -74,6 +138,8 @@ async function setup(
       closeTimeoutMs: 50,
       expand:
         opts.expand ?? (async (text) => ({ prompt: text, attachments: [] })),
+      runCommand: opts.runCommand,
+      shell: opts.shell,
     },
   );
   const view = new ChatView(t.renderer, model, {
@@ -594,13 +660,36 @@ describe("ChatView", () => {
     expect(t.model.fatal).toBeUndefined();
   });
 
+  test("a refill that starts with ! does not turn the message into a command", async () => {
+    const t = await setup({
+      expand: async () => {
+        throw new MentionError(["@nope.ts: not found"]);
+      },
+    });
+    // `!` typed after other text is plain text, not the shell prefix; the
+    // leading character is then deleted so the refill starts with `!`.
+    await t.mockInput.typeText("z!@nope.ts ");
+    await t.renderOnce();
+    t.mockInput.pressKey("HOME");
+    t.mockInput.pressKey("DELETE");
+    await t.renderOnce();
+    expect(t.view.shellMode).toBe(false);
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("@nope.ts: not found");
+    expect(frame).toContain("error");
+    // The text came back whole, with the `!` still part of it.
+    expect(frame).toContain("!@nope.ts");
+    expect(t.view.shellMode).toBe(false);
+  });
+
   test("the banner is centred in the empty history", async () => {
     const t = await setup();
     const rows = t.captureCharFrame().split("\n");
     const title = rows.findIndex((r) => r.includes("test-cli v0.0.1"));
     expect(title).toBeGreaterThan(2);
-    expect(rows[title + 1]).toContain(
-      "Connected to dummy-chat. Type a message, or @ to attach a file.",
+    expect(rows[title + 1]).toContain("Connected to dummy-chat.");
+    expect(rows[title + 2]).toContain(
+      "Type a message, @ to attach a file, ! to run a command.",
     );
     // Centred: roughly as much blank space left as right.
     const line = rows[title] ?? "";
@@ -712,7 +801,7 @@ describe("ChatView", () => {
   test("the guide mentions @ file", async () => {
     const t = await setup();
     expect(GUIDE).toBe(
-      "Enter send · Shift+Enter/Ctrl+J newline · @ file · Ctrl+R reopen · Ctrl+C quit",
+      "Enter send · Ctrl+J newline · @ file · ! shell · Ctrl+R reopen · Ctrl+C quit",
     );
     // Must fit an 80-column terminal, or the status row clips.
     expect([...GUIDE].length).toBeLessThanOrEqual(80);
@@ -805,6 +894,325 @@ describe("ChatView", () => {
     await t.model.reset();
     const frame = await t.frameWith("── reopened ──");
     expect(frame).not.toContain("separator");
+  });
+});
+
+describe("ChatView shell mode", () => {
+  /** Presses Esc and waits for shell mode to end: a lone ESC byte is held
+   * by the input parser until it can rule out an escape sequence. */
+  async function leaveShellMode(t: {
+    mockInput: { pressEscape(): void };
+    renderOnce(): Promise<unknown>;
+    view: ChatView;
+  }) {
+    t.mockInput.pressEscape();
+    for (let i = 0; i < 100 && t.view.shellMode; i++) {
+      await sleep(20);
+      await t.renderOnce();
+    }
+    expect(t.view.shellMode).toBe(false);
+  }
+
+  test("! on an empty input enters shell mode and is not typed", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("!");
+    await t.renderOnce();
+    const frame = t.captureCharFrame();
+    expect(t.view.shellMode).toBe(true);
+    expect(frame).toContain(`! ${SHELL_PLACEHOLDER}`);
+    expect(frame).toContain(SHELL_GUIDE);
+    expect(frame).not.toContain(GUIDE);
+    await t.mockInput.typeText("ls");
+    await t.renderOnce();
+    expect(t.captureCharFrame()).toContain("! ls");
+  });
+
+  test("a ! after other text is an ordinary character", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("wow!");
+    await t.renderOnce();
+    expect(t.view.shellMode).toBe(false);
+    expect(t.captureCharFrame()).toContain("> wow!");
+  });
+
+  test("a pasted !command enters shell mode with the command kept", async () => {
+    const t = await setup();
+    await t.mockInput.pasteBracketedText("!git status");
+    await t.renderOnce();
+    expect(t.view.shellMode).toBe(true);
+    expect(t.captureCharFrame()).toContain("! git status");
+  });
+
+  test("Escape on an empty shell input exits shell mode", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("!");
+    await t.renderOnce();
+    t.mockInput.pressEscape();
+    for (let i = 0; i < 100 && t.view.shellMode; i++) {
+      await sleep(20);
+      await t.renderOnce();
+    }
+    expect(t.view.shellMode).toBe(false);
+    expect(t.captureCharFrame()).toContain("> Type a message");
+    expect(t.captureCharFrame()).toContain(GUIDE);
+  });
+
+  test("Backspace exits only once the input is empty", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("!a");
+    t.mockInput.pressBackspace();
+    await t.renderOnce();
+    expect(t.view.shellMode).toBe(true);
+    t.mockInput.pressBackspace();
+    await t.renderOnce();
+    expect(t.view.shellMode).toBe(false);
+  });
+
+  test("Ctrl+U on an empty shell input exits shell mode", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("!");
+    t.mockInput.pressKey("u", { ctrl: true });
+    await t.renderOnce();
+    expect(t.view.shellMode).toBe(false);
+  });
+
+  test("@ shows no popup in shell mode", async () => {
+    const t = await setup({ paths: ["types/node.d.ts"] });
+    await t.mockInput.typeText("!npm i @types");
+    await t.renderOnce();
+    expect(t.captureCharFrame()).not.toContain("types/node.d.ts");
+    expect(t.captureCharFrame()).not.toContain(POPUP_HINT);
+  });
+
+  test("Enter runs the command, keeps shell mode, streams output, then sends", async () => {
+    const runner = fakeRunner();
+    const t = await setup({ runCommand: runner.runCommand, delayMs: 200 });
+    await t.mockInput.typeText("!echo hi");
+    t.mockInput.pressEnter();
+    const running = await t.frameWith("Running…");
+    expect(runner.calls).toEqual(["echo hi"]);
+    expect(running).toContain("shell");
+    expect(running).toContain("$ echo hi");
+    expect(running).toMatch(/[●○]{3} Running… {2}\ds · Ctrl\+C stop/);
+    expect(t.view.shellMode).toBe(true);
+    expect(running).toContain(`! ${SHELL_PLACEHOLDER}`);
+
+    runner.emit("line one\n");
+    const live = await t.frameWith("line one");
+    runner.emit("line two\n");
+    const more = await t.frameWith("line two");
+    expect(more).toContain("line one");
+    expect(live).not.toContain("Thinking…");
+
+    runner.finish({ exitCode: 0 });
+    const thinking = await t.frameWith("Thinking…");
+    expect(thinking).not.toContain("Running…");
+    const done = await t.frameWith("Echo: Please check");
+    expect(done).toContain("assistant");
+    expect(done).toContain(SHELL_GUIDE);
+    expect(done).not.toContain("exit code");
+  });
+
+  test("Enter with an empty shell input does nothing", async () => {
+    const runner = fakeRunner();
+    const t = await setup({ runCommand: runner.runCommand });
+    await t.mockInput.typeText("!");
+    t.mockInput.pressEnter();
+    await t.renderOnce();
+    expect(runner.calls).toEqual([]);
+    expect(t.model.messages).toEqual([]);
+  });
+
+  test("non-zero exit, interrupted and truncation are shown as a footer", async () => {
+    const runner = fakeRunner();
+    const t = await setup({
+      runCommand: runner.runCommand,
+      shell: { leadIn: "x", autoSend: false },
+    });
+    await t.mockInput.typeText("!false");
+    t.mockInput.pressEnter();
+    await t.frameWith("Running…");
+    runner.finish({ exitCode: 1, interrupted: true, droppedBytes: 2048 });
+    const frame = await t.frameWith("exit code: 1");
+    expect(frame).toContain("interrupted");
+    expect(frame).toContain("… (truncated: first 2 KB dropped)");
+  });
+
+  test("a signal death is shown as a footer", async () => {
+    const runner = fakeRunner();
+    const t = await setup({
+      runCommand: runner.runCommand,
+      shell: { leadIn: "x", autoSend: false },
+    });
+    await t.mockInput.typeText("!./crashy");
+    t.mockInput.pressEnter();
+    await t.frameWith("Running…");
+    runner.finish({ exitCode: undefined, signal: "SIGSEGV" });
+    const frame = await t.frameWith("killed by SIGSEGV");
+    expect(frame).not.toContain("exit code");
+    expect(frame).not.toContain("interrupted");
+  });
+
+  test("autoSend off: held footer, held count in the guide, cleared on send", async () => {
+    const runner = fakeRunner();
+    const t = await setup({
+      runCommand: runner.runCommand,
+      shell: { leadIn: "x", autoSend: false },
+      delayMs: 10,
+    });
+    await t.mockInput.typeText("!ls");
+    t.mockInput.pressEnter();
+    await t.frameWith("Running…");
+    runner.emit("a.ts\n");
+    runner.finish();
+    const held = await t.frameWith("📎 held, sent with your next message");
+    expect(held).toContain(`📎 1 held · ${SHELL_GUIDE}`);
+    expect(t.model.status).toBe("idle");
+
+    t.mockInput.pressEscape();
+    for (let i = 0; i < 100 && t.view.shellMode; i++) {
+      await sleep(20);
+      await t.renderOnce();
+    }
+    expect(t.captureCharFrame()).toContain(`📎 1 held · ${HELD_GUIDE}`);
+
+    await t.mockInput.typeText("what is this?");
+    t.mockInput.pressEnter();
+    const done = await t.frameWith("Echo: what is this?");
+    expect(done).toContain(GUIDE);
+    expect(done).not.toContain("held");
+  });
+
+  test("Ctrl+R while running stops the command and reopens", async () => {
+    const runner = fakeRunner();
+    const t = await setup({ runCommand: runner.runCommand });
+    await t.mockInput.typeText("!sleep 10");
+    t.mockInput.pressEnter();
+    await t.frameWith("Running…");
+    t.mockInput.pressKey("r", { ctrl: true });
+    const frame = await t.frameWith("── reopened ──");
+    expect(frame).toContain("interrupted");
+    expect(t.model.status).toBe("idle");
+  });
+
+  test("a message typed while a command runs is queued and listed", async () => {
+    const runner = fakeRunner();
+    const t = await setup({ runCommand: runner.runCommand });
+    await t.mockInput.typeText("!sleep 10");
+    t.mockInput.pressEnter();
+    await t.frameWith("Running…");
+    // Esc leaves shell mode; the command keeps running underneath.
+    await leaveShellMode(t);
+    expect(t.model.status).toBe("running");
+    await t.mockInput.typeText("and then?");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("▹ and then?");
+    expect(t.model.queue).toEqual(["and then?"]);
+    expect(t.view.inputText).toBe("");
+    expect(frame).toContain("Running…");
+    expect(frame).toContain("· 1 queued");
+    // The command's own turn goes out first; the queued message follows it.
+    runner.finish({ exitCode: 0 });
+    const done = await t.frameWith("Echo: and then?");
+    expect(done).not.toContain("▹");
+  });
+
+  test("Up is not a take-back in shell mode; Esc first, then it is", async () => {
+    const runner = fakeRunner();
+    const t = await setup({ runCommand: runner.runCommand });
+    await t.mockInput.typeText("!sleep 10");
+    t.mockInput.pressEnter();
+    await t.frameWith("Running…");
+    await leaveShellMode(t);
+    await t.mockInput.typeText("and then?");
+    t.mockInput.pressEnter();
+    await t.frameWith("▹ and then?");
+
+    // Back into shell mode: the box is for a command, so Up must not drop
+    // the queued message into it.
+    await t.mockInput.typeText("!");
+    await t.renderOnce();
+    expect(t.view.shellMode).toBe(true);
+    t.mockInput.pressArrow("up");
+    await t.renderOnce();
+    expect(t.model.queue).toEqual(["and then?"]);
+    expect(t.view.inputText).toBe("");
+    // The entry is still listed; the status row is the running one.
+    const held = t.captureCharFrame();
+    expect(held).toContain("▹ and then?");
+    expect(held).toContain("· 1 queued");
+
+    await leaveShellMode(t);
+    t.mockInput.pressArrow("up");
+    await t.renderOnce();
+    expect(t.model.queue).toEqual([]);
+    expect(t.view.inputText).toBe("and then?");
+    runner.finish({ exitCode: 0 });
+  });
+
+  test("a taken-back entry starting with ! stays a message", async () => {
+    const t = await setup({ delayMs: 10_000 });
+    await t.mockInput.typeText("first");
+    t.mockInput.pressEnter();
+    await t.frameWith("Thinking…");
+    // `!` typed after other text is plain text; deleting the leading
+    // character leaves a message that starts with `!`.
+    await t.mockInput.typeText("a!foo");
+    await t.renderOnce();
+    t.mockInput.pressKey("HOME");
+    t.mockInput.pressKey("DELETE");
+    await t.renderOnce();
+    expect(t.view.shellMode).toBe(false);
+    expect(t.view.inputText).toBe("!foo");
+    t.mockInput.pressEnter();
+    await t.frameWith("▹ !foo");
+    expect(t.model.queue).toEqual(["!foo"]);
+
+    t.mockInput.pressArrow("up");
+    await t.renderOnce();
+    // The refill is the message it was, not a command: no shell mode.
+    expect(t.view.inputText).toBe("!foo");
+    expect(t.view.shellMode).toBe(false);
+    expect(t.model.queue).toEqual([]);
+  });
+
+  test("idleGuide texts fit 80 columns", () => {
+    for (const text of [
+      idleGuide(false, 0, 0),
+      idleGuide(true, 0, 0),
+      idleGuide(false, 12, 0),
+      idleGuide(true, 12, 0),
+      idleGuide(false, 0, 3),
+      idleGuide(false, 12, 3),
+      idleGuide(true, 12, 3),
+      DEAD_GUIDE,
+      QUEUE_GUIDE,
+    ]) {
+      expect([...text].length).toBeLessThanOrEqual(78); // 📎 is 2 cells wide
+    }
+    expect(idleGuide(false, 0, 0)).toBe(GUIDE);
+    expect(idleGuide(true, 0, 0)).toBe(SHELL_GUIDE);
+    expect(idleGuide(false, 2, 0)).toBe(`📎 2 held · ${HELD_GUIDE}`);
+    expect(idleGuide(true, 2, 0)).toBe(`📎 2 held · ${SHELL_GUIDE}`);
+    // A waiting queue takes the guide over, except in shell mode where
+    // `Up` is not a take-back.
+    expect(idleGuide(false, 0, 1)).toBe(QUEUE_GUIDE);
+    expect(idleGuide(false, 2, 1)).toBe(`📎 2 held · ${QUEUE_GUIDE}`);
+    expect(idleGuide(true, 0, 1)).toBe(SHELL_GUIDE);
+  });
+
+  test("a shell that cannot start is marked on its entry and explained after it", async () => {
+    const runner = fakeRunner();
+    const t = await setup({ runCommand: runner.runCommand });
+    await t.mockInput.typeText("!ls");
+    t.mockInput.pressEnter();
+    await t.frameWith("Running…");
+    runner.fail(new Error("spawn /no/sh ENOENT"));
+    const frame = await t.frameWith(
+      "could not start shell: spawn /no/sh ENOENT",
+    );
+    expect(frame).toContain("did not start");
+    expect(t.model.status).toBe("idle");
   });
 });
 

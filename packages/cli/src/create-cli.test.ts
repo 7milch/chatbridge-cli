@@ -181,6 +181,71 @@ describe("interactive mode gate", () => {
     expect(await cli.run(["bun", "cli"])).toBe(2);
     expect(stderrChunks.join("")).toContain("auth login");
   });
+
+  test("a pinned-provider CLI still reads config.json's shell section", async () => {
+    captureStderr();
+    const dir = setup();
+    mkdirSync(join(dir, "test-cli"), { recursive: true });
+    writeFileSync(
+      join(dir, "test-cli", "config.json"),
+      JSON.stringify({ shell: { leadIn: 5 } }),
+    );
+    const cli = createCli({
+      name: "test-cli",
+      provider: stubProvider(),
+      baseDir: dir,
+      isTerminal: true,
+    });
+    // Reaching the validation error proves the config was loaded on the
+    // interactive path before any browser work.
+    expect(await cli.run(["bun", "cli"])).toBe(1);
+    expect(stderrChunks.join("")).toContain('"shell.leadIn" must be a string');
+  });
+
+  test("a pinned-provider CLI ignores config.json's defaultProvider, valid or not", async () => {
+    captureStderr();
+    const dir = setup();
+    mkdirSync(join(dir, "test-cli"), { recursive: true });
+    writeFileSync(
+      join(dir, "test-cli", "config.json"),
+      JSON.stringify({ defaultProvider: 5 }),
+    );
+    const cli = createCli({
+      name: "test-cli",
+      provider: stubProvider(),
+      baseDir: dir,
+      isTerminal: true,
+    });
+    // Past the config stage: the next gate is the missing auth state.
+    expect(await cli.run(["bun", "cli"])).toBe(2);
+    expect(stderrChunks.join("")).toContain("auth login");
+  });
+
+  test("a pinned-provider CLI still rejects a config.json that is not JSON", async () => {
+    captureStderr();
+    const dir = setup();
+    mkdirSync(join(dir, "test-cli"), { recursive: true });
+    writeFileSync(join(dir, "test-cli", "config.json"), "{ nope");
+    const cli = createCli({
+      name: "test-cli",
+      provider: stubProvider(),
+      baseDir: dir,
+      isTerminal: true,
+    });
+    expect(await cli.run(["bun", "cli"])).toBe(1);
+    expect(stderrChunks.join("")).toContain("not valid JSON");
+  });
+
+  test("createCli accepts vendor shell defaults", async () => {
+    const cli = createCli({
+      name: "test-cli",
+      provider: stubProvider(),
+      shell: { leadIn: "Vendor lead-in", autoSend: false },
+      isTerminal: false,
+    });
+    // Type-level check plus the gate still applies.
+    expect(await cli.run(["bun", "cli"])).toBe(1);
+  });
 });
 
 describe("CHATBRIDGE_DEBUG", () => {
@@ -246,5 +311,14 @@ describe("--version", () => {
     const cli = createCli({ name: "test-cli", provider: stubProvider() });
     await cli.run(["bun", "cli", "--help"]);
     expect(logs.join("\n")).toContain("  test-cli --version | -V");
+  });
+
+  test("help mentions ! shell mode and the shell config keys", async () => {
+    captureLog();
+    const cli = createCli({ name: "test-cli", baseDir: setup() });
+    await cli.run(["bun", "cli", "--help"]);
+    const out = logs.join("\n");
+    expect(out).toContain("! runs a shell command");
+    expect(out).toContain('"shell"');
   });
 });

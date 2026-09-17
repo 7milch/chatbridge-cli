@@ -1,5 +1,6 @@
 import { readFile, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { fenceFor } from "../fence.js";
 import { parseMentions } from "./parse-mentions.js";
 
 export interface Attachment {
@@ -60,16 +61,6 @@ function languageOf(path: string): string {
   const slash = path.lastIndexOf("/");
   if (dot === -1 || dot <= slash) return "";
   return LANGUAGES[path.slice(dot + 1)] ?? "";
-}
-
-/** Three backticks, or one more than the longest backtick run that starts
- * a line in the content, so the fence can never be closed early. */
-function fenceFor(content: string): string {
-  let longest = 0;
-  for (const m of content.matchAll(/^`+/gm)) {
-    longest = Math.max(longest, m[0].length);
-  }
-  return "`".repeat(Math.max(3, longest + 1));
 }
 
 function section(path: string, content: string): string {

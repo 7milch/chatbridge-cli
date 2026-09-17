@@ -10,13 +10,22 @@ import {
 import { formatSize } from "../mentions/expand-mentions.js";
 import type { FileIndex } from "../mentions/file-index.js";
 import { mentionAtCursor } from "../mentions/parse-mentions.js";
+import { truncatedNote } from "../shell/format-result.js";
 import type { ChatModel, Message, Role } from "./chat-model.js";
 import { MAX_ROWS, MentionPopup } from "./mention-popup.js";
 import type { ResolvedSpinner } from "./spinner.js";
 import { MUTED_COLOR, type Styler, colored, styled, theme } from "./theme.js";
 
+// Status-row texts must fit 80 columns: the row is one fixed line and
+// clips. Shift+Enter is left out for room (README documents it).
 export const GUIDE =
-  "Enter send · Shift+Enter/Ctrl+J newline · @ file · Ctrl+R reopen · Ctrl+C quit";
+  "Enter send · Ctrl+J newline · @ file · ! shell · Ctrl+R reopen · Ctrl+C quit";
+export const SHELL_GUIDE =
+  "Enter run · Esc exit shell · Ctrl+R reopen · Ctrl+C quit";
+/** The idle guide while shell results are held; shorter to leave room for
+ * the `📎 N held · ` prefix. */
+export const HELD_GUIDE =
+  "Enter send · @ file · ! shell · Ctrl+R reopen · Ctrl+C quit";
 /** Shown instead of GUIDE once a fatal error left the session unusable. */
 export const DEAD_GUIDE = "Ctrl+R reopen · Ctrl+C quit";
 /** Idle or dead guide while queued entries are waiting. */
@@ -24,13 +33,55 @@ export const QUEUE_GUIDE = "Up take back · Ctrl+R reopen · Ctrl+C quit";
 /** Rows the queue list may take; a longer queue ends with a "+N more" row. */
 export const MAX_QUEUE_ROWS = 5;
 export const RESETTING_STATUS = "Reopening browser...";
+const RUNNING_LABEL = "Running…";
+export const SHELL_PLACEHOLDER = "Run a shell command";
+const PLACEHOLDER = "Type a message";
+const HELD_FOOTER = "📎 held, sent with your next message";
+/** Footer of a shell entry whose shell could not be spawned. */
+const FAILED_FOOTER = "did not start";
 const LABELS: Record<Exclude<Role, "separator">, () => StyledText> = {
   user: () => styled(theme.user("user")),
   assistant: () => styled(theme.assistant("assistant")),
   error: () => styled(theme.error("error")),
+  shell: () => styled(theme.shell("shell")),
 };
 /** The input starts one row tall and grows with its content up to this. */
 export const MAX_INPUT_ROWS = 5;
+
+/** The idle status text for the given shell-mode flag, held count and queue
+ * length. Shell mode keeps its own guide even with entries waiting: `Up`
+ * take-back is off there, and `Esc` leaves the mode and brings it back. */
+export function idleGuide(
+  shellMode: boolean,
+  held: number,
+  queued: number,
+): string {
+  const base = shellMode
+    ? SHELL_GUIDE
+    : queued > 0
+      ? QUEUE_GUIDE
+      : held > 0
+        ? HELD_GUIDE
+        : GUIDE;
+  return held === 0 ? base : `📎 ${held} held · ${base}`;
+}
+
+/** The muted line under a shell entry's output; empty when nothing
+ * applies. */
+function shellFooter(message: Message): string {
+  const r = message.result;
+  if (!r) return "";
+  const parts: string[] = [];
+  if (r.droppedBytes > 0) parts.push(truncatedNote(r.droppedBytes));
+  if (r.exitCode !== undefined && r.exitCode !== 0) {
+    parts.push(`exit code: ${r.exitCode}`);
+  }
+  if (r.signal !== undefined) parts.push(`killed by ${r.signal}`);
+  if (r.interrupted) parts.push("interrupted");
+  if (message.failed) parts.push(FAILED_FOOTER);
+  if (message.held) parts.push(HELD_FOOTER);
+  return parts.join(" · ");
+}
 
 export interface ChatViewOptions {
   title: string;
@@ -54,16 +105,26 @@ interface KeypressSource {
   off(event: "keypress", handler: (key: KeyEvent) => void): unknown;
 }
 
+/** The renderables of one shell entry that change after it is drawn. */
+interface ShellEntry {
+  message: Message;
+  output: TextRenderable;
+  footer: TextRenderable;
+  drawnOutput: string;
+  drawnFooter: string;
+}
+
 /** Builds the OpenTUI tree for one ChatModel and mirrors its state.
  * Layout, top to bottom: badge header / banner-or-history / queue list
  * (hidden while the queue is empty) / hairline input (1–5 rows) / inline
- * mention popup (hidden unless the cursor is in an `@`
- * mention) / status line. */
+ * mention popup (hidden unless the cursor is in an `@` mention) / status
+ * line. */
 export class ChatView {
   private readonly body: BoxRenderable;
   private readonly banner: BoxRenderable;
   private bannerShown = true;
   private readonly history: ScrollBoxRenderable;
+  private readonly prompt: TextRenderable;
   private readonly input: TextareaRenderable;
   private readonly status: TextRenderable;
   private readonly queueList: BoxRenderable;
@@ -72,7 +133,11 @@ export class ChatView {
   private readonly index: FileIndex;
   private readonly onKeypress: (key: KeyEvent) => void;
   private rendered = 0;
+  /** Shell entries already drawn; their output and footer are refreshed
+   * from the model on every update (live output, held → sent). */
+  private readonly shellEntries: ShellEntry[] = [];
   private spinner: ReturnType<typeof setInterval> | undefined;
+  private spinnerMode: "busy" | "running" | undefined;
   private frame = 0;
   private readonly spinnerSpec: ResolvedSpinner;
   /** Built once from the vendor colours so a tick does not rebuild them. */
@@ -83,6 +148,11 @@ export class ChatView {
   private startedAt = 0;
   private destroyed = false;
   private statusPinned = false;
+  /** Shell mode is a property of the input box, not of the conversation. */
+  private shell = false;
+  /** The textarea content before the latest change, for the `!`-on-empty
+   * detection. */
+  private lastContent = "";
 
   constructor(
     private readonly renderer: CliRenderer,
@@ -177,19 +247,18 @@ export class ChatView {
       border: ["top", "bottom"],
       borderColor: MUTED_COLOR,
     });
-    inputBox.add(
-      new TextRenderable(renderer, {
-        id: "prompt",
-        content: styled(theme.muted("> ")),
-        flexShrink: 0,
-      }),
-    );
+    this.prompt = new TextRenderable(renderer, {
+      id: "prompt",
+      content: styled(theme.muted("> ")),
+      flexShrink: 0,
+    });
+    inputBox.add(this.prompt);
     this.input = new TextareaRenderable(renderer, {
       id: "input",
       flexGrow: 1,
       height: 1,
       wrapMode: "word",
-      placeholder: "Type a message",
+      placeholder: PLACEHOLDER,
       placeholderColor: MUTED_COLOR,
       keyBindings: [
         { name: "return", action: "submit" },
@@ -218,26 +287,7 @@ export class ChatView {
     root.add(this.status);
     renderer.root.add(root);
 
-    this.input.onSubmit = () => {
-      const text = this.input.plainText;
-      // Blank input is the one case ChatModel.submit drops synchronously;
-      // anything else is sent or queued, so the box is cleared.
-      if (!text.trim()) {
-        return;
-      }
-      this.input.clear();
-      this.fitInput();
-      // A mention problem on a typed message is only known after expansion,
-      // and the box is empty by then; put the text back so the user can fix
-      // it. A queued entry that fails goes back to the queue instead.
-      void this.model.submit(text).then((accepted) => {
-        // Trade-off: anything typed during expansion wins over the refill.
-        if (!accepted && !this.torn && !this.input.plainText) {
-          this.input.insertText(text);
-          this.fitInput();
-        }
-      });
-    };
+    this.input.onSubmit = () => this.submit();
     // Global listener: runs before the focused textarea and can stop it.
     this.onKeypress = (key) => this.handleKey(key);
     (renderer.keyInput as unknown as KeypressSource).on(
@@ -245,6 +295,7 @@ export class ChatView {
       this.onKeypress,
     );
     this.input.onContentChange = () => {
+      this.detectShellMode();
       this.fitInput();
       this.refreshPopup();
     };
@@ -252,6 +303,11 @@ export class ChatView {
     this.model.onChange = () => this.update();
     this.input.focus();
     this.update();
+  }
+
+  /** True while the input box is in `!` shell mode. */
+  get shellMode(): boolean {
+    return this.shell;
   }
 
   /** Test hook: the textarea's current text. */
@@ -266,7 +322,8 @@ export class ChatView {
     return this.destroyed || this.renderer.isDestroyed;
   }
 
-  /** Appends messages not yet drawn and syncs the status line. */
+  /** Appends messages not yet drawn, refreshes live shell entries, and
+   * syncs the status line. */
   update(): void {
     // A turn still in flight when the view is destroyed would otherwise
     // write to renderables the renderer has already torn down.
@@ -285,14 +342,19 @@ export class ChatView {
       // what restarts the elapsed timer, the frame cycle and the label.
       if (message.role === "user") this.beginTurn();
     }
+    for (const entry of this.shellEntries) this.refreshShell(entry);
     this.renderQueue();
     if (this.statusPinned) return;
     switch (this.model.status) {
       case "busy":
-        this.startSpinner();
+        this.startSpinner("busy");
         // The spinner only repaints on its interval; an entry queued in
         // between must show up in the count right away.
-        this.paintBusyStatus();
+        this.paintSpinnerStatus();
+        break;
+      case "running":
+        this.startSpinner("running");
+        this.paintSpinnerStatus();
         break;
       case "resetting":
         this.stopSpinner();
@@ -301,13 +363,17 @@ export class ChatView {
       case "dead":
         this.stopSpinner();
         this.status.content = styled(
-          theme.errorText(this.queued > 0 ? QUEUE_GUIDE : DEAD_GUIDE),
+          theme.errorText(
+            this.queued > 0 && !this.shell ? QUEUE_GUIDE : DEAD_GUIDE,
+          ),
         );
         break;
       default:
         this.stopSpinner();
         this.status.content = styled(
-          theme.muted(this.queued > 0 ? QUEUE_GUIDE : GUIDE),
+          theme.muted(
+            idleGuide(this.shell, this.model.heldResults.length, this.queued),
+          ),
         );
     }
   }
@@ -368,10 +434,46 @@ export class ChatView {
     this.stopSpinner();
   }
 
-  /** Ctrl+R reopens the browser in every state. While the popup is open,
-   * navigation and accept keys belong to it and never reach the textarea.
-   * Everything else falls through and the content/cursor hooks re-run the
-   * search. */
+  /** Enter: a message, or in shell mode a command. Mirrors the cases the
+   * model drops synchronously, so the textarea is never cleared for input
+   * the model is going to ignore. A message while something is in flight is
+   * queued, so the box is cleared; a command is not — runShell rejects it
+   * rather than queueing it, and the text stays for the user to resend. */
+  private submit(): void {
+    const text = this.input.plainText;
+    if (!text.trim()) {
+      return;
+    }
+    if (this.shell) {
+      if (this.model.status !== "idle") return;
+      this.input.clear();
+      this.fitInput();
+      // Shell mode stays on so the next command can be typed at once.
+      void this.model.runShell(text);
+      return;
+    }
+    this.input.clear();
+    this.fitInput();
+    // A mention problem is only known after expansion, and the box is
+    // empty by then; put the text back so the user can fix it.
+    void this.model.submit(text).then((accepted) => {
+      // Trade-off: anything typed during expansion wins over the refill.
+      if (!accepted && !this.torn && !this.input.plainText) {
+        // The clear() above left lastContent empty, which would let a
+        // refill starting with `!` trip the shell-mode detector; this text
+        // was typed as a message, so pre-seed the detector with it.
+        this.lastContent = text;
+        this.input.insertText(text);
+        this.fitInput();
+      }
+    });
+  }
+
+  /** Ctrl+R reopens the browser in every state. In shell mode, Escape /
+   * Backspace / Ctrl+U on an empty input leave the mode. While the popup
+   * is open, navigation and accept keys belong to it and never reach the
+   * textarea. Everything else falls through and the content/cursor hooks
+   * re-run the search. */
   private handleKey(key: KeyEvent): void {
     if (this.torn) return;
     if (key.ctrl && key.name === "r") {
@@ -379,8 +481,22 @@ export class ChatView {
       void this.model.reset();
       return;
     }
+    if (this.shell && this.input.plainText === "") {
+      const exits =
+        key.name === "escape" ||
+        key.name === "backspace" ||
+        (key.ctrl && key.name === "u");
+      if (exits) {
+        key.preventDefault();
+        this.setShellMode(false);
+        return;
+      }
+    }
+    // Not in shell mode: the box is for a command there, and dropping a
+    // queued message into it would run as one. Esc leaves shell mode first.
     if (
       key.name === "up" &&
+      !this.shell &&
       !this.popup.visible &&
       this.model.queue.length > 0 &&
       this.onFirstLine()
@@ -412,6 +528,34 @@ export class ChatView {
     key.preventDefault();
   }
 
+  /** `!` typed or pasted into an empty input switches to shell mode; the
+   * `!` itself is removed and anything after it (a paste) is kept. The
+   * clear/insert below does not re-enter this hook synchronously, but it
+   * does schedule further top-level calls carrying the post-mutation text;
+   * keying on "the input was empty before this change and the new content
+   * starts with `!`" makes those follow-ups no-ops. */
+  private detectShellMode(): void {
+    const text = this.input.plainText;
+    if (!this.shell && this.lastContent === "" && text.startsWith("!")) {
+      this.setShellMode(true);
+      const rest = text.slice(1);
+      this.input.clear();
+      if (rest) this.input.insertText(rest);
+    }
+    this.lastContent = this.input.plainText;
+  }
+
+  private setShellMode(on: boolean): void {
+    if (this.shell === on) return;
+    this.shell = on;
+    this.prompt.content = on
+      ? styled(theme.shell("! "))
+      : styled(theme.muted("> "));
+    this.input.placeholder = on ? SHELL_PLACEHOLDER : PLACEHOLDER;
+    if (on) this.popup.hide();
+    this.update();
+  }
+
   /** True when the cursor sits on the first logical line of the textarea. */
   private onFirstLine(): boolean {
     const before = this.input.plainText.slice(0, this.input.cursorOffset);
@@ -425,6 +569,9 @@ export class ChatView {
     if (entries.length === 0) return;
     const typed = this.input.plainText;
     const text = typed ? `${entries.join("\n")}\n${typed}` : entries.join("\n");
+    // The refill is a message, not a command: pre-seed the shell-mode
+    // detector so an entry starting with `!` does not switch modes.
+    this.lastContent = text;
     this.input.clear();
     this.input.insertText(text);
     this.fitInput();
@@ -450,9 +597,14 @@ export class ChatView {
     this.input.height = Math.min(MAX_INPUT_ROWS, Math.max(1, rows));
   }
 
-  /** Reads the textarea and shows or hides the popup accordingly. */
+  /** Reads the textarea and shows or hides the popup accordingly. No
+   * popup in shell mode: `@` is an ordinary character there. */
   private refreshPopup(): void {
     if (this.torn) return;
+    if (this.shell) {
+      this.popup.hide();
+      return;
+    }
     const mention = mentionAtCursor(
       this.input.plainText,
       this.input.cursorOffset,
@@ -498,6 +650,36 @@ export class ChatView {
     box.add(
       new TextRenderable(this.renderer, { content: LABELS[message.role]() }),
     );
+    if (message.role === "shell") {
+      box.add(
+        new TextRenderable(this.renderer, {
+          content: styled(theme.shell(`$ ${message.text}`)),
+          wrapMode: "word",
+        }),
+      );
+      const output = new TextRenderable(this.renderer, {
+        content: "",
+        wrapMode: "word",
+        visible: false,
+      });
+      const footer = new TextRenderable(this.renderer, {
+        content: "",
+        wrapMode: "word",
+        visible: false,
+      });
+      box.add(output);
+      box.add(footer);
+      const entry: ShellEntry = {
+        message,
+        output,
+        footer,
+        drawnOutput: "",
+        drawnFooter: "",
+      };
+      this.shellEntries.push(entry);
+      this.refreshShell(entry);
+      return box;
+    }
     box.add(
       new TextRenderable(this.renderer, {
         content:
@@ -517,15 +699,37 @@ export class ChatView {
     return box;
   }
 
-  private startSpinner(): void {
-    if (this.spinner) return;
+  /** Rewrites a shell entry's output and footer when they changed. Hidden
+   * renderables take no rows, so an empty output or footer costs nothing. */
+  private refreshShell(entry: ShellEntry): void {
+    const output = entry.message.result?.output ?? "";
+    if (output !== entry.drawnOutput) {
+      entry.drawnOutput = output;
+      // Trailing newline would draw an empty row under the output.
+      entry.output.content = output.endsWith("\n")
+        ? output.slice(0, -1)
+        : output;
+      entry.output.visible = output !== "";
+    }
+    const footer = shellFooter(entry.message);
+    if (footer !== entry.drawnFooter) {
+      entry.drawnFooter = footer;
+      entry.footer.content = styled(theme.muted(footer));
+      entry.footer.visible = footer !== "";
+    }
+  }
+
+  private startSpinner(mode: "busy" | "running"): void {
+    if (this.spinner && this.spinnerMode === mode) return;
+    this.stopSpinner();
+    this.spinnerMode = mode;
     this.beginTurn();
     const tick = () => {
       // The renderer can be destroyed from under a running turn (SIGINT);
       // the interval outlives it until teardown reaches this view.
       if (this.torn) return this.stopSpinner();
       this.frame = (this.frame + 1) % this.spinnerSpec.frames.length;
-      this.paintBusyStatus();
+      this.paintSpinnerStatus();
     };
     tick();
     this.spinner = setInterval(tick, this.spinnerSpec.intervalMs);
@@ -548,14 +752,28 @@ export class ChatView {
     return labels[Math.floor(Math.random() * labels.length)] ?? "";
   }
 
-  /** Draws the current spinner frame, elapsed time and queue count. The
-   * frame and label take the vendor colours; the counter never does. */
-  private paintBusyStatus(): void {
+  /** Draws the current spinner frame, elapsed time and queue count, for
+   * whichever spinner is running. The frame takes the vendor colour in both
+   * modes and the vendor label only in the busy row, which is the one it
+   * describes; the counter never does.  */
+  private paintSpinnerStatus(): void {
     const elapsed = Math.floor((Date.now() - this.startedAt) / 1000);
-    const queued = this.queued > 0 ? `  · ${this.queued} queued` : "";
-    const frame = this.spinnerSpec.frames[this.frame] ?? "";
+    const n = this.queued;
+    const raw = this.spinnerSpec.frames[this.frame] ?? "";
+    const frame = this.frameStyler === undefined ? raw : this.frameStyler(raw);
+    if (this.spinnerMode === "running") {
+      // The running row already separates its parts with " · ", so the count
+      // joins with one space; the busy row keeps its wider gap.
+      const queued = n > 0 ? ` · ${n} queued` : "";
+      this.status.content = styled(
+        frame,
+        ` ${RUNNING_LABEL}  ${elapsed}s · Ctrl+C stop${queued}`,
+      );
+      return;
+    }
+    const queued = n > 0 ? `  · ${n} queued` : "";
     this.status.content = styled(
-      this.frameStyler === undefined ? frame : this.frameStyler(frame),
+      frame,
       " ",
       this.labelStyler === undefined
         ? this.label
@@ -568,5 +786,6 @@ export class ChatView {
     if (!this.spinner) return;
     clearInterval(this.spinner);
     this.spinner = undefined;
+    this.spinnerMode = undefined;
   }
 }

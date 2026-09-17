@@ -70,4 +70,56 @@ describe("loadConfig", () => {
       loadConfig({ configDir: "test-cli", baseDir }),
     ).rejects.toMatchObject({ code: "INVALID_CONFIG" });
   });
+
+  test("reads the shell section", async () => {
+    writeFileSync(
+      setup(),
+      JSON.stringify({ shell: { leadIn: "Check:", autoSend: false } }),
+    );
+    const cfg = await loadConfig({ configDir: "test-cli", baseDir });
+    expect(cfg.shell).toEqual({ leadIn: "Check:", autoSend: false });
+  });
+
+  test("a partial shell section keeps only the given keys", async () => {
+    writeFileSync(setup(), JSON.stringify({ shell: { leadIn: "Check:" } }));
+    const cfg = await loadConfig({ configDir: "test-cli", baseDir });
+    expect(cfg.shell).toEqual({ leadIn: "Check:" });
+    expect("autoSend" in (cfg.shell ?? {})).toBe(false);
+  });
+
+  test("no shell section leaves the key absent", async () => {
+    writeFileSync(setup(), JSON.stringify({ defaultProvider: "@x/p" }));
+    const cfg = await loadConfig({ configDir: "test-cli", baseDir });
+    expect("shell" in cfg).toBe(false);
+  });
+
+  test.each([
+    [{ shell: [] }, '"shell" must be an object'],
+    [{ shell: "x" }, '"shell" must be an object'],
+    [{ shell: { leadIn: 5 } }, '"shell.leadIn" must be a string'],
+    [{ shell: { autoSend: "no" } }, '"shell.autoSend" must be a boolean'],
+  ])("%j is INVALID_CONFIG", async (doc: unknown, why: string) => {
+    writeFileSync(setup(), JSON.stringify(doc));
+    let caught: unknown;
+    try {
+      await loadConfig({ configDir: "test-cli", baseDir });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ChatBridgeError);
+    expect((caught as ChatBridgeError).code).toBe("INVALID_CONFIG");
+    expect((caught as ChatBridgeError).message).toContain(why);
+  });
+
+  test("providerPinned: defaultProvider is ignored even when invalid", async () => {
+    writeFileSync(
+      setup(),
+      JSON.stringify({ defaultProvider: 5, shell: { autoSend: false } }),
+    );
+    const cfg = await loadConfig(
+      { configDir: "test-cli", baseDir },
+      { providerPinned: true },
+    );
+    expect(cfg).toEqual({ shell: { autoSend: false } });
+  });
 });

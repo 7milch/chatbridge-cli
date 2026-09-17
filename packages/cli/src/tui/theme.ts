@@ -11,7 +11,7 @@ import type { SpinnerColor } from "./spinner.js";
  * helpers emit fixed truecolour values and are deliberately not used. */
 export type Styler = (text: string) => TextChunk;
 
-const ANSI = { red: 1, green: 2, blue: 4, brightBlack: 8 } as const;
+const ANSI = { red: 1, green: 2, yellow: 3, blue: 4, brightBlack: 8 } as const;
 
 // `__isChunk: true` is OpenTUI's runtime discriminator for TextChunk
 // (0.5.10). A rename would not be caught by the type-check, so re-check
@@ -37,6 +37,8 @@ export const theme = {
   user: make(TextAttributes.BOLD, ANSI.blue),
   assistant: make(TextAttributes.BOLD, ANSI.green),
   error: make(TextAttributes.BOLD, ANSI.red),
+  /** Shell-mode prompt, the `shell` role label and its command line. */
+  shell: make(TextAttributes.BOLD, ANSI.yellow),
   errorText: make(TextAttributes.NONE, ANSI.red),
   selected: make(TextAttributes.INVERSE),
 };

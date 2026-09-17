@@ -7,8 +7,9 @@ import {
   runLogin,
   runOneShot,
 } from "@chatbridge/core";
-import { configPath, loadConfig } from "./config.js";
+import { type CliConfig, configPath, loadConfig } from "./config.js";
 import { resolveProvider } from "./resolve-provider.js";
+import { type ShellConfig, resolveShellConfig } from "./shell/shell-config.js";
 import { supportsInteractive } from "./tui/runtime-check.js";
 import type { SpinnerOptions } from "./tui/spinner.js";
 
@@ -24,7 +25,11 @@ export interface CreateCliOptions {
    * `banner`; fields not set keep their default. Frames must share a
    * display width. */
   spinner?: SpinnerOptions;
-  /** Pinned provider. When set, --provider is rejected and config is not read. */
+  /** Vendor defaults for `!` shell mode in the interactive TUI; the user's
+   * config.json overrides them key by key. */
+  shell?: Partial<ShellConfig>;
+  /** Pinned provider. When set, --provider is rejected and config.json's
+   * "defaultProvider" is ignored; its "shell" section still applies. */
   provider?: Provider;
   /** Config directory name under ~/.config; defaults to `name`. */
   configDir?: string;
@@ -88,12 +93,17 @@ export function createCli(opts: CreateCliOptions) {
       "",
       "Without -p, an interactive chat opens (needs a terminal and Bun >= 1.3 or Node >= 26.4).",
       "One-shot mode prints the AI response to stdout.",
+      "Interactive mode: @ attaches a file, ! runs a shell command and sends its output.",
       "Exit codes: 1 usage/config, 2 not logged in, 3 auth expired, 4 timeout, 5 provider load, 6 blocked by the service (try --headful).",
       ...(opts.provider
-        ? []
+        ? [
+            "",
+            `${configPath(location)} may set "shell": { "leadIn", "autoSend" } for ! shell mode.`,
+          ]
         : [
             "",
-            `Without --provider, "defaultProvider" from ${configPath(location)} is used.`,
+            `Without --provider, "defaultProvider" from ${configPath(location)} is used;`,
+            `"shell": { "leadIn", "autoSend" } there configures ! shell mode.`,
           ]),
     ].join("\n");
   }
@@ -104,8 +114,12 @@ export function createCli(opts: CreateCliOptions) {
     if (process.stderr.isTTY) process.stderr.write(`${message}\n`);
   }
 
-  /** Resolution order: pinned provider → --provider → config defaultProvider. */
-  async function getProvider(flag: string | undefined): Promise<Provider> {
+  /** Resolution order: pinned provider → --provider → config defaultProvider.
+   * `config`, when given, is used instead of reading the file again. */
+  async function getProvider(
+    flag: string | undefined,
+    config?: CliConfig,
+  ): Promise<Provider> {
     if (opts.provider) {
       if (flag !== undefined) {
         throw new ChatBridgeError(
@@ -115,7 +129,8 @@ export function createCli(opts: CreateCliOptions) {
       }
       return opts.provider;
     }
-    const spec = flag ?? (await loadConfig(location)).defaultProvider;
+    const spec =
+      flag ?? (config ?? (await loadConfig(location))).defaultProvider;
     if (!spec) {
       throw new ProviderLoadError(
         `No provider specified. Pass --provider <npm-package|./path> or set "defaultProvider" in ${configPath(location)}.`,
@@ -227,7 +242,13 @@ export function createCli(opts: CreateCliOptions) {
           );
         }
         const timeoutMs = parseTimeoutMs(values.timeout);
-        const provider = await getProvider(values.provider);
+        // Read even with a pinned provider: the shell section is the
+        // user's to override regardless of who ships the CLI. The provider
+        // key is that CLI's own business, so it is not validated then.
+        const config = await loadConfig(location, {
+          providerPinned: opts.provider !== undefined,
+        });
+        const provider = await getProvider(values.provider, config);
         const authStore = createAuthStore({
           configDir,
           providerName: provider.name,
@@ -240,6 +261,7 @@ export function createCli(opts: CreateCliOptions) {
           version: opts.version,
           banner: opts.banner,
           spinner: opts.spinner,
+          shell: resolveShellConfig(opts.shell, config.shell),
           provider,
           authStore,
           headless: !values.headful,

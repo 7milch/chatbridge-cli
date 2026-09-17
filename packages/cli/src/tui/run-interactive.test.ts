@@ -3,6 +3,7 @@ import type { Page, Provider } from "@chatbridge/provider";
 import type { AuthStore } from "@chatbridge/runtime";
 import { createTestRenderer } from "@opentui/core/testing";
 import { FileIndex } from "../mentions/file-index.js";
+import type { ShellResult } from "../shell/run-command.js";
 import { ChatModel } from "./chat-model.js";
 import { ChatView } from "./chat-view.js";
 import { runInteractive, waitForQuit } from "./run-interactive.js";
@@ -109,6 +110,77 @@ describe("waitForQuit", () => {
       index: FileIndex.fromPaths([]),
     });
     const quit = waitForQuit(t.renderer, model);
+    t.mockInput.pressKey("c", { ctrl: true });
+    expect(await quit).toBeUndefined();
+    view.destroy();
+    t.renderer.destroy();
+  });
+  test("Ctrl+C while a shell command runs stops it and does not quit", async () => {
+    // exitOnCtrlC mirrors createCliRenderer in runInteractive; the test
+    // renderer defaults to true, which would destroy it on the first Ctrl+C.
+    const t = await createTestRenderer({
+      width: 40,
+      height: 12,
+      exitOnCtrlC: false,
+    });
+    let stopped = 0;
+    const model = new ChatModel(
+      {
+        async send() {
+          return "";
+        },
+        async close() {},
+        async kill() {},
+      },
+      {
+        openSession: async () => {
+          throw new Error("not expected");
+        },
+        shell: { leadIn: "x", autoSend: false },
+        runCommand: (command) => {
+          let resolve!: (r: ShellResult) => void;
+          const done = new Promise<ShellResult>((res) => {
+            resolve = res;
+          });
+          return {
+            done,
+            stop() {
+              stopped++;
+              resolve({
+                command,
+                output: "",
+                droppedBytes: 0,
+                exitCode: undefined,
+                interrupted: true,
+                durationMs: 1,
+              });
+            },
+          };
+        },
+      },
+    );
+    const view = new ChatView(t.renderer, model, {
+      title: "test-cli",
+      providerName: "dummy-chat",
+      timeoutMs: 1_000,
+      headless: true,
+      banner: [],
+      spinner: resolveSpinner(),
+      index: FileIndex.fromPaths([]),
+    });
+    const quit = waitForQuit(t.renderer, model);
+    const run = model.runShell("sleep 10");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(model.status).toBe("running");
+    t.mockInput.pressKey("c", { ctrl: true });
+    await run;
+    expect(stopped).toBe(1);
+    expect(model.status).toBe("idle");
+    const raced = await Promise.race([
+      quit.then(() => "resolved"),
+      new Promise((r) => setTimeout(() => r("pending"), 50)),
+    ]);
+    expect(raced).toBe("pending");
     t.mockInput.pressKey("c", { ctrl: true });
     expect(await quit).toBeUndefined();
     view.destroy();
