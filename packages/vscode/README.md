@@ -28,7 +28,12 @@ export const { activate, deactivate } = createExtension({
 - `playwrightCliPath` — override for the `playwright/cli.js` location the
   Install Browser command spawns; only needed when Playwright is not
   resolvable from the extension's own `node_modules`.
-- `baseDir` — test-only override for the extension's working directory.
+- `timeoutMs` — per-step timeout default, in milliseconds (default
+  `120000`). The user's `<id>.timeoutSec` setting overrides it.
+- `headless` — whether sessions launch a headless browser (default `true`).
+  The user's `<id>.headless` setting overrides it.
+- `baseDir` — test-only override for the base directory of the config /
+  auth-state store.
 
 ## Manifest
 
@@ -41,8 +46,17 @@ The vendor's `package.json` must contribute, with `<id>` replaced by the
   `<id>.installBrowser`, `<id>.sendSelection`, `<id>.sendFile`, `<id>.focus`
 - Settings `<id>.headless` (boolean) and `<id>.timeoutSec` (number)
 
-Activation throws a message listing any of these IDs the manifest is
-missing.
+Activation checks exactly three things and throws a message listing every
+missing ID:
+
+- `contributes.viewsContainers.activitybar[]` contains an entry with
+  `id === <id>`
+- `contributes.views.<id>[]` contains an entry with `id === <id>.chat`
+- `contributes.commands[]` contains all seven `<id>.*` commands above
+
+`contributes.configuration` is not validated: a missing `<id>.headless` or
+`<id>.timeoutSec` setting simply falls back to the `createExtension`
+default.
 
 ## Packaging
 

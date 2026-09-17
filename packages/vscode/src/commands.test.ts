@@ -21,13 +21,20 @@ interface Fake {
     | "getState"
   >;
   sendResults: Array<Awaited<ReturnType<SessionController["send"]>>>;
+  /** Drives both `getState().status` and what `discard` returns. */
+  busy: boolean;
   login: CommandDeps["runLogin"];
   install: CommandDeps["installBrowser"];
   cleared: number;
 }
 
 function fake(): Fake {
-  const f = { log: [], sendResults: [], cleared: 0 } as unknown as Fake;
+  const f = {
+    log: [],
+    sendResults: [],
+    cleared: 0,
+    busy: false,
+  } as unknown as Fake;
   f.ui = {
     showErrorMessage: async (m, ...items) => {
       f.log.push(`error:${m}${items.length ? `[${items.join(",")}]` : ""}`);
@@ -56,7 +63,10 @@ function fake(): Fake {
       return { ok: true };
     },
     newChat: async () => f.log.push("newChat"),
-    discard: async (s) => f.log.push(`discard:${s}`),
+    discard: async (s) => {
+      f.log.push(`discard:${s}`);
+      return !f.busy;
+    },
     markLoggedIn: () => f.log.push("markLoggedIn"),
     addAttachment: (a) => {
       f.log.push(`attach:${a.path}:${a.bytes}`);
@@ -65,7 +75,11 @@ function fake(): Fake {
         : { ok: true };
     },
     removeAttachment: (i) => f.log.push(`remove:${i}`),
-    getState: () => ({ status: "idle", messages: [], pendingAttachments: [] }),
+    getState: () => ({
+      status: f.busy ? ("busy" as const) : ("idle" as const),
+      messages: [],
+      pendingAttachments: [],
+    }),
   };
   f.login = async (o) => {
     f.log.push("runLogin");
@@ -124,6 +138,26 @@ describe("commands", () => {
     await commands(f).logout();
     expect(f.log).toEqual(["discard:Logged out"]);
     expect(f.cleared).toBe(1);
+  });
+
+  test("logout while a turn is in flight warns and keeps the auth state", async () => {
+    const f = fake();
+    f.busy = true;
+    await commands(f).logout();
+    expect(f.log).toEqual([
+      "discard:Logged out",
+      "warn:Wait for the current reply to finish, then log out.",
+    ]);
+    expect(f.cleared).toBe(0);
+  });
+
+  test("login while a turn is in flight warns and does not run runLogin", async () => {
+    const f = fake();
+    f.busy = true;
+    await commands(f).login();
+    expect(f.log).toEqual([
+      "warn:Wait for the current reply to finish, then log in.",
+    ]);
   });
 
   test("send forwards to the controller; a missing browser offers Install and retries", async () => {

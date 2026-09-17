@@ -103,6 +103,9 @@ export function createExtension(opts: CreateExtensionOptions) {
           ...settings(),
           onProgress: progress,
         }),
+      hints: {
+        BLOCKED: `Set the "${opts.id}.headless" setting to false and try again.`,
+      },
       onChange: (state) => {
         bridge.pushState(state);
         if (state.status === "busy" || state.status === "opening")

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   AuthExpiredError,
   AuthRequiredError,
+  BlockedError,
   BrowserUnavailableError,
   ResponseTimeoutError,
 } from "@chatbridge/core";
@@ -386,6 +387,43 @@ describe("SessionController", () => {
     expect(h.controller.getState().messages.at(-1)).toEqual({
       role: "separator",
       text: "Logged out",
+    });
+  });
+
+  test("discard returns false while a turn is in flight, true otherwise", async () => {
+    const h = harness();
+    const p = h.controller.send("a");
+    await settle();
+    expect(await h.controller.discard("Logged out")).toBe(false);
+    expect(h.closed).toBe(0);
+    h.replies[0].resolve("1");
+    await p;
+    expect(await h.controller.discard("Logged out")).toBe(true);
+    expect(h.closed).toBe(1);
+  });
+
+  test("a hint for the error code is appended to the history entry", async () => {
+    const h = harness();
+    const controller = new SessionController({
+      openSession: async () => {
+        throw h.openError as Error;
+      },
+      closeTimeoutMs: 20,
+      hints: { BLOCKED: 'Set the "acme.headless" setting to false.' },
+    });
+    h.openError = new BlockedError(
+      'Blocked by "acme": challenge. Try --headful.',
+    );
+    await controller.send("x");
+    expect(controller.getState().messages.at(-1)).toEqual({
+      role: "error",
+      text: 'Blocked by "acme": challenge. Try --headful.\nSet the "acme.headless" setting to false.',
+    });
+    h.openError = new AuthRequiredError("no auth");
+    await controller.retryLast();
+    expect(controller.getState().messages.at(-1)).toEqual({
+      role: "error",
+      text: "no auth",
     });
   });
 

@@ -39,6 +39,11 @@ function message(err: unknown): string {
 export function createCommands(deps: CommandDeps): CommandHandlers {
   const { controller, ui } = deps;
 
+  function isBusy(): boolean {
+    const status = controller.getState().status;
+    return status === "busy" || status === "opening";
+  }
+
   async function runInstall(): Promise<boolean> {
     try {
       await ui.withProgress("Installing Chromium", false, (progress) =>
@@ -78,6 +83,12 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
 
   return {
     async login() {
+      if (isBusy()) {
+        ui.showWarningMessage(
+          "Wait for the current reply to finish, then log in.",
+        );
+        return;
+      }
       try {
         await ui.withProgress(
           `Log in to ${deps.displayName}`,
@@ -97,7 +108,12 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
     },
 
     async logout() {
-      await controller.discard("Logged out");
+      if (!(await controller.discard("Logged out"))) {
+        ui.showWarningMessage(
+          "Wait for the current reply to finish, then log out.",
+        );
+        return;
+      }
       await deps.clearAuth();
     },
 

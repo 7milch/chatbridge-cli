@@ -34,6 +34,10 @@ export interface SessionControllerOptions {
   closeTimeoutMs?: number;
   /** Called with the full state after every change. */
   onChange?: (state: State) => void;
+  /** Extra line appended to the history entry of a failed turn, keyed by
+   * `ChatBridgeError.code`. Core's messages are CLI-flavoured (`Try
+   * --headful.`); the extension adds the VSCode-side remedy. */
+  hints?: Partial<Record<string, string>>;
 }
 
 export const CLOSE_TIMEOUT_MS = 5_000;
@@ -183,7 +187,11 @@ export class SessionController {
   private async fail(err: unknown): Promise<SendResult> {
     const code = err instanceof ChatBridgeError ? err.code : "UNKNOWN";
     const message = err instanceof Error ? err.message : String(err);
-    this.messages.push({ role: "error", text: message });
+    const hint = this.opts.hints?.[code];
+    this.messages.push({
+      role: "error",
+      text: hint === undefined ? message : `${message}\n${hint}`,
+    });
     // Show the error before `dropSession` (up to `closeTimeoutMs`) runs.
     this.emit();
     if (code === "RESPONSE_TIMEOUT") {
@@ -207,16 +215,17 @@ export class SessionController {
     await this.discard("New chat");
   }
 
-  /** Closes the session (if any) and pushes `separator`. Refused while a
-   * turn is in flight. Clears a dead state. */
-  async discard(separator: string): Promise<void> {
-    if (this.status === "busy" || this.status === "opening") return;
+  /** Closes the session (if any) and pushes `separator`. Refused (returns
+   * false) while a turn is in flight. Clears a dead state. */
+  async discard(separator: string): Promise<boolean> {
+    if (this.status === "busy" || this.status === "opening") return false;
     await this.dropSession();
     this.lastError = undefined;
     // A fresh chat must not re-send a prompt from before the break.
     this.lastPrompt = undefined;
     this.status = "closed";
     this.push({ role: "separator", text: separator });
+    return true;
   }
 
   /** After a successful login command: a dead controller may try again. */
