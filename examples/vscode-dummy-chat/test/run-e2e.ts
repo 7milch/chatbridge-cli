@@ -9,17 +9,19 @@ import { downloadAndUnzipVSCode, runTests } from "@vscode/test-electron";
 /** @vscode/test-electron 2.5.2 still points at `Contents/MacOS/Electron`,
  * which VSCode renamed to `Code`; fall back to the current name. */
 function resolveExecutable(downloaded: string): string {
-  if (existsSync(downloaded)) return downloaded;
+  if (process.platform !== "darwin" || existsSync(downloaded))
+    return downloaded;
   const renamed = downloaded.replace(/\/Electron$/, "/Code");
   if (renamed !== downloaded && existsSync(renamed)) return renamed;
   return downloaded;
 }
 
-const server = await startDummyChat(0);
+// The temp dirs come first: a throw here must not strand a listening server.
 const baseDir = mkdtempSync(join(tmpdir(), "cb-vsc-"));
 // Short path: VSCode's IPC socket lives under --user-data-dir and macOS caps
 // unix socket paths at 104 bytes.
 const userDataDir = mkdtempSync(join(tmpdir(), "cb-ud-"));
+const server = await startDummyChat(0);
 try {
   // Seed the auth state headlessly; the extension's login command is the
   // same runLogin the CLI uses and is covered by the core E2E.
@@ -34,11 +36,16 @@ try {
     provider,
     authStore: store,
   });
-  await provider.navigateToLogin(rt.page);
-  await rt.page.locator("#login-button").click();
-  await rt.page.waitForURL("**/chat");
-  await rt.saveAuthState();
-  await rt.close();
+  // Its own finally: a failed login must not leave Chromium running, or the
+  // runner never exits and CI waits out its timeout instead of failing.
+  try {
+    await provider.navigateToLogin(rt.page);
+    await rt.page.locator("#login-button").click();
+    await rt.page.waitForURL("**/chat");
+    await rt.saveAuthState();
+  } finally {
+    await rt.close();
+  }
 
   const vscodeExecutablePath = resolveExecutable(
     await downloadAndUnzipVSCode(),
