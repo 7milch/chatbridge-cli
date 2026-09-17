@@ -63,7 +63,10 @@ export class SessionController {
   getState(): State {
     const state: State = {
       status: this.status,
-      messages: this.messages.map((m) => ({ ...m })),
+      messages: this.messages.map((m) => ({
+        ...m,
+        ...(m.attachments ? { attachments: [...m.attachments] } : {}),
+      })),
       pendingAttachments: this.pending.map(({ path, bytes }) => ({
         path,
         bytes,
@@ -158,6 +161,10 @@ export class SessionController {
   }
 
   private async runTurn(prompt: string): Promise<SendResult> {
+    // A new turn supersedes whatever killed the previous one: a stale
+    // `lastError` would keep the webview's error banner up after a
+    // successful send from `dead`.
+    this.lastError = undefined;
     try {
       if (this.session === undefined) {
         this.setStatus("opening");
@@ -177,6 +184,8 @@ export class SessionController {
     const code = err instanceof ChatBridgeError ? err.code : "UNKNOWN";
     const message = err instanceof Error ? err.message : String(err);
     this.messages.push({ role: "error", text: message });
+    // Show the error before `dropSession` (up to `closeTimeoutMs`) runs.
+    this.emit();
     if (code === "RESPONSE_TIMEOUT") {
       this.setStatus("idle");
     } else {
@@ -204,6 +213,8 @@ export class SessionController {
     if (this.status === "busy" || this.status === "opening") return;
     await this.dropSession();
     this.lastError = undefined;
+    // A fresh chat must not re-send a prompt from before the break.
+    this.lastPrompt = undefined;
     this.status = "closed";
     this.push({ role: "separator", text: separator });
   }

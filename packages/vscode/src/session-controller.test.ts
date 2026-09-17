@@ -335,6 +335,7 @@ describe("SessionController", () => {
     h.closeHangs = true;
     await h.controller.newChat();
     expect(h.killed).toBe(1);
+    expect(h.closed).toBe(0);
     expect(h.controller.getState().status).toBe("closed");
   });
 
@@ -352,8 +353,12 @@ describe("SessionController", () => {
     const h = harness();
     const p = h.controller.send("a");
     await settle();
+    const before = h.controller.getState().messages.length;
     await h.controller.newChat();
     expect(h.controller.getState().status).toBe("busy");
+    expect(h.closed).toBe(0);
+    // No separator was appended.
+    expect(h.controller.getState().messages).toHaveLength(before);
     h.replies[0].resolve("1");
     await p;
   });
@@ -382,6 +387,51 @@ describe("SessionController", () => {
       role: "separator",
       text: "Logged out",
     });
+  });
+
+  test("a successful send after a dead open clears lastError", async () => {
+    const h = harness();
+    h.openError = new AuthRequiredError("no");
+    await h.controller.send("x");
+    expect(h.controller.getState().lastError).toBe("AUTH_REQUIRED");
+    h.openError = undefined;
+    const p = h.controller.send("y");
+    await settle();
+    h.replies[0].resolve("hi");
+    expect(await p).toEqual({ ok: true });
+    const s = h.controller.getState();
+    expect(s.status).toBe("idle");
+    expect(s.lastError).toBeUndefined();
+    expect(s.messages.at(-1)).toEqual({ role: "assistant", text: "hi" });
+  });
+
+  test("retryLast after newChat is EMPTY: a break drops the last prompt", async () => {
+    const h = harness();
+    const p = h.controller.send("a");
+    await settle();
+    h.replies[0].resolve("1");
+    await p;
+    await h.controller.newChat();
+    expect(await h.controller.retryLast()).toEqual({
+      ok: false,
+      code: "EMPTY",
+      message: "Nothing to send.",
+    });
+    expect(h.sent).toEqual(["a"]);
+  });
+
+  test("getState copies the attachments array of a user entry", async () => {
+    const h = harness();
+    h.controller.addAttachment({ path: "a", bytes: 1, content: "a" });
+    const p = h.controller.send("look");
+    await settle();
+    const first = h.controller.getState().messages[0];
+    first.attachments?.push({ path: "sneaky", bytes: 9 });
+    expect(h.controller.getState().messages[0].attachments).toEqual([
+      { path: "a", bytes: 1 },
+    ]);
+    h.replies[0].resolve("ok");
+    await p;
   });
 
   test("close closes an open session and leaves the history alone", async () => {
