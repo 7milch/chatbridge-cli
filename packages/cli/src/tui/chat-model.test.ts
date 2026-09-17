@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { ResponseTimeoutError } from "@chatbridge/core";
 import { MentionError } from "../mentions/expand-mentions.js";
+import type {
+  RunOptions,
+  RunningCommand,
+  ShellResult,
+} from "../shell/run-command.js";
 import { ChatModel, type ChatSessionLike } from "./chat-model.js";
 
 function deferred<T>() {
@@ -66,6 +71,61 @@ function harness(opts: { closeTimeoutMs?: number } = {}) {
     },
   });
   return { model, first, next, opened };
+}
+
+/** A fake command runner. `emit` appends output (as the throttled
+ * onOutput would), `finish` settles `done`; `stop()` settles it as
+ * interrupted with the output so far. */
+function fakeRunner() {
+  const calls: Array<{ command: string; cwd: string }> = [];
+  let output = "";
+  let resolve: ((r: ShellResult) => void) | undefined;
+  let reject: ((e: unknown) => void) | undefined;
+  let onOutput: ((t: string) => void) | undefined;
+  const base = (command: string): ShellResult => ({
+    command,
+    output: "",
+    droppedBytes: 0,
+    exitCode: 0,
+    interrupted: false,
+    durationMs: 1,
+  });
+  let current = base("");
+  const runCommand = (command: string, opts: RunOptions): RunningCommand => {
+    calls.push({ command, cwd: opts.cwd });
+    output = "";
+    current = base(command);
+    onOutput = opts.onOutput;
+    const done = new Promise<ShellResult>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return {
+      done,
+      stop() {
+        resolve?.({
+          ...current,
+          output,
+          exitCode: undefined,
+          interrupted: true,
+        });
+      },
+    };
+  };
+  return {
+    runCommand,
+    calls,
+    emit(text: string) {
+      output += text;
+      onOutput?.(output);
+    },
+    finish(over: Partial<ShellResult> = {}) {
+      resolve?.({ ...current, output, ...over });
+    },
+    fail(err: unknown) {
+      reject?.(err);
+    },
+  };
 }
 
 describe("ChatModel.submit", () => {
@@ -418,5 +478,284 @@ describe("ChatModel.reset", () => {
     expect(model.pendingReset).toBeUndefined();
     // Awaiting the exposed promise is enough to see the new session.
     expect(model.session).toBe(b.session);
+  });
+});
+
+describe("ChatModel.runShell", () => {
+  test("running, live output, then autoSend sends the lead-in and section", async () => {
+    const { session, calls, replies } = fakeSession();
+    const runner = fakeRunner();
+    const model = new ChatModel(session, {
+      ...noReopen,
+      runCommand: runner.runCommand,
+      cwd: "/work",
+    });
+    const changes: string[] = [];
+    model.onChange = () => changes.push(model.status);
+
+    const p = model.runShell("  echo hi  ");
+    await tick();
+    expect(model.status).toBe("running");
+    expect(runner.calls).toEqual([{ command: "echo hi", cwd: "/work" }]);
+    expect(model.messages[0]).toMatchObject({
+      role: "shell",
+      text: "echo hi",
+      result: { command: "echo hi", output: "", interrupted: false },
+    });
+
+    runner.emit("hi\n");
+    expect(model.messages[0]?.result?.output).toBe("hi\n");
+    expect(changes).toEqual(["running", "running"]);
+
+    runner.finish({ exitCode: 0 });
+    await tick();
+    expect(model.status).toBe("busy");
+    expect(calls).toEqual([
+      "Please check the execution result.\n\n### $ echo hi\n```\nhi\n```",
+    ]);
+    // No user entry: the shell entry stands for the turn.
+    expect(model.messages.map((m) => m.role)).toEqual(["shell"]);
+
+    replies[0]?.resolve("Looks fine.");
+    expect(await p).toBe(true);
+    expect(model.status).toBe("idle");
+    expect(model.messages[1]).toEqual({
+      role: "assistant",
+      text: "Looks fine.",
+    });
+    expect(model.messages[0]?.result).toMatchObject({
+      output: "hi\n",
+      exitCode: 0,
+    });
+    expect(changes).toEqual(["running", "running", "busy", "idle"]);
+  });
+
+  test("uses the configured lead-in", async () => {
+    const { session, calls, replies } = fakeSession();
+    const runner = fakeRunner();
+    const model = new ChatModel(session, {
+      ...noReopen,
+      runCommand: runner.runCommand,
+      shell: { leadIn: "Check:", autoSend: true },
+    });
+    const p = model.runShell("true");
+    await tick();
+    runner.finish();
+    await tick();
+    expect(calls[0]).toStartWith("Check:\n\n### $ true\n");
+    replies[0]?.resolve("ok");
+    await p;
+  });
+
+  test("blank command and non-idle states are rejected", async () => {
+    const { session, replies } = fakeSession();
+    const runner = fakeRunner();
+    const model = new ChatModel(session, {
+      ...noReopen,
+      runCommand: runner.runCommand,
+    });
+    expect(await model.runShell("   ")).toBe(false);
+    const p = model.runShell("sleep");
+    await tick();
+    expect(await model.runShell("other")).toBe(false); // running
+    expect(await model.submit("hello")).toBe(false); // running
+    runner.finish();
+    await tick();
+    expect(model.status).toBe("busy");
+    expect(await model.runShell("other")).toBe(false); // busy
+    replies[0]?.resolve("ok");
+    await p;
+    expect(runner.calls.map((c) => c.command)).toEqual(["sleep"]);
+  });
+
+  test("autoSend off: the result is held and attached to the next submit", async () => {
+    const { session, calls, replies } = fakeSession();
+    const runner = fakeRunner();
+    const model = new ChatModel(session, {
+      ...noReopen,
+      runCommand: runner.runCommand,
+      shell: { leadIn: "unused", autoSend: false },
+    });
+    const changes: string[] = [];
+    model.onChange = () => changes.push(model.status);
+
+    const p = model.runShell("ls");
+    await tick();
+    runner.emit("a.ts\n");
+    runner.finish({ exitCode: 1 });
+    expect(await p).toBe(true);
+    expect(model.status).toBe("idle");
+    expect(calls).toEqual([]);
+    expect(model.heldResults).toHaveLength(1);
+    expect(model.messages[0]).toMatchObject({ role: "shell", held: true });
+    expect(changes).toEqual(["running", "running", "idle"]);
+
+    const q = model.submit("what is this?");
+    await tick();
+    replies[0]?.resolve("ok");
+    await q;
+    expect(calls).toEqual([
+      "what is this?\n\n### $ ls\n```\na.ts\n```\nexit code: 1",
+    ]);
+    expect(model.heldResults).toEqual([]);
+    expect(model.messages[0]?.held).toBe(false);
+    expect(model.messages[1]).toEqual({ role: "user", text: "what is this?" });
+  });
+
+  test("several held results go out in order after the expanded prompt", async () => {
+    const { session, calls, replies } = fakeSession();
+    const runner = fakeRunner();
+    const model = new ChatModel(session, {
+      ...noReopen,
+      runCommand: runner.runCommand,
+      shell: { leadIn: "x", autoSend: false },
+      expand: async (text) => ({
+        prompt: `${text}\n\n### a.ts\n\`\`\`ts\nx\n\`\`\``,
+        attachments: [{ path: "a.ts", bytes: 2 }],
+      }),
+    });
+    let p = model.runShell("one");
+    await tick();
+    runner.finish();
+    await p;
+    p = model.runShell("two");
+    await tick();
+    runner.finish();
+    await p;
+    expect(model.heldResults.map((r) => r.command)).toEqual(["one", "two"]);
+
+    const q = model.submit("see @a.ts");
+    await tick();
+    replies[0]?.resolve("ok");
+    await q;
+    expect(calls).toEqual([
+      "see @a.ts\n\n### a.ts\n```ts\nx\n```\n\n### $ one\n```\n```\n\n### $ two\n```\n```",
+    ]);
+  });
+
+  test("a MentionError keeps the held results", async () => {
+    const { session, calls } = fakeSession();
+    const runner = fakeRunner();
+    const model = new ChatModel(session, {
+      ...noReopen,
+      runCommand: runner.runCommand,
+      shell: { leadIn: "x", autoSend: false },
+      expand: async () => {
+        throw new MentionError(["@x: not found"]);
+      },
+    });
+    const p = model.runShell("ls");
+    await tick();
+    runner.finish();
+    await p;
+    expect(await model.submit("@x")).toBe(false);
+    expect(calls).toEqual([]);
+    expect(model.heldResults).toHaveLength(1);
+    expect(model.messages[0]?.held).toBe(true);
+  });
+
+  test("stopShell settles the command as interrupted and still sends", async () => {
+    const { session, calls, replies } = fakeSession();
+    const runner = fakeRunner();
+    const model = new ChatModel(session, {
+      ...noReopen,
+      runCommand: runner.runCommand,
+    });
+    model.stopShell(); // idle: no-op
+    const p = model.runShell("sleep 10");
+    await tick();
+    runner.emit("partial");
+    model.stopShell();
+    await tick();
+    expect(model.status).toBe("busy");
+    expect(calls[0]).toEndWith(
+      "### $ sleep 10\n```\npartial\n```\ninterrupted",
+    );
+    replies[0]?.resolve("ok");
+    await p;
+    expect(model.messages[0]?.result?.interrupted).toBe(true);
+  });
+
+  test("a shell that cannot start is an error entry, not fatal", async () => {
+    const { session, calls } = fakeSession();
+    const runner = fakeRunner();
+    const model = new ChatModel(session, {
+      ...noReopen,
+      runCommand: runner.runCommand,
+    });
+    const p = model.runShell("true");
+    await tick();
+    runner.fail(new Error("spawn /no/sh ENOENT"));
+    expect(await p).toBe(true);
+    expect(model.status).toBe("idle");
+    expect(model.fatal).toBeUndefined();
+    expect(calls).toEqual([]);
+    expect(model.messages.map((m) => m.role)).toEqual(["shell", "error"]);
+    expect(model.messages[1]?.text).toBe(
+      "could not start shell: spawn /no/sh ENOENT",
+    );
+  });
+
+  test("send failures after a command behave like submit", async () => {
+    const { session, replies } = fakeSession();
+    const runner = fakeRunner();
+    const model = new ChatModel(session, {
+      ...noReopen,
+      runCommand: runner.runCommand,
+    });
+    const p = model.runShell("true");
+    await tick();
+    runner.finish();
+    await tick();
+    replies[0]?.reject(new ResponseTimeoutError("Timed out after 10 ms."));
+    await p;
+    expect(model.status).toBe("idle");
+    expect(model.messages.map((m) => m.role)).toEqual(["shell", "error"]);
+
+    const q = model.runShell("true");
+    await tick();
+    runner.finish();
+    await tick();
+    const boom = new Error("page closed");
+    replies[1]?.reject(boom);
+    await q;
+    expect(model.status).toBe("dead");
+    expect(model.fatal).toBe(boom);
+  });
+
+  test("reset while running stops the command; its output is not sent; held results survive", async () => {
+    const h = harness();
+    const runner = fakeRunner();
+    const model = new ChatModel(h.first.session, {
+      closeTimeoutMs: 20,
+      openSession: async () => fakeSession("b").session,
+      runCommand: runner.runCommand,
+      shell: { leadIn: "x", autoSend: false },
+    });
+    // One held result first.
+    let p = model.runShell("one");
+    await tick();
+    runner.finish();
+    await p;
+    expect(model.heldResults).toHaveLength(1);
+
+    p = model.runShell("sleep 10");
+    await tick();
+    runner.emit("partial");
+    await model.reset();
+    await p;
+    expect(model.status).toBe("idle");
+    expect(h.first.calls).toEqual([]);
+    expect(model.heldResults).toHaveLength(1); // the stopped one was not held
+    const shell = model.messages.filter((m) => m.role === "shell");
+    expect(shell[1]?.result).toMatchObject({
+      output: "partial",
+      interrupted: true,
+    });
+    expect(model.messages.map((m) => m.role)).toEqual([
+      "shell",
+      "shell",
+      "separator",
+    ]);
   });
 });

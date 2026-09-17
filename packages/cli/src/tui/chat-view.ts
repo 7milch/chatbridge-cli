@@ -26,6 +26,8 @@ const LABELS: Record<Exclude<Role, "separator">, () => StyledText> = {
   user: () => styled(theme.user("user")),
   assistant: () => styled(theme.assistant("assistant")),
   error: () => styled(theme.error("error")),
+  // Placeholder until shell entries get their own rendering.
+  shell: () => styled(theme.muted("shell")),
 };
 /** The input starts one row tall and grows with its content up to this. */
 export const MAX_INPUT_ROWS = 5;
