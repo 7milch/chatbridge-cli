@@ -985,13 +985,7 @@ gh issue comment 47 --body "Review fix 6/7 committed: runner output is a chunk l
 
 - [ ] **Step 1: Replace the Japanese string**
 
-In `docs/superpowers/plans/2026-09-17-shell-mode.md` line 2894, replace
-
-```ts
-  shell: { leadIn: "実行結果を確認してください。" }, // optional: default lead-in for ! shell mode
-```
-
-with the string the shipped README uses:
+In `docs/superpowers/plans/2026-09-17-shell-mode.md` line 2894, the `shell:` example line carries a Japanese lead-in string (the only non-ASCII prose in the file). Replace that whole line with the string the shipped README uses:
 
 ```ts
   shell: { leadIn: "Here is the output of a command I ran:" }, // optional: default lead-in for ! shell mode
