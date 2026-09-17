@@ -134,7 +134,7 @@ Spec: `docs/superpowers/specs/2026-09-17-message-queue-design.md`.
 `createCli({ spinner: { frames, intervalMs, label, frameColor, labelColor } })`
 replaces the three-dot spinner and the `Thinking…` label of the busy status
 row and colours them (`"#rrggbb"` or an ANSI index); `label` may be a list,
-one entry picked when the spinner starts. Built-in default →
+one entry picked at random per turn. Built-in default →
 `createCli` only: the provider carries no presentation data and there is no
 `config.json` layer. Frames are not validated; they must share a display
 width. Spec: `docs/superpowers/specs/2026-09-17-custom-spinner-design.md`.

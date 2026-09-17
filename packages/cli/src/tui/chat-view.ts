@@ -13,7 +13,7 @@ import { mentionAtCursor } from "../mentions/parse-mentions.js";
 import type { ChatModel, Message, Role } from "./chat-model.js";
 import { MAX_ROWS, MentionPopup } from "./mention-popup.js";
 import type { ResolvedSpinner } from "./spinner.js";
-import { MUTED_COLOR, colored, styled, theme } from "./theme.js";
+import { MUTED_COLOR, type Styler, colored, styled, theme } from "./theme.js";
 
 export const GUIDE =
   "Enter send · Shift+Enter/Ctrl+J newline · @ file · Ctrl+R reopen · Ctrl+C quit";
@@ -75,6 +75,9 @@ export class ChatView {
   private spinner: ReturnType<typeof setInterval> | undefined;
   private frame = 0;
   private readonly spinnerSpec: ResolvedSpinner;
+  /** Built once from the vendor colours so a tick does not rebuild them. */
+  private readonly frameStyler: Styler | undefined;
+  private readonly labelStyler: Styler | undefined;
   private label = "";
   private readonly budgetSec: number;
   private startedAt = 0;
@@ -89,6 +92,14 @@ export class ChatView {
     this.budgetSec = Math.round(opts.timeoutMs / 1000);
     this.index = opts.index;
     this.spinnerSpec = opts.spinner;
+    this.frameStyler =
+      opts.spinner.frameColor === undefined
+        ? undefined
+        : colored(opts.spinner.frameColor);
+    this.labelStyler =
+      opts.spinner.labelColor === undefined
+        ? undefined
+        : colored(opts.spinner.labelColor);
     const root = new BoxRenderable(renderer, {
       id: "root",
       flexDirection: "column",
@@ -271,8 +282,8 @@ export class ChatView {
       this.history.add(this.messageBox(message));
       // A drained turn starts while the view is still busy, so the spinner
       // is never restarted; the user message drawn exactly once per turn is
-      // what restarts the elapsed timer.
-      if (message.role === "user") this.startedAt = Date.now();
+      // what restarts the elapsed timer, the frame cycle and the label.
+      if (message.role === "user") this.beginTurn();
     }
     this.renderQueue();
     if (this.statusPinned) return;
@@ -508,8 +519,7 @@ export class ChatView {
 
   private startSpinner(): void {
     if (this.spinner) return;
-    this.startedAt = Date.now();
-    this.label = this.pickLabel();
+    this.beginTurn();
     const tick = () => {
       // The renderer can be destroyed from under a running turn (SIGINT);
       // the interval outlives it until teardown reaches this view.
@@ -521,7 +531,16 @@ export class ChatView {
     this.spinner = setInterval(tick, this.spinnerSpec.intervalMs);
   }
 
-  /** One label per turn, chosen when the spinner starts so the row does not
+  /** Resets the per-turn spinner state: elapsed timer, frame cycle and
+   * label. Called for every turn, including one drained from the queue
+   * while the spinner is already running. */
+  private beginTurn(): void {
+    this.startedAt = Date.now();
+    this.frame = 0;
+    this.label = this.pickLabel();
+  }
+
+  /** One label per turn, chosen when the turn starts so the row does not
    * flicker between frames. Empty list: no label. */
   private pickLabel(): string {
     const { labels } = this.spinnerSpec;
@@ -534,12 +553,13 @@ export class ChatView {
   private paintBusyStatus(): void {
     const elapsed = Math.floor((Date.now() - this.startedAt) / 1000);
     const queued = this.queued > 0 ? `  · ${this.queued} queued` : "";
-    const { frames, frameColor, labelColor } = this.spinnerSpec;
-    const frame = frames[this.frame] ?? "";
+    const frame = this.spinnerSpec.frames[this.frame] ?? "";
     this.status.content = styled(
-      frameColor === undefined ? frame : colored(frameColor)(frame),
+      this.frameStyler === undefined ? frame : this.frameStyler(frame),
       " ",
-      labelColor === undefined ? this.label : colored(labelColor)(this.label),
+      this.labelStyler === undefined
+        ? this.label
+        : this.labelStyler(this.label),
       `  ${elapsed}s / ${this.budgetSec}s${queued}`,
     );
   }

@@ -5,7 +5,8 @@ export interface SpinnerOptions {
    * same display width, or the status row shifts between frames. Not
    * validated. Default: `["●○○", "○●○", "○○●", "○●○"]`. */
   frames?: string[];
-  /** Milliseconds between frames. Default: 120. */
+  /** Milliseconds between frames. Must be positive; not validated.
+   * Default: 120. */
   intervalMs?: number;
   /** Text after the frame. An array picks one entry at random when a turn
    * starts; it stays for that turn. Default: `"Thinking…"`. */

@@ -389,6 +389,32 @@ describe("ChatView", () => {
     }
   });
 
+  test("a drained queued turn picks a new label", async () => {
+    const random = Math.random;
+    Math.random = () => 0.99;
+    try {
+      const t = await setup({
+        delayMs: 300,
+        spinner: {
+          frames: ["●○○", "○●○"],
+          intervalMs: 30,
+          labels: ["First…", "Second…", "Third…"],
+        },
+      });
+      await t.mockInput.typeText("one");
+      t.mockInput.pressEnter();
+      await t.frameWith("Third…");
+      // Queued: the view stays busy, so the spinner is never restarted.
+      await t.mockInput.typeText("two");
+      t.mockInput.pressEnter();
+      Math.random = () => 0;
+      await t.frameWith("Echo: one");
+      expect(await t.frameWith("First…")).not.toContain("Third…");
+    } finally {
+      Math.random = random;
+    }
+  });
+
   test("a coloured spinner renders the same text", async () => {
     const t = await setup({
       delayMs: 400,
