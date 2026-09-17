@@ -91,8 +91,24 @@ export class ChatModel {
       this.onChange();
       return true;
     }
+    return this.runTurn(prompt, false);
+  }
+
+  /** Sends the oldest queued entry as the next turn, if any. Called at every
+   * transition to idle that may continue the conversation. */
+  private drain(): void {
+    const next = this.queue.shift();
+    if (next === undefined) return;
+    void this.runTurn(next, true);
+  }
+
+  /** One turn. `fromQueue` selects what a MentionError does with the text:
+   * a typed message is refilled by the view (submit resolves false), a
+   * dequeued entry goes back to the front of the queue and draining pauses
+   * so the same failure is not retried until the next turn end. */
+  private async runTurn(prompt: string, fromQueue: boolean): Promise<boolean> {
     // Claim the turn before awaiting, so a second Enter in the same tick is
-    // rejected by the guard above instead of racing through expansion.
+    // queued by the guard in submit() instead of racing through expansion.
     // No onChange yet: nothing observable has changed for the view.
     this.status = "busy";
     let expansion: Expansion;
@@ -103,6 +119,7 @@ export class ChatModel {
       this.messages.push({ role: "error", text: message });
       // A mention problem is the user's to fix; anything else is a bug.
       if (err instanceof MentionError) {
+        if (fromQueue) this.queue.unshift(prompt);
         this.status = "idle";
       } else {
         this.fatal = err;
@@ -136,6 +153,9 @@ export class ChatModel {
         this.status = "dead";
       }
     }
+    // Claim the next turn before the view sees this one end, so it never
+    // draws an idle frame with entries still waiting.
+    if (this.status === "idle") this.drain();
     this.onChange();
     return true;
   }
@@ -181,6 +201,7 @@ export class ChatModel {
       this.messages.push({ role: "separator", text: SEPARATOR_TEXT });
       this.fatal = undefined;
       this.status = "idle";
+      this.drain();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.messages.push({ role: "error", text: message });

@@ -102,7 +102,6 @@ describe("ChatModel.submit", () => {
     expect(calls).toEqual(["hi"]);
   });
 
-  // Task 2 rewrites this test to cover draining the queue.
   test("queues input while busy instead of sending it", async () => {
     const { session, calls, replies } = fakeSession();
     const model = new ChatModel(session, noReopen);
@@ -113,7 +112,11 @@ describe("ChatModel.submit", () => {
     expect(model.queue).toEqual(["two"]);
     replies[0]?.resolve("ok");
     await p;
-    // Draining is Task 2; here the turn just ends with the entry waiting.
+    await tick();
+    // The turn end drains the entry, so it is sent without another Enter.
+    expect(calls).toEqual(["one", "two"]);
+    expect(model.queue).toEqual([]);
+    replies[1]?.resolve("ok");
   });
 
   test("timeout becomes an error message; model stays usable", async () => {
@@ -384,7 +387,7 @@ describe("ChatModel.reset", () => {
     expect(model.messages).toEqual([{ role: "separator", text: "reopened" }]);
   });
 
-  test("submit is ignored while resetting", async () => {
+  test("submit while resetting is queued and drained by the reset", async () => {
     const h = harness();
     const gate = deferred<void>();
     const b = fakeSession("b");
@@ -401,7 +404,11 @@ describe("ChatModel.reset", () => {
     expect(model.queue).toEqual(["x"]);
     gate.resolve();
     await r;
-    expect(b.calls).toEqual([]);
+    await tick();
+    // Nothing reached the old session; the new one gets it once reset ends.
+    expect(h.first.calls).toEqual([]);
+    expect(b.calls).toEqual(["b:x"]);
+    b.replies[0]?.resolve("ok");
   });
 
   test("pendingReset is defined while resetting and undefined after", async () => {
@@ -484,6 +491,140 @@ describe("ChatModel queue", () => {
     expect(model.takeBack()).toEqual([]);
     expect(changes).toBe(1);
     replies[0]?.resolve("ok");
+    await p;
+  });
+
+  test("turn end sends the oldest entry; the next waits for the next end", async () => {
+    const { session, calls, replies } = fakeSession();
+    const model = new ChatModel(session, noReopen);
+    const statuses: string[] = [];
+    model.onChange = () => statuses.push(model.status);
+    const p = model.submit("one");
+    await tick();
+    await model.submit("two");
+    await model.submit("three");
+    replies[0]?.resolve("r1");
+    await p;
+    await tick();
+    expect(calls).toEqual(["one", "two"]);
+    expect(model.queue).toEqual(["three"]);
+    expect(model.status).toBe("busy");
+    // Never idle with a queue waiting: busy stays busy across the boundary.
+    expect(statuses).not.toContain("idle");
+    replies[1]?.resolve("r2");
+    await tick();
+    await tick();
+    expect(calls).toEqual(["one", "two", "three"]);
+    expect(model.queue).toEqual([]);
+    replies[2]?.resolve("r3");
+    await tick();
+    await tick();
+    expect(model.status).toBe("idle");
+    expect(model.messages.map((m) => m.text)).toEqual([
+      "one",
+      "r1",
+      "two",
+      "r2",
+      "three",
+      "r3",
+    ]);
+  });
+
+  test("a timeout still drains the queue", async () => {
+    const { session, calls, replies } = fakeSession();
+    const model = new ChatModel(session, noReopen);
+    const p = model.submit("one");
+    await tick();
+    await model.submit("two");
+    replies[0]?.reject(new ResponseTimeoutError("slow"));
+    await p;
+    await tick();
+    expect(calls).toEqual(["one", "two"]);
+    expect(model.status).toBe("busy");
+    replies[1]?.resolve("ok");
+  });
+
+  test("a mention error on a dequeued entry puts it back in front and pauses", async () => {
+    const { session, calls, replies } = fakeSession();
+    const model = new ChatModel(session, {
+      ...noReopen,
+      expand: async (text) => {
+        if (text === "bad") throw new MentionError(["no such file"]);
+        return { prompt: text, attachments: [] };
+      },
+    });
+    const p = model.submit("one");
+    await tick();
+    await model.submit("bad");
+    await model.submit("good");
+    replies[0]?.resolve("r1");
+    await p;
+    await tick();
+    await tick();
+    expect(model.status).toBe("idle");
+    expect(model.queue).toEqual(["bad", "good"]);
+    expect(calls).toEqual(["one"]);
+    expect(model.messages.at(-1)?.role).toBe("error");
+    // The user sends something by hand; when that turn ends draining resumes
+    // and hits the same entry again (once per turn end, never a loop).
+    const q = model.submit("manual");
+    await tick();
+    replies[1]?.resolve("r2");
+    await q;
+    await tick();
+    await tick();
+    expect(calls).toEqual(["one", "manual"]);
+    expect(model.queue).toEqual(["bad", "good"]);
+    expect(model.messages.filter((m) => m.role === "error")).toHaveLength(2);
+  });
+
+  test("a fatal error keeps the queue and sends nothing", async () => {
+    const { session, calls, replies } = fakeSession();
+    const model = new ChatModel(session, noReopen);
+    const p = model.submit("one");
+    await tick();
+    await model.submit("two");
+    replies[0]?.reject(new Error("boom"));
+    await p;
+    await tick();
+    expect(model.status).toBe("dead");
+    expect(model.queue).toEqual(["two"]);
+    expect(calls).toEqual(["one"]);
+  });
+
+  test("a successful reset drains the queue into the new session", async () => {
+    const h = harness();
+    const b = fakeSession("b");
+    h.next.push(b);
+    const p = h.model.submit("hang");
+    await tick();
+    await h.model.submit("queued");
+    await h.model.reset();
+    await tick();
+    expect(h.model.status).toBe("busy");
+    expect(b.calls).toEqual(["b:queued"]);
+    expect(h.model.queue).toEqual([]);
+    // The stale turn settles late and changes nothing.
+    h.first.replies[0]?.resolve("late");
+    await p;
+    expect(h.model.messages.map((m) => m.role)).toEqual([
+      "user",
+      "separator",
+      "user",
+    ]);
+    b.replies[0]?.resolve("ok");
+  });
+
+  test("a failed reset keeps the queue", async () => {
+    const h = harness();
+    h.next.push(new Error("cannot open"));
+    const p = h.model.submit("hang");
+    await tick();
+    await h.model.submit("queued");
+    await h.model.reset();
+    expect(h.model.status).toBe("dead");
+    expect(h.model.queue).toEqual(["queued"]);
+    h.first.replies[0]?.resolve("late");
     await p;
   });
 });
