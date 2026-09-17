@@ -1,6 +1,6 @@
 # `!` shell mode in the interactive TUI — design
 
-Milestone 9, issue #47. Brainstormed 2026-09-17 (promoted from backlog
+Milestone 10, issue #47. Brainstormed 2026-09-17 (promoted from backlog
 item #38, which records Claude Code's verified behaviour).
 
 ## Goal

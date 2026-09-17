@@ -51,7 +51,7 @@
 | `packages/cli/src/tui/run-interactive.test.ts` | Ctrl+C while running | 8 |
 | `packages/cli/src/create-cli.ts` | `shell` option, config always loaded for interactive, help text | 8 |
 | `packages/cli/src/create-cli.test.ts` | config `shell` reaches the interactive path | 8 |
-| `README.md`, `docs/ROADMAP.md` | docs, milestone 9 entry | 9 |
+| `README.md`, `docs/ROADMAP.md` | docs, milestone 10 entry | 9 |
 
 ---
 
@@ -2866,7 +2866,7 @@ gh issue comment 47 --body "Task 8 done: createCli({ shell }) + config.json shel
 
 **Files:**
 - Modify: `README.md` (config example, `createCli` example, Interactive mode bullets)
-- Modify: `docs/ROADMAP.md` (milestone 9 entry; remove the backlog item)
+- Modify: `docs/ROADMAP.md` (milestone 10 entry; remove the backlog item)
 
 - [ ] **Step 1: README — configuration**
 
@@ -2953,7 +2953,7 @@ git add README.md docs/ROADMAP.md
 git commit -m "docs: ! shell mode in README and roadmap (Refs #47)
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-gh issue comment 47 --body "Task 9 done: README (config, createCli, interactive-mode bullets) and ROADMAP milestone 9 entry. All plan tasks committed on issue-47. Next: whole-branch review, then PR."
+gh issue comment 47 --body "Task 9 done: README (config, createCli, interactive-mode bullets) and ROADMAP milestone 10 entry. All plan tasks committed on issue-47. Next: whole-branch review, then PR."
 ```
 
 ---

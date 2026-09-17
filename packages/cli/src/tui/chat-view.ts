@@ -27,6 +27,10 @@ export const HELD_GUIDE =
   "Enter send · @ file · ! shell · Ctrl+R reopen · Ctrl+C quit";
 /** Shown instead of GUIDE once a fatal error left the session unusable. */
 export const DEAD_GUIDE = "Ctrl+R reopen · Ctrl+C quit";
+/** Idle or dead guide while queued entries are waiting. */
+export const QUEUE_GUIDE = "Up take back · Ctrl+R reopen · Ctrl+C quit";
+/** Rows the queue list may take; a longer queue ends with a "+N more" row. */
+export const MAX_QUEUE_ROWS = 5;
 export const RESETTING_STATUS = "Reopening browser...";
 const RUNNING_LABEL = "Running…";
 export const SHELL_PLACEHOLDER = "Run a shell command";
@@ -44,10 +48,22 @@ const LABELS: Record<Exclude<Role, "separator">, () => StyledText> = {
 /** The input starts one row tall and grows with its content up to this. */
 export const MAX_INPUT_ROWS = 5;
 
-/** The idle status text for the given shell-mode flag and held count. */
-export function idleGuide(shellMode: boolean, held: number): string {
-  if (held === 0) return shellMode ? SHELL_GUIDE : GUIDE;
-  return `📎 ${held} held · ${shellMode ? SHELL_GUIDE : HELD_GUIDE}`;
+/** The idle status text for the given shell-mode flag, held count and queue
+ * length. Shell mode keeps its own guide even with entries waiting: `Up`
+ * take-back is off there, and `Esc` leaves the mode and brings it back. */
+export function idleGuide(
+  shellMode: boolean,
+  held: number,
+  queued: number,
+): string {
+  const base = shellMode
+    ? SHELL_GUIDE
+    : queued > 0
+      ? QUEUE_GUIDE
+      : held > 0
+        ? HELD_GUIDE
+        : GUIDE;
+  return held === 0 ? base : `📎 ${held} held · ${base}`;
 }
 
 /** The muted line under a shell entry's output; empty when nothing
@@ -95,9 +111,10 @@ interface ShellEntry {
 }
 
 /** Builds the OpenTUI tree for one ChatModel and mirrors its state.
- * Layout, top to bottom: badge header / banner-or-history / hairline input
- * (1–5 rows) / inline mention popup (hidden unless the cursor is in an `@`
- * mention) / status line. */
+ * Layout, top to bottom: badge header / banner-or-history / queue list
+ * (hidden while the queue is empty) / hairline input (1–5 rows) / inline
+ * mention popup (hidden unless the cursor is in an `@` mention) / status
+ * line. */
 export class ChatView {
   private readonly body: BoxRenderable;
   private readonly banner: BoxRenderable;
@@ -106,6 +123,8 @@ export class ChatView {
   private readonly prompt: TextRenderable;
   private readonly input: TextareaRenderable;
   private readonly status: TextRenderable;
+  private readonly queueList: BoxRenderable;
+  private readonly queueRows: TextRenderable[] = [];
   private readonly popup: MentionPopup;
   private readonly index: FileIndex;
   private readonly onKeypress: (key: KeyEvent) => void;
@@ -184,6 +203,25 @@ export class ChatView {
     });
     this.body.add(this.banner);
 
+    // Inline above the input: hidden it takes no rows. Rows are created once
+    // and re-labelled, so queueing never churns renderables.
+    this.queueList = new BoxRenderable(renderer, {
+      id: "queue",
+      flexDirection: "column",
+      flexShrink: 0,
+      visible: false,
+    });
+    for (let i = 0; i < MAX_QUEUE_ROWS; i++) {
+      const row = new TextRenderable(renderer, {
+        content: "",
+        visible: false,
+        wrapMode: "none",
+      });
+      this.queueRows.push(row);
+      this.queueList.add(row);
+    }
+    root.add(this.queueList);
+
     const inputBox = new BoxRenderable(renderer, {
       id: "input-box",
       flexDirection: "row",
@@ -254,6 +292,11 @@ export class ChatView {
     return this.shell;
   }
 
+  /** Test hook: the textarea's current text. */
+  get inputText(): string {
+    return this.input.plainText;
+  }
+
   /** True once this view — or the renderer under it — is gone. OpenTUI
    * destroys the renderer on SIGINT without telling the view, so a write
    * after that would throw from the native text buffer. */
@@ -274,16 +317,26 @@ export class ChatView {
     }
     for (; this.rendered < this.model.messages.length; this.rendered++) {
       const message = this.model.messages[this.rendered];
-      if (message) this.history.add(this.messageBox(message));
+      if (!message) continue;
+      this.history.add(this.messageBox(message));
+      // A drained turn starts while the view is still busy, so the spinner
+      // is never restarted; the user message drawn exactly once per turn is
+      // what restarts the elapsed timer.
+      if (message.role === "user") this.startedAt = Date.now();
     }
     for (const entry of this.shellEntries) this.refreshShell(entry);
+    this.renderQueue();
     if (this.statusPinned) return;
     switch (this.model.status) {
       case "busy":
         this.startSpinner("busy");
+        // The spinner only repaints on its interval; an entry queued in
+        // between must show up in the count right away.
+        this.paintSpinnerStatus();
         break;
       case "running":
         this.startSpinner("running");
+        this.paintSpinnerStatus();
         break;
       case "resetting":
         this.stopSpinner();
@@ -291,14 +344,49 @@ export class ChatView {
         break;
       case "dead":
         this.stopSpinner();
-        this.status.content = styled(theme.errorText(DEAD_GUIDE));
+        this.status.content = styled(
+          theme.errorText(
+            this.queued > 0 && !this.shell ? QUEUE_GUIDE : DEAD_GUIDE,
+          ),
+        );
         break;
       default:
         this.stopSpinner();
         this.status.content = styled(
-          theme.muted(idleGuide(this.shell, this.model.heldResults.length)),
+          theme.muted(
+            idleGuide(this.shell, this.model.heldResults.length, this.queued),
+          ),
         );
     }
+  }
+
+  /** Number of entries waiting in the queue. */
+  private get queued(): number {
+    return this.model.queue.length;
+  }
+
+  /** Re-labels the queue rows from the model. At most MAX_QUEUE_ROWS rows;
+   * a longer queue spends the last one on a "+N more" line. Only the first
+   * line of a multi-line entry is shown. */
+  private renderQueue(): void {
+    const entries = this.model.queue;
+    this.queueList.visible = entries.length > 0;
+    const overflow = entries.length > MAX_QUEUE_ROWS;
+    const shown = overflow ? MAX_QUEUE_ROWS - 1 : entries.length;
+    this.queueRows.forEach((row, i) => {
+      if (i < shown) {
+        const entry = entries[i] ?? "";
+        row.visible = true;
+        row.content = styled(theme.muted(`▹ ${entry.split("\n")[0] ?? ""}`));
+        return;
+      }
+      if (i === shown && overflow) {
+        row.visible = true;
+        row.content = styled(theme.muted(`… +${entries.length - shown} more`));
+        return;
+      }
+      row.visible = false;
+    });
   }
 
   /** Pins a message on the status line (e.g. "Closing browser...") so the
@@ -330,19 +418,24 @@ export class ChatView {
 
   /** Enter: a message, or in shell mode a command. Mirrors the cases the
    * model drops synchronously, so the textarea is never cleared for input
-   * the model is going to ignore. */
+   * the model is going to ignore. A message while something is in flight is
+   * queued, so the box is cleared; a command is not — runShell rejects it
+   * rather than queueing it, and the text stays for the user to resend. */
   private submit(): void {
     const text = this.input.plainText;
-    if (!text.trim() || this.model.status !== "idle") {
+    if (!text.trim()) {
       return;
     }
-    this.input.clear();
-    this.fitInput();
     if (this.shell) {
+      if (this.model.status !== "idle") return;
+      this.input.clear();
+      this.fitInput();
       // Shell mode stays on so the next command can be typed at once.
       void this.model.runShell(text);
       return;
     }
+    this.input.clear();
+    this.fitInput();
     // A mention problem is only known after expansion, and the box is
     // empty by then; put the text back so the user can fix it.
     void this.model.submit(text).then((accepted) => {
@@ -380,6 +473,19 @@ export class ChatView {
         this.setShellMode(false);
         return;
       }
+    }
+    // Not in shell mode: the box is for a command there, and dropping a
+    // queued message into it would run as one. Esc leaves shell mode first.
+    if (
+      key.name === "up" &&
+      !this.shell &&
+      !this.popup.visible &&
+      this.model.queue.length > 0 &&
+      this.onFirstLine()
+    ) {
+      key.preventDefault();
+      this.takeBack();
+      return;
     }
     if (!this.popup.visible) return;
     switch (key.name) {
@@ -430,6 +536,27 @@ export class ChatView {
     this.input.placeholder = on ? SHELL_PLACEHOLDER : PLACEHOLDER;
     if (on) this.popup.hide();
     this.update();
+  }
+
+  /** True when the cursor sits on the first logical line of the textarea. */
+  private onFirstLine(): boolean {
+    const before = this.input.plainText.slice(0, this.input.cursorOffset);
+    return !before.includes("\n");
+  }
+
+  /** Moves every queued entry into the input box, one per line, ahead of
+   * the typed text. Enter then queues (or sends) the box as one entry. */
+  private takeBack(): void {
+    const entries = this.model.takeBack();
+    if (entries.length === 0) return;
+    const typed = this.input.plainText;
+    const text = typed ? `${entries.join("\n")}\n${typed}` : entries.join("\n");
+    // The refill is a message, not a command: pre-seed the shell-mode
+    // detector so an entry starting with `!` does not switch modes.
+    this.lastContent = text;
+    this.input.clear();
+    this.input.insertText(text);
+    this.fitInput();
   }
 
   /** One row when empty, then one row per *visual* line up to
@@ -584,14 +711,26 @@ export class ChatView {
       // the interval outlives it until teardown reaches this view.
       if (this.torn) return this.stopSpinner();
       this.frame = (this.frame + 1) % FRAMES.length;
-      const elapsed = Math.floor((Date.now() - this.startedAt) / 1000);
-      this.status.content =
-        mode === "running"
-          ? `${FRAMES[this.frame]} ${RUNNING_LABEL}  ${elapsed}s · Ctrl+C stop`
-          : `${FRAMES[this.frame]} Thinking…  ${elapsed}s / ${this.budgetSec}s`;
+      this.paintSpinnerStatus();
     };
     tick();
     this.spinner = setInterval(tick, FRAME_INTERVAL_MS);
+  }
+
+  /** Draws the current spinner frame, elapsed time and queue count, for
+   * whichever spinner is running. */
+  private paintSpinnerStatus(): void {
+    const elapsed = Math.floor((Date.now() - this.startedAt) / 1000);
+    const n = this.queued;
+    if (this.spinnerMode === "running") {
+      // The running row already separates its parts with " · ", so the count
+      // joins with one space; the busy row keeps its wider gap.
+      const queued = n > 0 ? ` · ${n} queued` : "";
+      this.status.content = `${FRAMES[this.frame]} ${RUNNING_LABEL}  ${elapsed}s · Ctrl+C stop${queued}`;
+      return;
+    }
+    const queued = n > 0 ? `  · ${n} queued` : "";
+    this.status.content = `${FRAMES[this.frame]} Thinking…  ${elapsed}s / ${this.budgetSec}s${queued}`;
   }
 
   private stopSpinner(): void {

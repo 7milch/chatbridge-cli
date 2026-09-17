@@ -39,10 +39,11 @@ export interface Message {
   /** `shell` entries: the result is waiting for the next submit. */
   held?: boolean;
 }
-/** idle: accepting input. busy: a turn is in flight. running: a shell
- * command is in flight (input locked, Ctrl+C stops it). resetting: the
- * browser is being replaced. dead: a fatal error happened; only Ctrl+R
- * (reset) or Ctrl+C (quit) make sense. */
+/** idle: accepting input. busy: a turn is in flight; input is queued.
+ * running: a shell command is in flight (the input box is locked to shell
+ * mode, Ctrl+C stops it); a message typed meanwhile is queued too.
+ * resetting: the browser is being replaced. dead: a fatal error happened;
+ * only Ctrl+R (reset) or Ctrl+C (quit) make sense. */
 export type Status = "idle" | "busy" | "running" | "resetting" | "dead";
 
 /** How long a reset waits for the old browser to close before killing it. */
@@ -75,6 +76,10 @@ export class ChatModel {
   fatal: unknown = undefined;
   /** Results waiting for the next submit (autoSend: false). */
   readonly heldResults: ShellResult[] = [];
+  /** Messages typed while a turn or a shell command was in flight (or the
+   * model was resetting or dead), trimmed, in arrival order. Drained one
+   * entry per turn. */
+  readonly queue: string[] = [];
   /** Called after every state change. */
   onChange: () => void = () => {};
   private current: ChatSessionLike;
@@ -112,18 +117,40 @@ export class ChatModel {
     return this.current;
   }
 
-  /** Sends one turn. Resolves true when the message was accepted (the view
-   * clears the textarea), false when it was ignored — blank input, input
-   * while not idle — or blocked by a mention problem, which is shown as an
-   * error entry without sending anything. Held shell results go out with
-   * the message, after the expanded prompt. */
+  /** Sends one turn, or queues the text when the model is not idle (a turn,
+   * a shell command, a reset or a fatal error). Resolves true when the
+   * message was taken (sent or queued: the view clears the textarea), false
+   * when it was ignored — blank input — or blocked by a mention problem,
+   * which is shown as an error entry without sending. Held shell results go
+   * out with the message, after the expanded prompt. */
   async submit(text: string): Promise<boolean> {
     const prompt = text.trim();
-    if (!prompt || this.status !== "idle") {
+    if (!prompt) {
       return false;
     }
+    if (this.status !== "idle") {
+      this.queue.push(prompt);
+      this.onChange();
+      return true;
+    }
+    return this.runTurn(prompt, false);
+  }
+
+  /** Sends the oldest queued entry as the next turn, if any. Called at every
+   * transition to idle that may continue the conversation. */
+  private drain(): void {
+    const next = this.queue.shift();
+    if (next === undefined) return;
+    void this.runTurn(next, true);
+  }
+
+  /** One turn. `fromQueue` selects what a MentionError does with the text:
+   * a typed message is refilled by the view (submit resolves false), a
+   * dequeued entry goes back to the front of the queue and draining pauses
+   * so the same failure is not retried until the next turn end. */
+  private async runTurn(prompt: string, fromQueue: boolean): Promise<boolean> {
     // Claim the turn before awaiting, so a second Enter in the same tick is
-    // rejected by the guard above instead of racing through expansion.
+    // queued by the guard in submit() instead of racing through expansion.
     // No onChange yet: nothing observable has changed for the view.
     this.status = "busy";
     let expansion: Expansion;
@@ -134,6 +161,7 @@ export class ChatModel {
       this.messages.push({ role: "error", text: message });
       // A mention problem is the user's to fix; anything else is a bug.
       if (err instanceof MentionError) {
+        if (fromQueue) this.queue.unshift(prompt);
         this.status = "idle";
       } else {
         this.fatal = err;
@@ -163,7 +191,9 @@ export class ChatModel {
   /** Runs one shell command from `idle`. The entry is pushed at once and
    * its `result` is updated as output arrives. When it finishes the result
    * is sent under the lead-in (autoSend) or held for the next submit.
-   * Resolves false when ignored: blank command, not idle. */
+   * Resolves false when ignored: blank command, or not idle — unlike a
+   * message, a command typed while something is in flight is dropped rather
+   * than queued, so it never runs against a state the user cannot see. */
   async runShell(command: string): Promise<boolean> {
     const cmd = command.trim();
     if (!cmd || this.status !== "idle") return false;
@@ -208,6 +238,9 @@ export class ChatModel {
         text: `could not start shell: ${message}`,
       });
       this.status = "idle";
+      // A turn end like any other: anything typed while the command was
+      // starting is next in line.
+      this.drain();
       this.onChange();
       return true;
     }
@@ -223,6 +256,9 @@ export class ChatModel {
       this.heldResults.push(result);
       entry.held = true;
       this.status = "idle";
+      // The result is held before draining, so a queued message carries it
+      // out exactly as a typed one would.
+      this.drain();
       this.onChange();
       return true;
     }
@@ -238,8 +274,10 @@ export class ChatModel {
     this.running?.stop();
   }
 
-  /** The send half of a turn, shared by submit and runShell. The caller has
-   * already set `busy` and notified the view. */
+  /** The send half of a turn, shared by runTurn and runShell. The caller has
+   * already set `busy` and notified the view. Draining happens here, so
+   * every turn end — typed, queued or auto-sent — continues the queue
+   * exactly once. */
   private async sendPrompt(prompt: string): Promise<void> {
     const session = this.current;
     const generation = this.generation;
@@ -260,7 +298,22 @@ export class ChatModel {
         this.status = "dead";
       }
     }
+    // Claim the next turn before the view sees this one end, so it never
+    // draws an idle frame with entries still waiting. The one exception is a
+    // MentionError on a dequeued entry: that puts the entry back at the front
+    // of the queue while the model is idle, and the view shows the take-back
+    // guide.
+    if (this.status === "idle") this.drain();
     this.onChange();
+  }
+
+  /** Removes every queued entry and returns them in order, for the view to
+   * put back into the input box. */
+  takeBack(): string[] {
+    if (this.queue.length === 0) return [];
+    const entries = this.queue.splice(0);
+    this.onChange();
+    return entries;
   }
 
   /** The in-flight reset, or undefined when none is running. Teardown awaits
@@ -297,6 +350,7 @@ export class ChatModel {
       this.messages.push({ role: "separator", text: SEPARATOR_TEXT });
       this.fatal = undefined;
       this.status = "idle";
+      this.drain();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.messages.push({ role: "error", text: message });
