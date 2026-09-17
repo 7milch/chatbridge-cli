@@ -101,6 +101,28 @@ Symptom of the wrong choice: `<vendor>: interactive mode needs Bun >= 1.3 or
 Node >= 26.4; use -p <prompt> on this runtime` even though Bun is installed.
 Verify with `<vendor> --version` after linking, then open interactive mode.
 
+## VSCode extension (`@chatbridge/vscode` ≥ 0.7.0)
+
+Copy `examples/vscode-dummy-chat` from the framework repo into the vendor
+repo as `vscode/`: `package.json` (rename `id` everywhere from
+`chatbridge-dummy` to `<vendor>`; set `publisher`, `displayName`), `esbuild.mjs`,
+`media/icon.svg`, `.vscodeignore`. `src/extension.ts` is
+`createExtension({ id: "<vendor>", displayName, provider, configDir: "<vendor>" })`
+with the same `configDir` as the CLI so one `auth login` serves both.
+Depend on `playwright` (not `playwright-core`): the Install button spawns
+its CLI (`createExtension` also accepts `playwrightCliPath` to point at a
+non-default `playwright/cli.js` location). Bundle with esbuild (CJS,
+`vscode` and `playwright` external) to `dist/extension.cjs` — the example
+keeps `"type": "module"` in its manifest, which is why the entry point is
+`.cjs` and not `.js`. The example's `package` script runs
+`vsce package --no-dependencies`, which is only a CI packaging smoke test;
+a real vendor `.vsix` must ship `node_modules/playwright` so the Install
+button works for end users — drop `--no-dependencies` when packaging for
+distribution, or vendors hit "playwright is not bundled with this
+extension". Activation throws a message listing missing `contributes` IDs
+when the manifest and `id` disagree. Verify by hand: F5 in VSCode → Log in
+→ send → right-click a selection → send → New Chat → Log out.
+
 ## DOM notes
 
 Before discovery, each `dom-notes.md` section holds one line:

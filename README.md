@@ -104,8 +104,10 @@ createCli({
 Exit codes: 1 invalid argument or config, 2 not logged in, 3 auth expired,
 4 response timeout, 5 provider could not be loaded, 6 blocked by the
 service (a bot challenge or an IdP refusing the automated browser; try
-`--headful`). A timeout that coincides with a lost login is reported as 3
-or 6 rather than 4. Set `CHATBRIDGE_DEBUG=1` to print the underlying error.
+`--headful`), 7 Chromium is not installed (the message says
+`Run: npx playwright install chromium`), 130 `auth login` cancelled with
+Ctrl-C. A timeout that coincides with a lost login is reported as 3 or 6
+rather than 4. Set `CHATBRIDGE_DEBUG=1` to print the underlying error.
 
 ## Interactive mode
 
@@ -188,6 +190,30 @@ chat.
 - Interactive mode needs **Bun >= 1.3 or Node >= 26.4** (the TUI library's
   requirement). One-shot mode and `auth` keep working on Node >= 20.
 - A terminal is required; in pipes and scripts use `-p`.
+
+## VSCode extension
+
+`@chatbridge/vscode` ships the same chat as a sidebar view. A vendor
+repository packages it with its Provider, in the style of `createCli`:
+
+```ts
+import { createExtension } from "@chatbridge/vscode";
+import provider from "./provider.js";
+export const { activate, deactivate } = createExtension({
+  id: "company-ai", displayName: "Company AI", provider, configDir: "company-ai",
+});
+```
+
+The manifest declares the view `<id>.chat`, the commands `<id>.login`,
+`logout`, `newChat`, `installBrowser`, `sendSelection`, `sendFile`, `focus`,
+and the settings `<id>.headless` / `<id>.timeoutSec`;
+`examples/vscode-dummy-chat` is the template (esbuild CJS bundle, `vscode`
+and `playwright` external, webview assets copied next to the bundle). The
+browser runs inside the extension host and opens lazily on the first
+message. Use the CLI's `configDir` so one `auth login` serves both. When
+Chromium is missing the extension offers to install it. Right-click a
+selection or a file to attach it to the next message in the CLI's
+`### path` fenced format.
 
 ## Authentication
 
