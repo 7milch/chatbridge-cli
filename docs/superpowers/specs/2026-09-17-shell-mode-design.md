@@ -104,10 +104,19 @@ export const MAX_OUTPUT_BYTES = 200 * 1024;
 export function runCommand(command: string, opts: RunOptions): RunningCommand;
 ```
 
-- `spawn(shell, ["-c", command], { cwd, detached: true, stdio: ["ignore", "pipe", "pipe"] })`.
+- As shipped, the child is
+  `spawn("/bin/sh", ["-c", 'exec "$@" 2>&1', "sh", shell, "-c", command], { cwd, detached: true, stdio: ["ignore", "pipe", "pipe"] })`:
+  a POSIX wrapper merges stderr into stdout on one fd before the user's
+  shell runs, so arrival order is preserved and a non-POSIX `$SHELL`
+  (fish, csh) never has to perform the redirection itself. A path-like
+  `shell` is preflighted with `fs.access(X_OK)`, so a missing or
+  non-executable shell rejects `done` instead of surfacing as exit 127.
   `detached` puts the command in its own process group so `stop()` can
   signal the whole tree (`process.kill(-pid, signal)`); the runner still
-  `await`s the child, so nothing runs on after the TUI exits.
+  `await`s the child, so nothing runs on after the TUI exits. After the
+  SIGKILL escalation the output pipes are destroyed 500 ms later, so `done`
+  settles even when a process left the group (`setsid`) and still holds a
+  pipe open.
 - The environment is inherited unchanged.
 - Chunks from both pipes go into one byte buffer in arrival order. Once
   the buffer exceeds `maxBytes` the head is dropped to keep the last

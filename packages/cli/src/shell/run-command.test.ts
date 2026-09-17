@@ -205,9 +205,16 @@ describe("runCommand", () => {
   });
 
   test("a shell that cannot be executed rejects done", async () => {
-    await expect(
-      runCommand("true", { cwd: process.cwd(), shell: "/etc/hostname" }).done,
-    ).rejects.toMatchObject({ code: "EACCES" });
+    const dir = mkdtempSync(join(tmpdir(), "run-command-noexec-"));
+    const notExecutable = join(dir, "shell");
+    writeFileSync(notExecutable, "#!/bin/sh\n", { mode: 0o644 });
+    try {
+      await expect(
+        runCommand("true", { cwd: process.cwd(), shell: notExecutable }).done,
+      ).rejects.toMatchObject({ code: "EACCES" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("the stderr merge does not rely on the user's shell", async () => {
