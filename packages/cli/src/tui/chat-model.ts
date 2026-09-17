@@ -21,9 +21,9 @@ export interface Message {
   /** Files appended to the prompt; the history shows one line per entry. */
   attachments?: Attachment[];
 }
-/** idle: accepting input. busy: a turn is in flight. resetting: the
- * browser is being replaced. dead: a fatal error happened; only Ctrl+R
- * (reset) or Ctrl+C (quit) make sense. */
+/** idle: accepting input. busy: a turn is in flight; input is queued.
+ * resetting: the browser is being replaced. dead: a fatal error happened;
+ * only Ctrl+R (reset) or Ctrl+C (quit) make sense. */
 export type Status = "idle" | "busy" | "resetting" | "dead";
 
 /** How long a reset waits for the old browser to close before killing it. */
@@ -48,6 +48,9 @@ export class ChatModel {
   /** The last fatal error; the reason the model is `dead`. Cleared by a
    * successful reset. Reported by the app when the user quits. */
   fatal: unknown = undefined;
+  /** Messages typed while a turn was in flight (or the model was resetting
+   * or dead), trimmed, in arrival order. Drained one entry per turn. */
+  readonly queue: string[] = [];
   /** Called after every state change. */
   onChange: () => void = () => {};
   private current: ChatSessionLike;
@@ -74,14 +77,19 @@ export class ChatModel {
     return this.current;
   }
 
-  /** Sends one turn. Resolves true when the message was accepted (the view
-   * clears the textarea), false when it was ignored — blank input, input
-   * while not idle — or blocked by a mention problem, which is shown as an
-   * error entry without sending anything. */
+  /** Sends one turn, or queues the text when the model is not idle. Resolves
+   * true when the message was taken (sent or queued: the view clears the
+   * textarea), false when it was ignored — blank input — or blocked by a
+   * mention problem, which is shown as an error entry without sending. */
   async submit(text: string): Promise<boolean> {
     const prompt = text.trim();
-    if (!prompt || this.status !== "idle") {
+    if (!prompt) {
       return false;
+    }
+    if (this.status !== "idle") {
+      this.queue.push(prompt);
+      this.onChange();
+      return true;
     }
     // Claim the turn before awaiting, so a second Enter in the same tick is
     // rejected by the guard above instead of racing through expansion.
@@ -130,6 +138,15 @@ export class ChatModel {
     }
     this.onChange();
     return true;
+  }
+
+  /** Removes every queued entry and returns them in order, for the view to
+   * put back into the input box. */
+  takeBack(): string[] {
+    if (this.queue.length === 0) return [];
+    const entries = this.queue.splice(0);
+    this.onChange();
+    return entries;
   }
 
   /** The in-flight reset, or undefined when none is running. Teardown awaits

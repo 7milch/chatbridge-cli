@@ -102,15 +102,18 @@ describe("ChatModel.submit", () => {
     expect(calls).toEqual(["hi"]);
   });
 
-  test("ignores input while busy", async () => {
+  // Task 2 rewrites this test to cover draining the queue.
+  test("queues input while busy instead of sending it", async () => {
     const { session, calls, replies } = fakeSession();
     const model = new ChatModel(session, noReopen);
     const p = model.submit("one");
     await tick();
     await model.submit("two");
     expect(calls).toEqual(["one"]);
+    expect(model.queue).toEqual(["two"]);
     replies[0]?.resolve("ok");
     await p;
+    // Draining is Task 2; here the turn just ends with the entry waiting.
   });
 
   test("timeout becomes an error message; model stays usable", async () => {
@@ -147,6 +150,7 @@ describe("ChatModel.submit", () => {
     expect(model.status).toBe("dead");
     expect(model.messages[1]).toEqual({ role: "error", text: "page closed" });
     await model.submit("two");
+    expect(model.queue).toEqual(["two"]);
     expect(calls).toEqual(["one"]);
   });
 
@@ -156,7 +160,7 @@ describe("ChatModel.submit", () => {
     expect(await model.submit("   ")).toBe(false);
     const p = model.submit("one");
     await tick();
-    expect(await model.submit("two")).toBe(false); // busy
+    expect(await model.submit("two")).toBe(true); // busy: queued
     replies[0]?.resolve("ok");
     expect(await p).toBe(true);
   });
@@ -238,7 +242,8 @@ describe("ChatModel.submit", () => {
     });
     const first = model.submit("one");
     const second = model.submit("two"); // same tick, expansion still pending
-    expect(await second).toBe(false);
+    expect(await second).toBe(true); // busy: queued
+    expect(model.queue).toEqual(["two"]);
     await tick();
     expect(calls).toEqual(["one"]);
     replies[0]?.resolve("ok");
@@ -354,7 +359,8 @@ describe("ChatModel.reset", () => {
     expect(changes).toEqual(["resetting", "dead"]);
     // The old session is still closed; nothing is left dangling.
     expect(h.first.state.closed).toBe(1);
-    expect(await h.model.submit("x")).toBe(false);
+    expect(await h.model.submit("x")).toBe(true); // dead: queued
+    expect(h.model.queue).toEqual(["x"]);
   });
 
   test("reset while resetting is ignored", async () => {
@@ -391,7 +397,8 @@ describe("ChatModel.reset", () => {
     });
     const r = model.reset();
     await tick();
-    expect(await model.submit("x")).toBe(false);
+    expect(await model.submit("x")).toBe(true);
+    expect(model.queue).toEqual(["x"]);
     gate.resolve();
     await r;
     expect(b.calls).toEqual([]);
@@ -418,5 +425,65 @@ describe("ChatModel.reset", () => {
     expect(model.pendingReset).toBeUndefined();
     // Awaiting the exposed promise is enough to see the new session.
     expect(model.session).toBe(b.session);
+  });
+});
+
+describe("ChatModel queue", () => {
+  test("submit while busy queues the text and resolves true", async () => {
+    const { session, calls, replies } = fakeSession();
+    const model = new ChatModel(session, noReopen);
+    const changes: string[] = [];
+    model.onChange = () =>
+      changes.push(`${model.status}:${model.queue.length}`);
+    const p = model.submit("one");
+    await tick();
+    expect(await model.submit("  two  ")).toBe(true);
+    expect(model.queue).toEqual(["two"]);
+    expect(calls).toEqual(["one"]);
+    expect(changes.at(-1)).toBe("busy:1");
+    replies[0]?.resolve("ok");
+    await p;
+  });
+
+  test("blank input is still ignored while busy", async () => {
+    const { session, replies } = fakeSession();
+    const model = new ChatModel(session, noReopen);
+    const p = model.submit("one");
+    await tick();
+    expect(await model.submit("   ")).toBe(false);
+    expect(model.queue).toEqual([]);
+    replies[0]?.resolve("ok");
+    await p;
+  });
+
+  test("submit while dead queues; nothing is sent", async () => {
+    const { session, calls, replies } = fakeSession();
+    const model = new ChatModel(session, noReopen);
+    const p = model.submit("one");
+    await tick();
+    replies[0]?.reject(new Error("boom"));
+    await p;
+    expect(model.status).toBe("dead");
+    expect(await model.submit("later")).toBe(true);
+    expect(model.queue).toEqual(["later"]);
+    expect(calls).toEqual(["one"]);
+  });
+
+  test("takeBack returns the entries in order and empties the queue", async () => {
+    const { session, replies } = fakeSession();
+    const model = new ChatModel(session, noReopen);
+    const p = model.submit("one");
+    await tick();
+    await model.submit("two");
+    await model.submit("three");
+    let changes = 0;
+    model.onChange = () => changes++;
+    expect(model.takeBack()).toEqual(["two", "three"]);
+    expect(model.queue).toEqual([]);
+    expect(changes).toBe(1);
+    expect(model.takeBack()).toEqual([]);
+    expect(changes).toBe(1);
+    replies[0]?.resolve("ok");
+    await p;
   });
 });
