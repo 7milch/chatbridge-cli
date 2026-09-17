@@ -1,13 +1,16 @@
 import { readFile, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { fenceFor } from "../fence.js";
+import {
+  type Attachment,
+  MAX_FILE_BYTES,
+  MAX_TOTAL_BYTES,
+  formatAttachment,
+  formatSize,
+} from "@chatbridge/core";
 import { parseMentions } from "./parse-mentions.js";
 
-export interface Attachment {
-  /** Path relative to cwd, `/`-separated. */
-  path: string;
-  bytes: number;
-}
+export type { Attachment };
+export { formatSize, MAX_FILE_BYTES, MAX_TOTAL_BYTES };
 
 export interface Expansion {
   /** The text to send: body, then one fenced section per file. */
@@ -26,48 +29,7 @@ export class MentionError extends Error {
   }
 }
 
-export const MAX_FILE_BYTES = 200 * 1024;
-export const MAX_TOTAL_BYTES = 1024 * 1024;
-
-const LANGUAGES: Record<string, string> = {
-  ts: "ts",
-  js: "js",
-  tsx: "tsx",
-  jsx: "jsx",
-  json: "json",
-  md: "md",
-  py: "py",
-  sh: "sh",
-  yaml: "yaml",
-  yml: "yml",
-  toml: "toml",
-  html: "html",
-  css: "css",
-  rs: "rs",
-  go: "go",
-};
-
 const utf8 = new TextDecoder("utf-8", { fatal: true });
-
-/** `N B` under 1 KiB, otherwise one decimal in KB or MB. */
-export function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function languageOf(path: string): string {
-  const dot = path.lastIndexOf(".");
-  const slash = path.lastIndexOf("/");
-  if (dot === -1 || dot <= slash) return "";
-  return LANGUAGES[path.slice(dot + 1)] ?? "";
-}
-
-function section(path: string, content: string): string {
-  const body = content.endsWith("\n") ? content : `${content}\n`;
-  const fence = fenceFor(body);
-  return `### ${path}\n${fence}${languageOf(path)}\n${body}${fence}`;
-}
 
 interface Loaded {
   path: string;
@@ -141,7 +103,7 @@ export async function expandMentions(
   }
   if (problems.length > 0) throw new MentionError(problems);
 
-  const sections = loaded.map((f) => section(f.path, f.content));
+  const sections = loaded.map((f) => formatAttachment(f.path, f.content));
   return {
     prompt: [text, ...sections].join("\n\n"),
     attachments: loaded.map((f) => ({ path: f.path, bytes: f.bytes })),

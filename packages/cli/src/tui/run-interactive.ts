@@ -1,4 +1,8 @@
-import { ChatSession, type ChatSessionOptions } from "@chatbridge/core";
+import {
+  ChatSession,
+  type ChatSessionOptions,
+  closeWithTimeout,
+} from "@chatbridge/core";
 import {
   type CliRenderer,
   type KeyEvent,
@@ -9,7 +13,6 @@ import type { ShellConfig } from "../shell/shell-config.js";
 import { resolveBanner } from "./banner.js";
 import { ChatModel } from "./chat-model.js";
 import { ChatView } from "./chat-view.js";
-import { closeWithTimeout } from "./close-session.js";
 import { type SpinnerOptions, resolveSpinner } from "./spinner.js";
 
 export interface InteractiveOptions extends ChatSessionOptions {

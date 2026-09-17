@@ -20,3 +20,17 @@ export {
 } from "@chatbridge/runtime";
 export type { Provider } from "@chatbridge/provider";
 export { defineProvider } from "@chatbridge/provider";
+export {
+  type Attachment,
+  MAX_FILE_BYTES,
+  MAX_TOTAL_BYTES,
+  fenceFor,
+  formatAttachment,
+  formatSize,
+} from "./attachment.js";
+export {
+  type ClosableSession,
+  type KillableSession,
+  closeOrKill,
+  closeWithTimeout,
+} from "./close-session.js";
