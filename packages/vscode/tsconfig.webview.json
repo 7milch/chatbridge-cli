@@ -8,5 +8,5 @@
     "noEmit": true,
     "rootDir": "src"
   },
-  "include": ["src/webview/**", "src/protocol.ts"]
+  "include": ["src/webview/**/*", "src/protocol.ts"]
 }

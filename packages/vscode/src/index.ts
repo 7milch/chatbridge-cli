@@ -20,3 +20,25 @@ export {
   expectedContributions,
   missingContributions,
 } from "./manifest.js";
+export {
+  ChatViewBridge,
+  type ChatViewHandlers,
+  type WebviewLike,
+} from "./chat-view-bridge.js";
+export { buildHtml, type HtmlInputs } from "./webview-html.js";
+export {
+  createVscodeUi,
+  type EditorSnapshot,
+  type ProgressReporter,
+  type VscodeUi,
+} from "./vscode-ui.js";
+export {
+  type CommandDeps,
+  type CommandHandlers,
+  createCommands,
+} from "./commands.js";
+export {
+  createExtension,
+  type CreateExtensionOptions,
+  type ExtensionApi,
+} from "./create-extension.js";

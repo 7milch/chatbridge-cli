@@ -1,0 +1,88 @@
+import type * as vscode from "vscode";
+
+export interface EditorSnapshot {
+  /** Workspace-relative, `/`-separated; absolute when outside a workspace. */
+  path: string;
+  text: string;
+  /** Present when the selection is non-empty; lines are 1-based inclusive. */
+  selection?: { text: string; startLine: number; endLine: number };
+}
+
+export interface ProgressReporter {
+  report(text: string): void;
+}
+
+/** The slice of the vscode API the commands use; a fake in unit tests. */
+export interface VscodeUi {
+  showErrorMessage(
+    message: string,
+    ...items: string[]
+  ): Promise<string | undefined>;
+  showWarningMessage(message: string): void;
+  showInformationMessage(message: string): void;
+  withProgress<T>(
+    title: string,
+    cancellable: boolean,
+    task: (progress: ProgressReporter, signal: AbortSignal) => Promise<T>,
+  ): Promise<T>;
+  activeEditor(): EditorSnapshot | undefined;
+  /** Opens the document behind an explorer Uri (or any Uri) read-only. */
+  openDocument(uri: unknown): Promise<{ path: string; text: string }>;
+  focusView(): void;
+}
+
+export function createVscodeUi(api: typeof vscode, id: string): VscodeUi {
+  function relPath(uri: vscode.Uri): string {
+    return api.workspace.asRelativePath(uri, false).split("\\").join("/");
+  }
+  return {
+    showErrorMessage: (message, ...items) =>
+      Promise.resolve(
+        api.window.showErrorMessage(
+          message,
+          { modal: items.length > 0 },
+          ...items,
+        ),
+      ),
+    showWarningMessage: (message) =>
+      void api.window.showWarningMessage(message),
+    showInformationMessage: (message) =>
+      void api.window.showInformationMessage(message),
+    withProgress: (title, cancellable, task) =>
+      Promise.resolve(
+        api.window.withProgress(
+          { location: api.ProgressLocation.Notification, title, cancellable },
+          (progress, token) => {
+            const ac = new AbortController();
+            token.onCancellationRequested(() => ac.abort());
+            return task(
+              { report: (message) => progress.report({ message }) },
+              ac.signal,
+            );
+          },
+        ),
+      ),
+    activeEditor: () => {
+      const editor = api.window.activeTextEditor;
+      if (!editor) return undefined;
+      const doc = editor.document;
+      const snap: EditorSnapshot = {
+        path: relPath(doc.uri),
+        text: doc.getText(),
+      };
+      if (!editor.selection.isEmpty) {
+        snap.selection = {
+          text: doc.getText(editor.selection),
+          startLine: editor.selection.start.line + 1,
+          endLine: editor.selection.end.line + 1,
+        };
+      }
+      return snap;
+    },
+    openDocument: async (uri) => {
+      const doc = await api.workspace.openTextDocument(uri as vscode.Uri);
+      return { path: relPath(doc.uri), text: doc.getText() };
+    },
+    focusView: () => void api.commands.executeCommand(`${id}.chat.focus`),
+  };
+}

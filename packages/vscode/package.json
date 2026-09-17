@@ -17,7 +17,8 @@
   "files": ["dist", "README.md", "LICENSE"],
   "publishConfig": { "access": "public" },
   "scripts": {
-    "build:webview": "esbuild src/webview/main.ts --bundle --format=iife --target=es2022 --outfile=dist/webview/main.js && mkdir -p dist/webview && cp src/webview/style.css dist/webview/style.css"
+    "check:webview": "tsc -p tsconfig.webview.json",
+    "build:webview": "bun run check:webview && esbuild src/webview/main.ts --bundle --format=iife --target=es2022 --outfile=dist/webview/main.js && mkdir -p dist/webview && cp src/webview/style.css dist/webview/style.css"
   },
   "dependencies": {
     "@chatbridge/core": "workspace:*"
