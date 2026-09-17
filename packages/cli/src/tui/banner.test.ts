@@ -14,7 +14,7 @@ describe("resolveBanner", () => {
     });
     expect(text(lines)).toEqual([
       "chatbridge v0.3.0",
-      "Connected to dummy-chat. Type a message, or @ to attach a file.",
+      "Connected to dummy-chat. Type a message, @ to attach a file, ! to run a command.",
     ]);
     const [title, hint] = lines;
     expect(title?.chunks[0]?.attributes).toBe(TextAttributes.BOLD);

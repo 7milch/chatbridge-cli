@@ -9,7 +9,9 @@ export interface BannerInput {
   banner?: string[];
 }
 
-export const BANNER_HINT = "Type a message, or @ to attach a file.";
+// With "Connected to dummy-chat. " in front this is exactly 80 cells.
+export const BANNER_HINT =
+  "Type a message, @ to attach a file, ! to run a command.";
 
 /** Lines shown centred in the empty history until the first message.
  * A vendor banner is passed through verbatim (all muted); the default is

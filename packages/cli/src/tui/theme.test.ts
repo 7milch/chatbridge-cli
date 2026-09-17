@@ -24,6 +24,7 @@ describe("theme", () => {
     ["user", 4],
     ["assistant", 2],
     ["error", 1],
+    ["shell", 3],
   ] as const)("%s label is bold with ANSI index %i", (name, index) => {
     const c = theme[name]("x");
     expect(c.attributes).toBe(TextAttributes.BOLD);

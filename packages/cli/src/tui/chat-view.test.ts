@@ -3,14 +3,24 @@ import type { StyledText } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { type Expansion, MentionError } from "../mentions/expand-mentions.js";
 import { FileIndex } from "../mentions/file-index.js";
+import type {
+  RunOptions,
+  RunningCommand,
+  ShellResult,
+} from "../shell/run-command.js";
+import type { ShellConfig } from "../shell/shell-config.js";
 import { resolveBanner } from "./banner.js";
 import { ChatModel, type ChatSessionLike } from "./chat-model.js";
 import {
   ChatView,
   DEAD_GUIDE,
   GUIDE,
+  HELD_GUIDE,
   MAX_INPUT_ROWS,
   RESETTING_STATUS,
+  SHELL_GUIDE,
+  SHELL_PLACEHOLDER,
+  idleGuide,
 } from "./chat-view.js";
 import { POPUP_HINT } from "./mention-popup.js";
 import { styled, theme } from "./theme.js";
@@ -38,6 +48,53 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+function fakeRunner() {
+  const calls: string[] = [];
+  let output = "";
+  let resolve: ((r: ShellResult) => void) | undefined;
+  let onOutput: ((t: string) => void) | undefined;
+  let current: ShellResult | undefined;
+  const runCommand = (command: string, opts: RunOptions): RunningCommand => {
+    calls.push(command);
+    output = "";
+    onOutput = opts.onOutput;
+    current = {
+      command,
+      output: "",
+      droppedBytes: 0,
+      exitCode: 0,
+      interrupted: false,
+      durationMs: 1,
+    };
+    const done = new Promise<ShellResult>((res) => {
+      resolve = res;
+    });
+    return {
+      done,
+      stop() {
+        if (current)
+          resolve?.({
+            ...current,
+            output,
+            exitCode: undefined,
+            interrupted: true,
+          });
+      },
+    };
+  };
+  return {
+    runCommand,
+    calls,
+    emit(text: string) {
+      output += text;
+      onOutput?.(output);
+    },
+    finish(over: Partial<ShellResult> = {}) {
+      if (current) resolve?.({ ...current, output, ...over });
+    },
+  };
+}
+
 let teardown: (() => void) | undefined;
 afterEach(() => {
   teardown?.();
@@ -55,6 +112,8 @@ async function setup(
     headless?: boolean;
     banner?: StyledText[];
     width?: number;
+    runCommand?: (c: string, o: RunOptions) => RunningCommand;
+    shell?: ShellConfig;
   } = {},
 ) {
   const t = await createTestRenderer({
@@ -70,6 +129,8 @@ async function setup(
       closeTimeoutMs: 50,
       expand:
         opts.expand ?? (async (text) => ({ prompt: text, attachments: [] })),
+      runCommand: opts.runCommand,
+      shell: opts.shell,
     },
   );
   const view = new ChatView(t.renderer, model, {
@@ -477,7 +538,7 @@ describe("ChatView", () => {
     const title = rows.findIndex((r) => r.includes("test-cli v0.0.1"));
     expect(title).toBeGreaterThan(2);
     expect(rows[title + 1]).toContain(
-      "Connected to dummy-chat. Type a message, or @ to attach a file.",
+      "Connected to dummy-chat. Type a message, @ to attach a file, ! to run a command.",
     );
     // Centred: roughly as much blank space left as right.
     const line = rows[title] ?? "";
@@ -589,7 +650,7 @@ describe("ChatView", () => {
   test("the guide mentions @ file", async () => {
     const t = await setup();
     expect(GUIDE).toBe(
-      "Enter send · Shift+Enter/Ctrl+J newline · @ file · Ctrl+R reopen · Ctrl+C quit",
+      "Enter send · Ctrl+J newline · @ file · ! shell · Ctrl+R reopen · Ctrl+C quit",
     );
     // Must fit an 80-column terminal, or the status row clips.
     expect([...GUIDE].length).toBeLessThanOrEqual(80);
@@ -682,5 +743,190 @@ describe("ChatView", () => {
     await t.model.reset();
     const frame = await t.frameWith("── reopened ──");
     expect(frame).not.toContain("separator");
+  });
+});
+
+describe("ChatView shell mode", () => {
+  test("! on an empty input enters shell mode and is not typed", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("!");
+    await t.renderOnce();
+    const frame = t.captureCharFrame();
+    expect(t.view.shellMode).toBe(true);
+    expect(frame).toContain(`! ${SHELL_PLACEHOLDER}`);
+    expect(frame).toContain(SHELL_GUIDE);
+    expect(frame).not.toContain(GUIDE);
+    await t.mockInput.typeText("ls");
+    await t.renderOnce();
+    expect(t.captureCharFrame()).toContain("! ls");
+  });
+
+  test("a ! after other text is an ordinary character", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("wow!");
+    await t.renderOnce();
+    expect(t.view.shellMode).toBe(false);
+    expect(t.captureCharFrame()).toContain("> wow!");
+  });
+
+  test("a pasted !command enters shell mode with the command kept", async () => {
+    const t = await setup();
+    await t.mockInput.pasteBracketedText("!git status");
+    await t.renderOnce();
+    expect(t.view.shellMode).toBe(true);
+    expect(t.captureCharFrame()).toContain("! git status");
+  });
+
+  test("Escape on an empty shell input exits shell mode", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("!");
+    await t.renderOnce();
+    t.mockInput.pressEscape();
+    for (let i = 0; i < 100 && t.view.shellMode; i++) {
+      await sleep(20);
+      await t.renderOnce();
+    }
+    expect(t.view.shellMode).toBe(false);
+    expect(t.captureCharFrame()).toContain("> Type a message");
+    expect(t.captureCharFrame()).toContain(GUIDE);
+  });
+
+  test("Backspace exits only once the input is empty", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("!a");
+    t.mockInput.pressBackspace();
+    await t.renderOnce();
+    expect(t.view.shellMode).toBe(true);
+    t.mockInput.pressBackspace();
+    await t.renderOnce();
+    expect(t.view.shellMode).toBe(false);
+  });
+
+  test("Ctrl+U on an empty shell input exits shell mode", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("!");
+    t.mockInput.pressKey("u", { ctrl: true });
+    await t.renderOnce();
+    expect(t.view.shellMode).toBe(false);
+  });
+
+  test("@ shows no popup in shell mode", async () => {
+    const t = await setup({ paths: ["types/node.d.ts"] });
+    await t.mockInput.typeText("!npm i @types");
+    await t.renderOnce();
+    expect(t.captureCharFrame()).not.toContain("types/node.d.ts");
+    expect(t.captureCharFrame()).not.toContain(POPUP_HINT);
+  });
+
+  test("Enter runs the command, keeps shell mode, streams output, then sends", async () => {
+    const runner = fakeRunner();
+    const t = await setup({ runCommand: runner.runCommand, delayMs: 200 });
+    await t.mockInput.typeText("!echo hi");
+    t.mockInput.pressEnter();
+    const running = await t.frameWith("Running…");
+    expect(runner.calls).toEqual(["echo hi"]);
+    expect(running).toContain("shell");
+    expect(running).toContain("$ echo hi");
+    expect(running).toMatch(/[●○]{3} Running… {2}\ds · Ctrl\+C stop/);
+    expect(t.view.shellMode).toBe(true);
+    expect(running).toContain(`! ${SHELL_PLACEHOLDER}`);
+
+    runner.emit("line one\n");
+    const live = await t.frameWith("line one");
+    runner.emit("line two\n");
+    const more = await t.frameWith("line two");
+    expect(more).toContain("line one");
+    expect(live).not.toContain("Thinking…");
+
+    runner.finish({ exitCode: 0 });
+    const thinking = await t.frameWith("Thinking…");
+    expect(thinking).not.toContain("Running…");
+    const done = await t.frameWith("Echo: Please check");
+    expect(done).toContain("assistant");
+    expect(done).toContain(SHELL_GUIDE);
+    expect(done).not.toContain("exit code");
+  });
+
+  test("Enter with an empty shell input does nothing", async () => {
+    const runner = fakeRunner();
+    const t = await setup({ runCommand: runner.runCommand });
+    await t.mockInput.typeText("!");
+    t.mockInput.pressEnter();
+    await t.renderOnce();
+    expect(runner.calls).toEqual([]);
+    expect(t.model.messages).toEqual([]);
+  });
+
+  test("non-zero exit, interrupted and truncation are shown as a footer", async () => {
+    const runner = fakeRunner();
+    const t = await setup({
+      runCommand: runner.runCommand,
+      shell: { leadIn: "x", autoSend: false },
+    });
+    await t.mockInput.typeText("!false");
+    t.mockInput.pressEnter();
+    await t.frameWith("Running…");
+    runner.finish({ exitCode: 1, interrupted: true, droppedBytes: 2048 });
+    const frame = await t.frameWith("exit code: 1");
+    expect(frame).toContain("interrupted");
+    expect(frame).toContain("… (truncated: first 2 KB dropped)");
+  });
+
+  test("autoSend off: held footer, held count in the guide, cleared on send", async () => {
+    const runner = fakeRunner();
+    const t = await setup({
+      runCommand: runner.runCommand,
+      shell: { leadIn: "x", autoSend: false },
+      delayMs: 10,
+    });
+    await t.mockInput.typeText("!ls");
+    t.mockInput.pressEnter();
+    await t.frameWith("Running…");
+    runner.emit("a.ts\n");
+    runner.finish();
+    const held = await t.frameWith("📎 held, sent with your next message");
+    expect(held).toContain(`📎 1 held · ${SHELL_GUIDE}`);
+    expect(t.model.status).toBe("idle");
+
+    t.mockInput.pressEscape();
+    for (let i = 0; i < 100 && t.view.shellMode; i++) {
+      await sleep(20);
+      await t.renderOnce();
+    }
+    expect(t.captureCharFrame()).toContain(`📎 1 held · ${HELD_GUIDE}`);
+
+    await t.mockInput.typeText("what is this?");
+    t.mockInput.pressEnter();
+    const done = await t.frameWith("Echo: what is this?");
+    expect(done).toContain(GUIDE);
+    expect(done).not.toContain("held");
+  });
+
+  test("Ctrl+R while running stops the command and reopens", async () => {
+    const runner = fakeRunner();
+    const t = await setup({ runCommand: runner.runCommand });
+    await t.mockInput.typeText("!sleep 10");
+    t.mockInput.pressEnter();
+    await t.frameWith("Running…");
+    t.mockInput.pressKey("r", { ctrl: true });
+    const frame = await t.frameWith("── reopened ──");
+    expect(frame).toContain("interrupted");
+    expect(t.model.status).toBe("idle");
+  });
+
+  test("idleGuide texts fit 80 columns", () => {
+    for (const text of [
+      idleGuide(false, 0),
+      idleGuide(true, 0),
+      idleGuide(false, 12),
+      idleGuide(true, 12),
+      DEAD_GUIDE,
+    ]) {
+      expect([...text].length).toBeLessThanOrEqual(78); // 📎 is 2 cells wide
+    }
+    expect(idleGuide(false, 0)).toBe(GUIDE);
+    expect(idleGuide(true, 0)).toBe(SHELL_GUIDE);
+    expect(idleGuide(false, 2)).toBe(`📎 2 held · ${HELD_GUIDE}`);
+    expect(idleGuide(true, 2)).toBe(`📎 2 held · ${SHELL_GUIDE}`);
   });
 });
