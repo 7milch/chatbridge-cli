@@ -9,7 +9,7 @@ import { resolveBanner } from "./banner.js";
 import { ChatModel } from "./chat-model.js";
 import { ChatView } from "./chat-view.js";
 import { closeWithTimeout } from "./close-session.js";
-import { resolveSpinner } from "./spinner.js";
+import { type SpinnerOptions, resolveSpinner } from "./spinner.js";
 
 export interface InteractiveOptions extends ChatSessionOptions {
   /** Shown in the header, e.g. the CLI name. */
@@ -18,6 +18,8 @@ export interface InteractiveOptions extends ChatSessionOptions {
   version?: string;
   /** Vendor startup banner; replaces the default when set. */
   banner?: string[];
+  /** Vendor busy spinner; unset fields keep the default. */
+  spinner?: SpinnerOptions;
   /** Test-only: replaces createCliRenderer. */
   createRenderer?: () => Promise<CliRenderer>;
   /** Test-only: replaces the working-directory index. */
@@ -138,7 +140,7 @@ export async function runInteractive(
         providerName: opts.provider.name,
         banner: opts.banner,
       }),
-      spinner: resolveSpinner(),
+      spinner: resolveSpinner(opts.spinner),
       index,
     });
     const quit = waitForQuit(renderer, model);

@@ -232,6 +232,45 @@ describe("runInteractive", () => {
     await run;
   });
 
+  test("a vendor spinner replaces the default", async () => {
+    const t = await createTestRenderer({ width: 80, height: 20 });
+    let frame = "";
+    const base = sessionOpts().opts;
+    const run = runInteractive({
+      ...base,
+      // A slow reply keeps the busy row on screen long enough to capture.
+      provider: {
+        ...base.provider,
+        async waitForResponse() {
+          await new Promise((r) => setTimeout(r, 300));
+          return "";
+        },
+      },
+      spinner: { frames: ["@@"], label: "Crunching\u2026", labelColor: 2 },
+      createRenderer: async () => t.renderer,
+      index: FileIndex.fromPaths([]),
+    });
+    try {
+      for (let i = 0; i < 50 && !frame.includes("Type a message"); i++) {
+        await new Promise((r) => setTimeout(r, 20));
+        await t.renderOnce();
+        frame = t.captureCharFrame();
+      }
+      await t.mockInput.typeText("hi");
+      t.mockInput.pressEnter();
+      for (let i = 0; i < 50 && !frame.includes("Crunching\u2026"); i++) {
+        await new Promise((r) => setTimeout(r, 20));
+        await t.renderOnce();
+        frame = t.captureCharFrame();
+      }
+      expect(frame).toContain("@@ Crunching\u2026");
+      expect(frame).not.toContain("Thinking\u2026");
+    } finally {
+      t.renderer.destroy();
+    }
+    await run;
+  });
+
   test("teardown closes the session that is current after a reset", async () => {
     const t = await createTestRenderer({ width: 80, height: 20 });
     const s = sessionOpts();
