@@ -139,7 +139,13 @@ Record: (a) what `Ctrl+U` does by default with text present; (b) the Backspace a
 
 Replace the "Spike findings" block below with the facts (keep it short, one line per item). If a paste arrives one character at a time, Task 7's `detectShellMode` still works because it keys on "previous content empty and new content starts with `!`" and re-inserts everything after the `!`; note that here so the Task 7 implementer knows. If `placeholder` is not settable, Task 7 keeps the placeholder `Type a message` in shell mode and drops the `SHELL_PLACEHOLDER` test.
 
-**Spike findings (2026-09-17):** _pending — filled in by Task 1._
+**Spike findings (2026-09-17):** measured against `@opentui/core` 0.5.10 under Bun 1.4.2.
+
+- (a) Mock-input names: Backspace is `t.mockInput.pressBackspace(modifiers?)` (sync); a paste is `await t.mockInput.pasteBracketedText(text)` (async). `Ctrl+U` is `t.mockInput.pressKey("u", { ctrl: true })`.
+- (b) Both `ctrl+u` and `backspace` reach a global `keypress` listener on `renderer.keyInput`, and that listener runs **before** the focused textarea: `key.preventDefault()` on either left `plainText` unchanged (`"pq"` stayed `"pq"`). Default `Ctrl+U` with text present deletes to line start — `"abc"` became `""`.
+- (c) A paste arrives **whole**: `pasteBracketedText("!ls -la")` left `plainText === "!ls -la"` and fired `onContentChange` twice, both times already carrying the full text (`["!ls -la","!ls -la"]`). Task 7 consequence: `detectShellMode` sees the complete `!…` line on the first change, so the `!` and the rest arrive together; the duplicate second event is harmless because by then the previous content is non-empty.
+- (d) `TextareaRenderable.placeholder` **is** settable after construction (declared `get`/`set placeholder(StyledText | string | null | undefined)`); assigning `"after"` reads back `"after"` and renders. Keep the `SHELL_PLACEHOLDER` test.
+- (e) Calling `input.clear()` then `input.insertText(rest)` from inside `onContentChange` works and does **not** re-enter the hook synchronously (handler depth never exceeded 1; zero nested calls). The mutation does schedule further top-level `onContentChange` calls carrying the post-mutation text: typing `"!"` gave hook texts `["!","",""]` with final `plainText === ""`; pasting `"!echo hi"` gave `["!echo hi","echo hi","echo hi","echo hi"]` with final `plainText === "echo hi"`. Task 7 must therefore key the strip on "previous content empty and new content starts with `!`" so those follow-up events are no-ops.
 
 - [ ] **Step 5: Delete the probe and commit the plan note**
 
