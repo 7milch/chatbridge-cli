@@ -256,4 +256,26 @@ describe("runCommand", () => {
     expect(r.interrupted).toBe(false);
     expect(r.signal).toBe("SIGKILL");
   });
+
+  test("a single chunk larger than the cap keeps only its tail", async () => {
+    const r = await runCommand(
+      "printf '%s' abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      { cwd: process.cwd(), shell: SH, maxBytes: 32 },
+    ).done;
+    expect(r.output).toBe("456789ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    expect(r.droppedBytes).toBe(30);
+    expect(r.interrupted).toBe(true);
+  });
+
+  test("the cap trims across chunk boundaries", async () => {
+    // Three separate writes: the cap drops the first chunk whole and the
+    // head of the second.
+    const r = await runCommand(
+      "printf a; sleep 0.15; printf bcd; sleep 0.15; printf efgh",
+      { cwd: process.cwd(), shell: SH, maxBytes: 5 },
+    ).done;
+    expect(r.output).toBe("defgh");
+    expect(r.droppedBytes).toBe(3);
+    expect(r.interrupted).toBe(true);
+  });
 });

@@ -67,7 +67,11 @@ const MERGE_WRAPPER = 'exec "$@" 2>&1';
 export function runCommand(command: string, opts: RunOptions): RunningCommand {
   const maxBytes = opts.maxBytes ?? MAX_OUTPUT_BYTES;
   const startedAt = Date.now();
-  let buf = Buffer.alloc(0);
+  /** Output so far, in arrival order; joined only when read, so a chunk
+   * costs one push rather than a copy of everything before it. */
+  const chunks: Buffer[] = [];
+  /** Total bytes in `chunks`. */
+  let size = 0;
   let dropped = 0;
   let interrupted = false;
   let settled = false;
@@ -78,7 +82,7 @@ export function runCommand(command: string, opts: RunOptions): RunningCommand {
   /** Output has changed since the last onOutput call. */
   let unnotified = false;
 
-  const text = () => buf.toString("utf8");
+  const text = () => Buffer.concat(chunks, size).toString("utf8");
 
   /** Only ever runs before `settled`: finish() clears the pending timer,
    * which is what keeps onOutput from firing after the result is out. */
@@ -179,12 +183,26 @@ export function runCommand(command: string, opts: RunOptions): RunningCommand {
       );
 
       const onData = (chunk: Buffer) => {
-        buf = Buffer.concat([buf, chunk]);
-        if (buf.length > maxBytes) {
-          // The cap bounds the bytes kept, not the length of the decoded
-          // string, and the head cut can split a multi-byte character.
-          dropped += buf.length - maxBytes;
-          buf = buf.subarray(buf.length - maxBytes);
+        chunks.push(chunk);
+        size += chunk.length;
+        if (size > maxBytes) {
+          // Drop from the head until the cap holds. The cap bounds the
+          // bytes kept, not the length of the decoded string, and the cut
+          // can split a multi-byte character.
+          let excess = size - maxBytes;
+          dropped += excess;
+          size = maxBytes;
+          while (excess > 0) {
+            const head = chunks[0];
+            if (head === undefined) break;
+            if (head.length <= excess) {
+              chunks.shift();
+              excess -= head.length;
+            } else {
+              chunks[0] = head.subarray(excess);
+              excess = 0;
+            }
+          }
           stop();
         }
         unnotified = true;
