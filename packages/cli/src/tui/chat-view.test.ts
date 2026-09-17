@@ -984,7 +984,7 @@ describe("ChatView shell mode", () => {
     expect(t.captureCharFrame()).not.toContain(POPUP_HINT);
   });
 
-  test("Enter runs the command, keeps shell mode, streams output, then sends", async () => {
+  test("Enter runs the command, leaves shell mode, streams output, then sends", async () => {
     const runner = fakeRunner();
     const t = await setup({ runCommand: runner.runCommand, delayMs: 200 });
     await t.mockInput.typeText("!echo hi");
@@ -994,8 +994,11 @@ describe("ChatView shell mode", () => {
     expect(running).toContain("shell");
     expect(running).toContain("$ echo hi");
     expect(running).toMatch(/[●○]{3} Running… {2}\ds · Ctrl\+C stop/);
-    expect(t.view.shellMode).toBe(true);
-    expect(running).toContain(`! ${SHELL_PLACEHOLDER}`);
+    // The box is back to message mode while the command runs, so the
+    // next thing typed is a message about the output, not a command.
+    expect(t.view.shellMode).toBe(false);
+    expect(running).not.toContain(`! ${SHELL_PLACEHOLDER}`);
+    expect(running).toContain("Type a message");
 
     runner.emit("line one\n");
     const live = await t.frameWith("line one");
@@ -1009,8 +1012,23 @@ describe("ChatView shell mode", () => {
     expect(thinking).not.toContain("Running…");
     const done = await t.frameWith("Echo: Please check");
     expect(done).toContain("assistant");
-    expect(done).toContain(SHELL_GUIDE);
+    expect(done).toContain(GUIDE);
     expect(done).not.toContain("exit code");
+  });
+
+  test("! on the empty input re-enters shell mode after a command", async () => {
+    const runner = fakeRunner();
+    const t = await setup({ runCommand: runner.runCommand });
+    await t.mockInput.typeText("!true");
+    t.mockInput.pressEnter();
+    await t.frameWith("Running…");
+    expect(t.view.shellMode).toBe(false);
+    runner.finish({ exitCode: 0 });
+    await t.frameWith("Echo: Please check");
+    await t.mockInput.typeText("!");
+    await t.renderOnce();
+    expect(t.view.shellMode).toBe(true);
+    expect(t.view.inputText).toBe("");
   });
 
   test("Enter with an empty shell input does nothing", async () => {
@@ -1066,15 +1084,10 @@ describe("ChatView shell mode", () => {
     runner.emit("a.ts\n");
     runner.finish();
     const held = await t.frameWith("📎 held, sent with your next message");
-    expect(held).toContain(`📎 1 held · ${SHELL_GUIDE}`);
+    // Enter left shell mode, so the idle guide is the held one.
+    expect(t.view.shellMode).toBe(false);
+    expect(held).toContain(`📎 1 held · ${HELD_GUIDE}`);
     expect(t.model.status).toBe("idle");
-
-    t.mockInput.pressEscape();
-    for (let i = 0; i < 100 && t.view.shellMode; i++) {
-      await sleep(20);
-      await t.renderOnce();
-    }
-    expect(t.captureCharFrame()).toContain(`📎 1 held · ${HELD_GUIDE}`);
 
     await t.mockInput.typeText("what is this?");
     t.mockInput.pressEnter();
@@ -1101,8 +1114,8 @@ describe("ChatView shell mode", () => {
     await t.mockInput.typeText("!sleep 10");
     t.mockInput.pressEnter();
     await t.frameWith("Running…");
-    // Esc leaves shell mode; the command keeps running underneath.
-    await leaveShellMode(t);
+    // Enter already left shell mode; the command keeps running underneath.
+    expect(t.view.shellMode).toBe(false);
     expect(t.model.status).toBe("running");
     await t.mockInput.typeText("and then?");
     t.mockInput.pressEnter();
@@ -1123,7 +1136,6 @@ describe("ChatView shell mode", () => {
     await t.mockInput.typeText("!sleep 10");
     t.mockInput.pressEnter();
     await t.frameWith("Running…");
-    await leaveShellMode(t);
     await t.mockInput.typeText("and then?");
     t.mockInput.pressEnter();
     await t.frameWith("▹ and then?");

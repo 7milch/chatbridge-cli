@@ -448,7 +448,9 @@ export class ChatView {
       if (this.model.status !== "idle") return;
       this.input.clear();
       this.fitInput();
-      // Shell mode stays on so the next command can be typed at once.
+      // Back to message mode at once: what follows a command is almost
+      // always a message about its output. `!` re-enters shell mode.
+      this.setShellMode(false);
       void this.model.runShell(text);
       return;
     }
