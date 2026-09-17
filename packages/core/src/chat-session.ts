@@ -32,7 +32,8 @@ export interface ChatSessionOptions {
   /** Test-only: replaces BrowserRuntime.launch. */
   launch?: (opts: LaunchOptions) => Promise<RuntimeLike>;
   /** Test-only: replaces the missing-browser pre-check. Defaults to the
-   * runtime check, or to "present" when `launch` is injected. */
+   * runtime check for headed launches, and to "present" for headless
+   * launches or when `launch` is injected. */
   missingBrowserExecutable?: () => string | undefined;
 }
 
@@ -90,10 +91,20 @@ export class ChatSession {
     onProgress?.("Opening browser...");
     const launch =
       opts.launch ?? ((o: LaunchOptions) => BrowserRuntime.launch(o));
+    // The default pre-check looks for the *headed* `chromium-<rev>` binary,
+    // but a headless session launches `chromium_headless_shell-<rev>`: on a
+    // `playwright install chromium --only-shell` machine the pre-check would
+    // reject a launch that works. So it runs for headed launches only; a
+    // genuinely missing headless shell is still caught by launchRuntime's
+    // `isMissingExecutableError` fallback. An injected check always wins
+    // (tests), and an injected `launch` never needs one.
+    const skipPreCheck = opts.launch !== undefined || opts.headless;
+    const preCheck =
+      opts.missingBrowserExecutable ??
+      (skipPreCheck ? () => undefined : undefined);
     const rt = await launchRuntime(
       () => launch({ headless: opts.headless, provider, authStore }),
-      opts.missingBrowserExecutable ??
-        (opts.launch ? () => undefined : undefined),
+      preCheck,
     );
     try {
       rt.page.setDefaultTimeout(timeoutMs);

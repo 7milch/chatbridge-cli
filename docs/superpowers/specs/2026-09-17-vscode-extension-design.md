@@ -326,8 +326,11 @@ detection lives in runtime and classification in core.
   Playwright's `Executable doesn't exist at` message as a fallback).
 - `@chatbridge/core` adds `BrowserUnavailableError` (`code:
   "BROWSER_UNAVAILABLE"`, message includes the expected path).
-  `ChatSession.open` and `runLogin` call `missingBrowserExecutable()`
-  before launching and throw; a launch error that satisfies
+  The pre-check applies to headed launches (`runLogin`, headful sessions):
+  they call `missingBrowserExecutable()` before launching and throw, since
+  it checks the headed `chromium-<rev>` binary. Headless launches skip it
+  (a `--only-shell` install has only `chromium_headless_shell-<rev>`) and
+  rely on the fallback: a launch error that satisfies
   `isMissingExecutableError` is wrapped into the same class.
 - CLI: `EXIT_CODES.BROWSER_UNAVAILABLE = 7`; the printed message ends with
   `Run: npx playwright install chromium`. `--help` and the README exit-code
