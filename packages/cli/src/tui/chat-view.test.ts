@@ -15,6 +15,7 @@ import {
   RESETTING_STATUS,
 } from "./chat-view.js";
 import { POPUP_HINT } from "./mention-popup.js";
+import { type ResolvedSpinner, resolveSpinner } from "./spinner.js";
 import { styled, theme } from "./theme.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -56,6 +57,7 @@ async function setup(
     expand?: (text: string) => Promise<Expansion>;
     headless?: boolean;
     banner?: StyledText[];
+    spinner?: ResolvedSpinner;
     width?: number;
   } = {},
 ) {
@@ -86,6 +88,7 @@ async function setup(
         version: "0.0.1",
         providerName: "dummy-chat",
       }),
+    spinner: opts.spinner ?? resolveSpinner(),
     index: FileIndex.fromPaths(
       opts.paths ?? ["src/chat-view.ts", "src/chat-model.ts", "README.md"],
     ),
@@ -219,6 +222,7 @@ describe("ChatView", () => {
       timeoutMs: 2_000,
       headless: true,
       banner: [],
+      spinner: resolveSpinner(),
       index: FileIndex.fromPaths([]),
     });
     teardown = () => {
@@ -323,6 +327,120 @@ describe("ChatView", () => {
     }
     expect(seen.size).toBeGreaterThanOrEqual(2);
     await t.frameWith("Echo: hello");
+  });
+
+  test("a vendor spinner replaces frames and label", async () => {
+    const t = await setup({
+      delayMs: 400,
+      spinner: { frames: ["<>", "><"], intervalMs: 120, labels: ["Working…"] },
+    });
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    const busy = await t.frameWith("Working…");
+    expect(busy).toMatch(/(<>|><) Working… {2}\ds \/ 2s/);
+    expect(busy).not.toContain("Thinking…");
+  });
+
+  test("a vendor interval drives the frame rate", async () => {
+    const t = await setup({
+      delayMs: 600,
+      spinner: { frames: ["A1", "B2"], intervalMs: 30, labels: ["Go"] },
+    });
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    await t.frameWith("Go");
+    const seen = new Set<string>();
+    for (let i = 0; i < 10 && seen.size < 2; i++) {
+      await sleep(20);
+      await t.renderOnce();
+      const m = t.captureCharFrame().match(/(A1|B2) Go/)?.[1];
+      if (m) seen.add(m);
+    }
+    expect(seen.size).toBe(2);
+  });
+
+  test("one label is picked per turn and kept across frames", async () => {
+    const random = Math.random;
+    Math.random = () => 0.99;
+    try {
+      const t = await setup({
+        delayMs: 400,
+        spinner: {
+          frames: ["●○○", "○●○"],
+          intervalMs: 30,
+          labels: ["First…", "Second…", "Third…"],
+        },
+      });
+      await t.mockInput.typeText("hello");
+      t.mockInput.pressEnter();
+      await t.frameWith("Third…");
+      Math.random = () => 0;
+      for (let i = 0; i < 5; i++) {
+        await sleep(30);
+        await t.renderOnce();
+        expect(t.captureCharFrame()).toContain("Third…");
+      }
+      await t.frameWith("Echo: hello");
+      await t.mockInput.typeText("again");
+      t.mockInput.pressEnter();
+      expect(await t.frameWith("First…")).not.toContain("Third…");
+    } finally {
+      Math.random = random;
+    }
+  });
+
+  test("a drained queued turn picks a new label", async () => {
+    const random = Math.random;
+    Math.random = () => 0.99;
+    try {
+      const t = await setup({
+        delayMs: 300,
+        spinner: {
+          frames: ["●○○", "○●○"],
+          intervalMs: 30,
+          labels: ["First…", "Second…", "Third…"],
+        },
+      });
+      await t.mockInput.typeText("one");
+      t.mockInput.pressEnter();
+      await t.frameWith("Third…");
+      // Queued: the view stays busy, so the spinner is never restarted.
+      await t.mockInput.typeText("two");
+      t.mockInput.pressEnter();
+      Math.random = () => 0;
+      await t.frameWith("Echo: one");
+      expect(await t.frameWith("First…")).not.toContain("Third…");
+    } finally {
+      Math.random = random;
+    }
+  });
+
+  test("a coloured spinner renders the same text", async () => {
+    const t = await setup({
+      delayMs: 400,
+      spinner: {
+        frames: ["**"],
+        intervalMs: 120,
+        labels: ["Tinted…"],
+        frameColor: 4,
+        labelColor: "#8a8a8a",
+      },
+    });
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    const busy = await t.frameWith("Tinted…");
+    expect(busy).toMatch(/\*\* Tinted… {2}\ds \/ 2s/);
+  });
+
+  test("an empty label list shows the frame alone", async () => {
+    const t = await setup({
+      delayMs: 400,
+      spinner: { frames: ["##"], intervalMs: 120, labels: [] },
+    });
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    const busy = await t.frameWith("## ");
+    expect(busy).toMatch(/## {3}\ds \/ 2s/);
   });
 
   test("a renderer destroyed mid-turn stops the indicator instead of writing", async () => {

@@ -6,6 +6,7 @@ import { FileIndex } from "../mentions/file-index.js";
 import { ChatModel } from "./chat-model.js";
 import { ChatView } from "./chat-view.js";
 import { runInteractive, waitForQuit } from "./run-interactive.js";
+import { resolveSpinner } from "./spinner.js";
 
 describe("waitForQuit", () => {
   test("resolves when the renderer is destroyed from outside", async () => {
@@ -32,6 +33,7 @@ describe("waitForQuit", () => {
       timeoutMs: 1_000,
       headless: true,
       banner: [],
+      spinner: resolveSpinner(),
       index: FileIndex.fromPaths([]),
     });
     const quit = waitForQuit(t.renderer, model);
@@ -64,6 +66,7 @@ describe("waitForQuit", () => {
       timeoutMs: 1_000,
       headless: true,
       banner: [],
+      spinner: resolveSpinner(),
       index: FileIndex.fromPaths([]),
     });
     const quit = waitForQuit(t.renderer, model);
@@ -102,6 +105,7 @@ describe("waitForQuit", () => {
       timeoutMs: 1_000,
       headless: true,
       banner: [],
+      spinner: resolveSpinner(),
       index: FileIndex.fromPaths([]),
     });
     const quit = waitForQuit(t.renderer, model);
@@ -222,6 +226,45 @@ describe("runInteractive", () => {
     try {
       expect(frame).toContain("ACME BANNER");
       expect(frame).not.toContain("Connected to");
+    } finally {
+      t.renderer.destroy();
+    }
+    await run;
+  });
+
+  test("a vendor spinner replaces the default", async () => {
+    const t = await createTestRenderer({ width: 80, height: 20 });
+    let frame = "";
+    const base = sessionOpts().opts;
+    const run = runInteractive({
+      ...base,
+      // A slow reply keeps the busy row on screen long enough to capture.
+      provider: {
+        ...base.provider,
+        async waitForResponse() {
+          await new Promise((r) => setTimeout(r, 300));
+          return "";
+        },
+      },
+      spinner: { frames: ["@@"], label: "Crunching\u2026", labelColor: 2 },
+      createRenderer: async () => t.renderer,
+      index: FileIndex.fromPaths([]),
+    });
+    try {
+      for (let i = 0; i < 50 && !frame.includes("Type a message"); i++) {
+        await new Promise((r) => setTimeout(r, 20));
+        await t.renderOnce();
+        frame = t.captureCharFrame();
+      }
+      await t.mockInput.typeText("hi");
+      t.mockInput.pressEnter();
+      for (let i = 0; i < 50 && !frame.includes("Crunching\u2026"); i++) {
+        await new Promise((r) => setTimeout(r, 20));
+        await t.renderOnce();
+        frame = t.captureCharFrame();
+      }
+      expect(frame).toContain("@@ Crunching\u2026");
+      expect(frame).not.toContain("Thinking\u2026");
     } finally {
       t.renderer.destroy();
     }

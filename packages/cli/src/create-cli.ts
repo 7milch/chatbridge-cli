@@ -10,6 +10,7 @@ import {
 import { configPath, loadConfig } from "./config.js";
 import { resolveProvider } from "./resolve-provider.js";
 import { supportsInteractive } from "./tui/runtime-check.js";
+import type { SpinnerOptions } from "./tui/spinner.js";
 
 export interface CreateCliOptions {
   /** CLI name shown in help and errors, e.g. "chatbridge" or "company-ai-cli". */
@@ -19,6 +20,10 @@ export interface CreateCliOptions {
   /** Interactive startup banner, one element per row; replaces the default
    * (name, version and a one-line hint). Used verbatim. */
   banner?: string[];
+  /** Busy-status spinner shown while a turn is in flight, in the style of
+   * `banner`; fields not set keep their default. Frames must share a
+   * display width. */
+  spinner?: SpinnerOptions;
   /** Pinned provider. When set, --provider is rejected and config is not read. */
   provider?: Provider;
   /** Config directory name under ~/.config; defaults to `name`. */
@@ -234,6 +239,7 @@ export function createCli(opts: CreateCliOptions) {
           title: opts.name,
           version: opts.version,
           banner: opts.banner,
+          spinner: opts.spinner,
           provider,
           authStore,
           headless: !values.headful,
