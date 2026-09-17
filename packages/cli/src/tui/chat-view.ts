@@ -351,6 +351,10 @@ export class ChatView {
     void this.model.submit(text).then((accepted) => {
       // Trade-off: anything typed during expansion wins over the refill.
       if (!accepted && !this.torn && !this.input.plainText) {
+        // The clear() above left lastContent empty, which would let a
+        // refill starting with `!` trip the shell-mode detector; this text
+        // was typed as a message, so pre-seed the detector with it.
+        this.lastContent = text;
         this.input.insertText(text);
         this.fitInput();
       }

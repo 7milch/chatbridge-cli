@@ -532,6 +532,28 @@ describe("ChatView", () => {
     expect(t.model.fatal).toBeUndefined();
   });
 
+  test("a refill that starts with ! does not turn the message into a command", async () => {
+    const t = await setup({
+      expand: async () => {
+        throw new MentionError(["@nope.ts: not found"]);
+      },
+    });
+    // `!` typed after other text is plain text, not the shell prefix; the
+    // leading character is then deleted so the refill starts with `!`.
+    await t.mockInput.typeText("z!@nope.ts ");
+    await t.renderOnce();
+    t.mockInput.pressKey("HOME");
+    t.mockInput.pressKey("DELETE");
+    await t.renderOnce();
+    expect(t.view.shellMode).toBe(false);
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("@nope.ts: not found");
+    expect(frame).toContain("error");
+    // The text came back whole, with the `!` still part of it.
+    expect(frame).toContain("!@nope.ts");
+    expect(t.view.shellMode).toBe(false);
+  });
+
   test("the banner is centred in the empty history", async () => {
     const t = await setup();
     const rows = t.captureCharFrame().split("\n");
