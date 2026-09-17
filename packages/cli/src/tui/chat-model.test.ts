@@ -758,4 +758,61 @@ describe("ChatModel.runShell", () => {
       "separator",
     ]);
   });
+
+  test("a stale run settling later does not clear the current command's handle", async () => {
+    // The real stop() does not settle `done` synchronously: it sends
+    // SIGTERM and settles when the child's `close` arrives. So a command
+    // stopped by a reset can settle after the next one has started.
+    const handles: Array<{ command: string; stops: number }> = [];
+    const runCommand = (command: string): RunningCommand => {
+      const d = deferred<ShellResult>();
+      const handle = { command, stops: 0 };
+      handles.push(handle);
+      return {
+        done: d.promise,
+        stop() {
+          handle.stops++;
+          setTimeout(
+            () =>
+              d.resolve({
+                command,
+                output: "",
+                droppedBytes: 0,
+                exitCode: undefined,
+                interrupted: true,
+                durationMs: 1,
+              }),
+            0,
+          );
+        },
+      };
+    };
+    const model = new ChatModel(fakeSession("a").session, {
+      closeTimeoutMs: 20,
+      openSession: async () => fakeSession("b").session,
+      runCommand,
+      shell: { leadIn: "x", autoSend: false },
+    });
+
+    const first = model.runShell("sleep 10");
+    await tick();
+    await model.reset();
+    expect(model.status).toBe("idle");
+    const second = model.runShell("sleep 20");
+    expect(model.status).toBe("running");
+    // The first command's settlement lands now, after the second took over.
+    await tick();
+    await first;
+
+    model.stopShell();
+    expect(handles.map((h) => h.stops)).toEqual([1, 1]);
+    await tick();
+    expect(await second).toBe(true);
+    expect(model.status).toBe("idle");
+    const shell = model.messages.filter((m) => m.role === "shell");
+    expect(shell[1]?.result).toMatchObject({
+      command: "sleep 20",
+      interrupted: true,
+    });
+  });
 });

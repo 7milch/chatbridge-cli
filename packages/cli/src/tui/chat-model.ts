@@ -184,8 +184,13 @@ export class ChatModel {
     this.onChange();
     const generation = this.generation;
     let result: ShellResult;
+    // Only this run's own handle may be cleared: stop() does not settle
+    // `done` synchronously, so a command stopped by a reset can settle
+    // after the next one has started, and clearing then would leave the
+    // new command un-stoppable.
+    let running: RunningCommand | undefined;
     try {
-      const running = this.runCommand(cmd, {
+      running = this.runCommand(cmd, {
         cwd: this.cwd,
         onOutput: (output) => {
           if (entry.result) entry.result = { ...entry.result, output };
@@ -195,7 +200,7 @@ export class ChatModel {
       this.running = running;
       result = await running.done;
     } catch (err) {
-      this.running = undefined;
+      if (this.running === running) this.running = undefined;
       if (generation !== this.generation) return true; // stale: reset ran
       const message = err instanceof Error ? err.message : String(err);
       this.messages.push({
@@ -206,7 +211,7 @@ export class ChatModel {
       this.onChange();
       return true;
     }
-    this.running = undefined;
+    if (this.running === running) this.running = undefined;
     // The entry belongs to the history, which survives a reset, so it
     // always gets the final result (an interrupted one after a reset).
     entry.result = result;
