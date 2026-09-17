@@ -1026,3 +1026,100 @@ describe("ChatModel queue", () => {
     await p;
   });
 });
+
+describe("ChatModel shell mode × queue", () => {
+  test("a message typed while a command runs is sent after its turn", async () => {
+    const { session, calls, replies } = fakeSession();
+    const runner = fakeRunner();
+    const model = new ChatModel(session, {
+      ...noReopen,
+      runCommand: runner.runCommand,
+    });
+    const p = model.runShell("ls");
+    await tick();
+    expect(model.status).toBe("running");
+    expect(await model.submit("  and then?  ")).toBe(true);
+    expect(model.queue).toEqual(["and then?"]);
+    expect(calls).toEqual([]);
+
+    // The command's own turn goes out first; the queue waits for its end.
+    runner.finish({ exitCode: 0 });
+    await tick();
+    expect(model.status).toBe("busy");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toStartWith("Please check the execution result.");
+    expect(model.queue).toEqual(["and then?"]);
+
+    replies[0]?.resolve("Looks fine.");
+    expect(await p).toBe(true);
+    await tick();
+    expect(calls).toEqual([
+      "Please check the execution result.\n\n### $ ls\n```\n```",
+      "and then?",
+    ]);
+    expect(model.queue).toEqual([]);
+    // Never idle with an entry still waiting.
+    expect(model.status).toBe("busy");
+    replies[1]?.resolve("ok");
+    await tick();
+    expect(model.status).toBe("idle");
+    expect(model.messages.map((m) => m.role)).toEqual([
+      "shell",
+      "assistant",
+      "user",
+      "assistant",
+    ]);
+  });
+
+  test("autoSend off: a queued entry drains and carries the held section", async () => {
+    const { session, calls, replies } = fakeSession();
+    const runner = fakeRunner();
+    const model = new ChatModel(session, {
+      ...noReopen,
+      runCommand: runner.runCommand,
+      shell: { leadIn: "unused", autoSend: false },
+    });
+    const p = model.runShell("ls");
+    await tick();
+    expect(await model.submit("what is this?")).toBe(true);
+    expect(model.queue).toEqual(["what is this?"]);
+
+    runner.emit("a.ts\n");
+    runner.finish({ exitCode: 1 });
+    expect(await p).toBe(true);
+    await tick();
+    // The held result is attached to the drained entry, exactly as it
+    // would be to a message typed after the command finished.
+    expect(calls).toEqual([
+      "what is this?\n\n### $ ls\n```\na.ts\n```\nexit code: 1",
+    ]);
+    expect(model.queue).toEqual([]);
+    expect(model.heldResults).toEqual([]);
+    expect(model.messages[0]?.held).toBe(false);
+    expect(model.status).toBe("busy");
+    replies[0]?.resolve("ok");
+    await tick();
+    expect(model.status).toBe("idle");
+  });
+
+  test("runShell while busy is rejected and queues nothing", async () => {
+    const { session, calls, replies } = fakeSession();
+    const runner = fakeRunner();
+    const model = new ChatModel(session, {
+      ...noReopen,
+      runCommand: runner.runCommand,
+    });
+    const p = model.submit("hello");
+    await tick();
+    expect(model.status).toBe("busy");
+    expect(await model.runShell("ls")).toBe(false);
+    expect(model.queue).toEqual([]);
+    expect(runner.calls).toEqual([]);
+    replies[0]?.resolve("ok");
+    expect(await p).toBe(true);
+    await tick();
+    expect(model.status).toBe("idle");
+    expect(calls).toEqual(["hello"]);
+    expect(model.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+  });
+});

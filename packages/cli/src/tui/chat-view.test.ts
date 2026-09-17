@@ -941,6 +941,32 @@ describe("ChatView shell mode", () => {
     expect(t.model.status).toBe("idle");
   });
 
+  test("a message typed while a command runs is queued and listed", async () => {
+    const runner = fakeRunner();
+    const t = await setup({ runCommand: runner.runCommand });
+    await t.mockInput.typeText("!sleep 10");
+    t.mockInput.pressEnter();
+    await t.frameWith("Running…");
+    // Esc leaves shell mode; the command keeps running underneath.
+    t.mockInput.pressEscape();
+    for (let i = 0; i < 100 && t.view.shellMode; i++) {
+      await sleep(20);
+      await t.renderOnce();
+    }
+    expect(t.model.status).toBe("running");
+    await t.mockInput.typeText("and then?");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("▹ and then?");
+    expect(t.model.queue).toEqual(["and then?"]);
+    expect(t.view.inputText).toBe("");
+    expect(frame).toContain("Running…");
+    expect(frame).toContain("· 1 queued");
+    // The command's own turn goes out first; the queued message follows it.
+    runner.finish({ exitCode: 0 });
+    const done = await t.frameWith("Echo: and then?");
+    expect(done).not.toContain("▹");
+  });
+
   test("idleGuide texts fit 80 columns", () => {
     for (const text of [
       idleGuide(false, 0, 0),
