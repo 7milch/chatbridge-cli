@@ -231,9 +231,10 @@ export class ChatModel {
    No `user` entry is pushed; the `shell` entry stands for the turn.
 6. `autoSend: false`: push the result to `heldResults`, mark the entry
    `held`, set `status` to `idle`, `onChange`.
-7. A rejected `done` (the shell could not start) marks the entry `failed`,
-   pushes an error entry `could not start shell: <message>` and returns to
-   `idle`; not fatal.
+7. A rejected `done` (the shell could not start) marks the entry `failed`
+   and notifies the view. Unless a reset made the run stale, it also pushes
+   an error entry `could not start shell: <message>` and returns to `idle`;
+   not fatal.
 
 ### `submit(text)`
 

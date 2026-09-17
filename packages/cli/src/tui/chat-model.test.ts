@@ -784,6 +784,38 @@ describe("ChatModel.runShell", () => {
     );
   });
 
+  test("a shell that cannot start during a reset still marks its entry", async () => {
+    const first = fakeSession("a");
+    // A close that hangs keeps the reset in flight while we look at the
+    // entry, so the repaint we assert is the failure's own, not the one
+    // the finished reset would do anyway.
+    first.state.closeHangs = true;
+    const next = fakeSession("b");
+    const runner = fakeRunner();
+    const model = new ChatModel(first.session, {
+      openSession: async () => next.session,
+      closeTimeoutMs: 20,
+      runCommand: runner.runCommand,
+    });
+    const flags: Array<boolean | undefined> = [];
+    model.onChange = () => flags.push(model.messages[0]?.failed);
+
+    const p = model.runShell("true");
+    await tick();
+    // The rejection settles `done` before reset()'s stopShell() can, and
+    // reset() bumps the generation synchronously while the rejection is
+    // still a queued microtask: the catch takes the stale branch.
+    runner.fail(new Error("spawn /no/sh ENOENT"));
+    const reset = model.reset();
+    expect(await p).toBe(true);
+    expect(model.messages[0]).toMatchObject({ role: "shell", failed: true });
+    expect(flags.at(-1)).toBe(true); // the view was told, reset or not
+    await reset;
+    // Nothing else is said: the reset owns the rest of the screen.
+    expect(model.messages.map((m) => m.role)).toEqual(["shell", "separator"]);
+    expect(model.fatal).toBeUndefined();
+  });
+
   test("send failures after a command behave like submit", async () => {
     const { session, replies } = fakeSession();
     const runner = fakeRunner();
