@@ -192,7 +192,19 @@ export function createCli(opts: CreateCliOptions) {
           baseDir: opts.baseDir,
         });
         if (sub === "login") {
-          await runLogin({ provider, authStore, onProgress: progress });
+          const ac = new AbortController();
+          const onSigint = () => ac.abort();
+          process.once("SIGINT", onSigint);
+          try {
+            await runLogin({
+              provider,
+              authStore,
+              onProgress: progress,
+              signal: ac.signal,
+            });
+          } finally {
+            process.off("SIGINT", onSigint);
+          }
           return 0;
         }
         if (sub === "logout") {

@@ -68,3 +68,11 @@ export class BrowserUnavailableError extends ChatBridgeError {
     super("BROWSER_UNAVAILABLE", message, options);
   }
 }
+
+/** `runLogin` was cancelled through its AbortSignal (the CLI's Ctrl-C, the
+ * extension's cancel button). The browser was killed; nothing was saved. */
+export class LoginAbortedError extends ChatBridgeError {
+  constructor(message = "Login cancelled.", options?: ErrorOptions) {
+    super("LOGIN_ABORTED", message, options);
+  }
+}
