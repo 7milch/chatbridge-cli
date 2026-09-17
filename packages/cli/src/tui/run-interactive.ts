@@ -9,6 +9,7 @@ import { resolveBanner } from "./banner.js";
 import { ChatModel } from "./chat-model.js";
 import { ChatView } from "./chat-view.js";
 import { closeWithTimeout } from "./close-session.js";
+import { resolveSpinner } from "./spinner.js";
 
 export interface InteractiveOptions extends ChatSessionOptions {
   /** Shown in the header, e.g. the CLI name. */
@@ -137,6 +138,7 @@ export async function runInteractive(
         providerName: opts.provider.name,
         banner: opts.banner,
       }),
+      spinner: resolveSpinner(),
       index,
     });
     const quit = waitForQuit(renderer, model);

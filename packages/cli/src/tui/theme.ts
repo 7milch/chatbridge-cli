@@ -4,6 +4,7 @@ import {
   TextAttributes,
   type TextChunk,
 } from "@opentui/core";
+import type { SpinnerColor } from "./spinner.js";
 
 /** One place for every style the TUI uses. Colours are ANSI indexed so the
  * terminal palette applies in light and dark themes; OpenTUI's `blue()`
@@ -39,6 +40,14 @@ export const theme = {
   errorText: make(TextAttributes.NONE, ANSI.red),
   selected: make(TextAttributes.INVERSE),
 };
+
+/** Plain text in a vendor-chosen colour: a number is an ANSI palette index
+ * (follows the terminal palette), a string is "#rrggbb". */
+export function colored(color: SpinnerColor): Styler {
+  const fg =
+    typeof color === "number" ? RGBA.fromIndex(color) : RGBA.fromHex(color);
+  return (text) => chunk(text, TextAttributes.NONE, fg);
+}
 
 /** Builds a StyledText from chunks and plain strings. */
 export function styled(...parts: Array<TextChunk | string>): StyledText {

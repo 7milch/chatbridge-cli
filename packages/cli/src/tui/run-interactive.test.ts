@@ -6,6 +6,7 @@ import { FileIndex } from "../mentions/file-index.js";
 import { ChatModel } from "./chat-model.js";
 import { ChatView } from "./chat-view.js";
 import { runInteractive, waitForQuit } from "./run-interactive.js";
+import { resolveSpinner } from "./spinner.js";
 
 describe("waitForQuit", () => {
   test("resolves when the renderer is destroyed from outside", async () => {
@@ -32,6 +33,7 @@ describe("waitForQuit", () => {
       timeoutMs: 1_000,
       headless: true,
       banner: [],
+      spinner: resolveSpinner(),
       index: FileIndex.fromPaths([]),
     });
     const quit = waitForQuit(t.renderer, model);
@@ -64,6 +66,7 @@ describe("waitForQuit", () => {
       timeoutMs: 1_000,
       headless: true,
       banner: [],
+      spinner: resolveSpinner(),
       index: FileIndex.fromPaths([]),
     });
     const quit = waitForQuit(t.renderer, model);
@@ -102,6 +105,7 @@ describe("waitForQuit", () => {
       timeoutMs: 1_000,
       headless: true,
       banner: [],
+      spinner: resolveSpinner(),
       index: FileIndex.fromPaths([]),
     });
     const quit = waitForQuit(t.renderer, model);

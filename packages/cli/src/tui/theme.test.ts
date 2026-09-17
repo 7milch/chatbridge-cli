@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { TextAttributes } from "@opentui/core";
-import { MUTED_COLOR, styled, theme } from "./theme.js";
+import { MUTED_COLOR, colored, styled, theme } from "./theme.js";
 
 describe("theme", () => {
   test("badge is bold and inverse without a colour", () => {
@@ -50,5 +50,17 @@ describe("theme", () => {
     const s = styled(theme.badge(" a "), " ", theme.muted("b"));
     expect(s.chunks.map((c) => c.text)).toEqual([" a ", " ", "b"]);
     expect(s.chunks[1]?.attributes ?? 0).toBe(TextAttributes.NONE);
+  });
+
+  test("colored: a number is an ANSI index, a string a hex colour", () => {
+    const idx = colored(4)("x");
+    expect(idx.text).toBe("x");
+    expect(idx.attributes).toBe(TextAttributes.NONE);
+    expect(idx.fg?.intent).toBe("indexed");
+    expect(idx.fg?.slot).toBe(4);
+    const hex = colored("#ff0000")("x");
+    expect(hex.fg?.r).toBeCloseTo(1);
+    expect(hex.fg?.g).toBeCloseTo(0);
+    expect(hex.fg?.b).toBeCloseTo(0);
   });
 });
