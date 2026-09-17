@@ -774,6 +774,21 @@ describe("ChatView", () => {
 });
 
 describe("ChatView shell mode", () => {
+  /** Presses Esc and waits for shell mode to end: a lone ESC byte is held
+   * by the input parser until it can rule out an escape sequence. */
+  async function leaveShellMode(t: {
+    mockInput: { pressEscape(): void };
+    renderOnce(): Promise<unknown>;
+    view: ChatView;
+  }) {
+    t.mockInput.pressEscape();
+    for (let i = 0; i < 100 && t.view.shellMode; i++) {
+      await sleep(20);
+      await t.renderOnce();
+    }
+    expect(t.view.shellMode).toBe(false);
+  }
+
   test("! on an empty input enters shell mode and is not typed", async () => {
     const t = await setup();
     await t.mockInput.typeText("!");
@@ -948,11 +963,7 @@ describe("ChatView shell mode", () => {
     t.mockInput.pressEnter();
     await t.frameWith("Running…");
     // Esc leaves shell mode; the command keeps running underneath.
-    t.mockInput.pressEscape();
-    for (let i = 0; i < 100 && t.view.shellMode; i++) {
-      await sleep(20);
-      await t.renderOnce();
-    }
+    await leaveShellMode(t);
     expect(t.model.status).toBe("running");
     await t.mockInput.typeText("and then?");
     t.mockInput.pressEnter();
@@ -965,6 +976,65 @@ describe("ChatView shell mode", () => {
     runner.finish({ exitCode: 0 });
     const done = await t.frameWith("Echo: and then?");
     expect(done).not.toContain("▹");
+  });
+
+  test("Up is not a take-back in shell mode; Esc first, then it is", async () => {
+    const runner = fakeRunner();
+    const t = await setup({ runCommand: runner.runCommand });
+    await t.mockInput.typeText("!sleep 10");
+    t.mockInput.pressEnter();
+    await t.frameWith("Running…");
+    await leaveShellMode(t);
+    await t.mockInput.typeText("and then?");
+    t.mockInput.pressEnter();
+    await t.frameWith("▹ and then?");
+
+    // Back into shell mode: the box is for a command, so Up must not drop
+    // the queued message into it.
+    await t.mockInput.typeText("!");
+    await t.renderOnce();
+    expect(t.view.shellMode).toBe(true);
+    t.mockInput.pressArrow("up");
+    await t.renderOnce();
+    expect(t.model.queue).toEqual(["and then?"]);
+    expect(t.view.inputText).toBe("");
+    // The entry is still listed; the status row is the running one.
+    const held = t.captureCharFrame();
+    expect(held).toContain("▹ and then?");
+    expect(held).toContain("· 1 queued");
+
+    await leaveShellMode(t);
+    t.mockInput.pressArrow("up");
+    await t.renderOnce();
+    expect(t.model.queue).toEqual([]);
+    expect(t.view.inputText).toBe("and then?");
+    runner.finish({ exitCode: 0 });
+  });
+
+  test("a taken-back entry starting with ! stays a message", async () => {
+    const t = await setup({ delayMs: 10_000 });
+    await t.mockInput.typeText("first");
+    t.mockInput.pressEnter();
+    await t.frameWith("Thinking…");
+    // `!` typed after other text is plain text; deleting the leading
+    // character leaves a message that starts with `!`.
+    await t.mockInput.typeText("a!foo");
+    await t.renderOnce();
+    t.mockInput.pressKey("HOME");
+    t.mockInput.pressKey("DELETE");
+    await t.renderOnce();
+    expect(t.view.shellMode).toBe(false);
+    expect(t.view.inputText).toBe("!foo");
+    t.mockInput.pressEnter();
+    await t.frameWith("▹ !foo");
+    expect(t.model.queue).toEqual(["!foo"]);
+
+    t.mockInput.pressArrow("up");
+    await t.renderOnce();
+    // The refill is the message it was, not a command: no shell mode.
+    expect(t.view.inputText).toBe("!foo");
+    expect(t.view.shellMode).toBe(false);
+    expect(t.model.queue).toEqual([]);
   });
 
   test("idleGuide texts fit 80 columns", () => {

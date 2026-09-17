@@ -25,7 +25,12 @@ unchanged. One-shot mode (`-p`) is out of scope.
 - **Commands run only from `idle`.** While a command runs the model is
   `running`: the input is locked like `busy`, the status row shows the
   elapsed time, and Ctrl+C stops the command instead of quitting. Running a
-  command while a turn is in flight is a backlog item (together with #40).
+  command while a turn is in flight is a backlog item.
+- **Messages queue while a command runs; commands do not.** `submit` while
+  `running` queues the message (milestone 9's queue); it drains after the
+  command's turn ends, or after a held command returns to idle, and carries
+  the held sections. `runShell` while not idle is rejected, not queued.
+  Take-back (`Up`) and the queue guide are disabled in shell mode.
 - **No timeout.** Long builds and test runs must not be cut off. Ctrl+C
   stops the command (SIGTERM to the process group, SIGKILL after 2 s).
 - **Output cap: 200 KiB, tail kept.** When the cap is hit the command is
@@ -293,7 +298,7 @@ every terminal; README documents both) and why the held variant is shorter.
 | idle, normal | `Enter send · Ctrl+J newline · @ file · ! shell · Ctrl+R reopen · Ctrl+C quit` |
 | idle, shell mode | `Enter run · Esc exit shell · Ctrl+R reopen · Ctrl+C quit` |
 | idle, N held results | `📎 N held · Enter send · @ file · ! shell · Ctrl+R reopen · Ctrl+C quit` (or `📎 N held · ` + the shell-mode text) |
-| running | `●○○ Running…  12s · Ctrl+C stop` (spinner frames as today) |
+| running | `●○○ Running…  12s · Ctrl+C stop` (spinner frames as today), plus ` · N queued` while messages wait |
 | busy / resetting / dead | unchanged |
 
 ### Ctrl+C
@@ -408,7 +413,8 @@ after `!` must be preserved).
 
 - `Tab` completion from previous commands, `/` path completion, `Ctrl+B`
   backgrounding.
-- Running a command while a turn is in flight (with the #40 queue).
+- Running a command while a turn is in flight (queuing `!` commands; #46
+  shipped the message queue).
 - `cd` carrying over between commands.
 - Stripping ANSI escapes from the output.
 - A per-turn lead-in override.

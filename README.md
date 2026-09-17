@@ -143,10 +143,11 @@ chat.
   the command in the directory you started `chatbridge` in, with your own
   user and environment and no sandbox. Its output streams into the history
   under a `shell` label; the status row shows `Running…  12s · Ctrl+C
-  stop` (plus `· N queued` when messages are waiting). When the command finishes, the output is sent to the service as a
-  fenced block under `### $ <command>` after a lead-in line (default
-  `Please check the execution result.`, configurable in `config.json` and by
-  a derived CLI), so the assistant reacts to it in the same turn. A non-zero
+  stop`, plus `· N queued` when messages are waiting. When the command
+  finishes, the output is sent to the service as a fenced block under
+  `### $ <command>` after a lead-in line (default `Please check the
+  execution result.`, configurable in `config.json` and by a derived
+  CLI), so the assistant reacts to it in the same turn. A non-zero
   exit code is appended as `exit code: N`; a stopped command is marked
   `interrupted`. Output is capped at 200 KB: past that the command is killed
   and only the tail is kept, with a `truncated` note. Shell mode stays on
