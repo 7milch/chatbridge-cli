@@ -189,7 +189,12 @@ Not scheduled. Each item becomes a milestone when picked up.
   spike before any design: a minimal extension that drives the dummy chat
   through `ChatSession` from the extension host, including headful `login()`,
   to confirm Playwright works under VSCode's Electron Node and how Chromium
-  installation should be surfaced.
+  installation should be surfaced. Spike done 2026-09-17
+  (`docs/spike-notes/2026-09-17-vscode-extension.md`): everything works
+  unchanged on the extension host's Node 24, headful login included, and
+  the extension can install Chromium itself by spawning Playwright's CLI.
+  Two runtime gaps to close first: classify a missing browser executable
+  (`BrowserUnavailableError`, #52) and make `runLogin` cancellable (#53).
 - **Configurable retry and timeout for opening the browser.** Today
   `ChatSession.open()` runs launch → goto → isLoggedIn → startNewChat once,
   under the single `--timeout` that also covers turns, and `auth login`
