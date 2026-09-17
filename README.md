@@ -76,7 +76,7 @@ createCli({
   spinner: {                   // optional; unset fields keep the default
     frames: ["⠋", "⠙", "⠹", "⠸"],          // same display width each
     intervalMs: 80,
-    label: ["Thinking…", "Pondering…"],     // one is picked when a turn starts
+    label: ["Thinking…", "Pondering…"],     // one is picked when the spinner starts
     frameColor: 4,                          // ANSI index or "#rrggbb"
     labelColor: "#8a8a8a",
   },
@@ -121,10 +121,10 @@ chat.
   (the CLI name and version by default; a derived CLI can pass its own
   `banner` lines to `createCli`). While a turn is in flight the status row
   shows a spinner and the elapsed time against the budget; `spinner` on
-  `createCli` replaces its frames, interval, label (a list of labels is
-  picked from when the spinner starts; a queued message drained while the
-  spinner is already running keeps the current label) and the colours of
-  frame and label (`"#rrggbb"` or an ANSI palette index).
+  `createCli` replaces its frames, interval, label (one label is picked
+  when the spinner starts; a queued message drained while the spinner is
+  already running keeps the current label) and the colours of frame and
+  label (`"#rrggbb"` or an ANSI palette index).
 - Type **`@`** to attach a file from the directory you started `chatbridge`
   in. A popup lists fuzzy matches (`.gitignore`d files, `.git`, and
   `node_modules` are left out); **↑/↓** select, **Tab** or **Enter** insert
