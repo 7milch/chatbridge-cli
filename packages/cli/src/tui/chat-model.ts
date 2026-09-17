@@ -176,15 +176,17 @@ export class ChatModel {
     }
     this.messages.push(message);
     let outgoing = expansion.prompt;
-    if (this.heldResults.length > 0) {
+    // The held results ride along but are released only when the reply
+    // arrives: a timeout returns to idle for a retry, and that retry must
+    // carry them again.
+    const carriesHeld = this.heldResults.length > 0;
+    if (carriesHeld) {
       outgoing = [outgoing, ...this.heldResults.map(formatShellSection)].join(
         "\n\n",
       );
-      this.heldResults.length = 0;
-      for (const m of this.messages) if (m.held) m.held = false;
     }
     this.onChange();
-    await this.sendPrompt(outgoing);
+    await this.sendPrompt(outgoing, carriesHeld);
     return true;
   }
 
@@ -277,13 +279,19 @@ export class ChatModel {
   /** The send half of a turn, shared by runTurn and runShell. The caller has
    * already set `busy` and notified the view. Draining happens here, so
    * every turn end — typed, queued or auto-sent — continues the queue
-   * exactly once. */
-  private async sendPrompt(prompt: string): Promise<void> {
+   * exactly once. `releasesHeld`: the prompt carries the held shell
+   * results; they are released when the reply arrives, so a failed or
+   * stale send keeps them for the next message. */
+  private async sendPrompt(
+    prompt: string,
+    releasesHeld = false,
+  ): Promise<void> {
     const session = this.current;
     const generation = this.generation;
     try {
       const reply = await session.send(prompt);
       if (generation !== this.generation) return; // stale: reset ran
+      if (releasesHeld) this.releaseHeld();
       this.messages.push({ role: "assistant", text: reply });
       this.status = "idle";
     } catch (err) {
@@ -305,6 +313,13 @@ export class ChatModel {
     // guide.
     if (this.status === "idle") this.drain();
     this.onChange();
+  }
+
+  /** Forgets the held results and clears the flag on their entries. Runs
+   * before drain(), so a queued entry never re-attaches them. */
+  private releaseHeld(): void {
+    this.heldResults.length = 0;
+    for (const m of this.messages) if (m.held) m.held = false;
   }
 
   /** Removes every queued entry and returns them in order, for the view to

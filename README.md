@@ -159,7 +159,8 @@ chat.
 - With `"shell": { "autoSend": false }` in `config.json` the output is held
   instead of sent: the entry shows `📎 held, sent with your next message`,
   the status row counts the held results, and they are appended to the next
-  message you send. Held results are dropped when you quit.
+  message you send. If that send fails (a timeout, a reopened browser) they
+  stay held for the next try. Held results are dropped when you quit.
 - While a reply is pending the status line shows an activity indicator
   with the elapsed time against the `--timeout` budget, e.g.
   `○●○ Thinking…  12s / 120s`.

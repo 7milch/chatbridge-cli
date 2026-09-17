@@ -670,6 +670,77 @@ describe("ChatModel.runShell", () => {
     expect(model.messages[0]?.held).toBe(true);
   });
 
+  test("a timeout keeps the held results for the retry", async () => {
+    const { session, calls, replies } = fakeSession();
+    const runner = fakeRunner();
+    const model = new ChatModel(session, {
+      ...noReopen,
+      runCommand: runner.runCommand,
+      shell: { leadIn: "unused", autoSend: false },
+    });
+    const p = model.runShell("npm test");
+    await tick();
+    runner.emit("FAIL\n");
+    runner.finish({ exitCode: 1 });
+    await p;
+
+    const first = model.submit("why did it fail?");
+    await tick();
+    // Still held while the send is in flight …
+    expect(model.heldResults).toHaveLength(1);
+    expect(model.messages[0]?.held).toBe(true);
+    replies[0]?.reject(new ResponseTimeoutError("Timed out after 10 ms."));
+    await first;
+    expect(model.status).toBe("idle");
+    // … and after a recoverable failure, so the retry carries them.
+    expect(model.heldResults).toHaveLength(1);
+    expect(model.messages[0]?.held).toBe(true);
+
+    const second = model.submit("why did it fail?");
+    await tick();
+    replies[1]?.resolve("because");
+    await second;
+    const section = "### $ npm test\n```\nFAIL\n```\nexit code: 1";
+    expect(calls).toEqual([
+      `why did it fail?\n\n${section}`,
+      `why did it fail?\n\n${section}`,
+    ]);
+    expect(model.heldResults).toEqual([]);
+    expect(model.messages[0]?.held).toBe(false);
+  });
+
+  test("a fatal send failure keeps the held results for after a reset", async () => {
+    const first = fakeSession("a");
+    const second = fakeSession("b");
+    const runner = fakeRunner();
+    const model = new ChatModel(first.session, {
+      closeTimeoutMs: 20,
+      openSession: async () => second.session,
+      runCommand: runner.runCommand,
+      shell: { leadIn: "unused", autoSend: false },
+    });
+    const p = model.runShell("ls");
+    await tick();
+    runner.finish();
+    await p;
+
+    const q = model.submit("hi");
+    await tick();
+    first.replies[0]?.reject(new Error("page closed"));
+    await q;
+    expect(model.status).toBe("dead");
+    expect(model.heldResults).toHaveLength(1);
+
+    await model.reset();
+    const r = model.submit("hi again");
+    await tick();
+    second.replies[0]?.resolve("ok");
+    await r;
+    expect(second.calls).toEqual(["b:hi again\n\n### $ ls\n```\n```"]);
+    expect(model.heldResults).toEqual([]);
+    expect(model.messages[0]?.held).toBe(false);
+  });
+
   test("stopShell settles the command as interrupted and still sends", async () => {
     const { session, calls, replies } = fakeSession();
     const runner = fakeRunner();
@@ -1094,12 +1165,16 @@ describe("ChatModel shell mode × queue", () => {
       "what is this?\n\n### $ ls\n```\na.ts\n```\nexit code: 1",
     ]);
     expect(model.queue).toEqual([]);
-    expect(model.heldResults).toEqual([]);
-    expect(model.messages[0]?.held).toBe(false);
+    // Still held while that send is in flight; released with the reply, so
+    // a send that fails leaves them for the next message.
+    expect(model.heldResults).toHaveLength(1);
+    expect(model.messages[0]?.held).toBe(true);
     expect(model.status).toBe("busy");
     replies[0]?.resolve("ok");
     await tick();
     expect(model.status).toBe("idle");
+    expect(model.heldResults).toEqual([]);
+    expect(model.messages[0]?.held).toBe(false);
   });
 
   test("runShell while busy is rejected and queues nothing", async () => {

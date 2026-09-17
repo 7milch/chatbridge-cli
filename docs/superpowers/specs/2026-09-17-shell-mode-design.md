@@ -237,9 +237,11 @@ export class ChatModel {
 
 After expansion, when `heldResults` is non-empty, append
 `formatShellSection` for each held result to the expanded prompt, blank-line
-separated, clear `heldResults`, and clear `held` on the matching entries.
-A `MentionError` leaves the held results untouched so they go with the
-corrected message.
+separated. `heldResults` and the `held` flags are cleared only when the reply
+arrives (before the queue drains), so a `MentionError`, a timeout, a fatal
+send error and a reset during the send all leave the results held for the
+next message. While the send is in flight the entry still shows the held
+footer.
 
 ### `reset()`
 
@@ -372,7 +374,7 @@ and the config note mentions `"shell": { "leadIn", "autoSend" }`.
 | No exit 2 s after SIGTERM | SIGKILL to the process group |
 | Ctrl+R while running | command killed, browser reopened, output dropped; the entry shows `interrupted` |
 | Non-UTF-8 output | decoded with replacement characters; never throws |
-| Send fails (timeout, fatal) | exactly as `submit`: timeout → `idle`, otherwise `dead` |
+| Send fails (timeout, fatal) | exactly as `submit`: timeout → `idle`, otherwise `dead`; held results that rode along stay held |
 | Quit with held results | discarded silently |
 | Logging | command lines and output appear only in the history, never in `onProgress` or on stderr (output may contain secrets) |
 | ANSI escapes in output | passed through unchanged; stripping is a backlog item |
