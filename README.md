@@ -73,6 +73,13 @@ createCli({
   name: "acme-ai",
   version: "2.4.0",            // shown by --version and in the startup banner
   banner: ["Acme internal assistant", "Conversations are not stored."], // optional
+  spinner: {                   // optional; unset fields keep the default
+    frames: ["⠋", "⠙", "⠹", "⠸"],          // same display width each
+    intervalMs: 80,
+    label: ["Thinking…", "Pondering…"],     // one is picked when a turn starts
+    frameColor: 4,                          // ANSI index or "#rrggbb"
+    labelColor: "#8a8a8a",
+  },
   provider,
 });
 ```
@@ -112,7 +119,12 @@ chat.
   a `>` input between two rules that grows to five rows as you add
   newlines. Until the first message the history shows a startup banner
   (the CLI name and version by default; a derived CLI can pass its own
-  `banner` lines to `createCli`).
+  `banner` lines to `createCli`). While a turn is in flight the status row
+  shows a spinner and the elapsed time against the budget; `spinner` on
+  `createCli` replaces its frames, interval, label (a list of labels is
+  picked from when the spinner starts; a queued message drained while the
+  spinner is already running keeps the current label) and the colours of
+  frame and label (`"#rrggbb"` or an ANSI palette index).
 - Type **`@`** to attach a file from the directory you started `chatbridge`
   in. A popup lists fuzzy matches (`.gitignore`d files, `.git`, and
   `node_modules` are left out); **↑/↓** select, **Tab** or **Enter** insert
