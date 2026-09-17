@@ -120,6 +120,21 @@ and quitting reports the error. Core stays UI-free; the state machine and
 the close cap live in `@chatbridge/cli`.
 Spec: `docs/superpowers/specs/2026-09-10-browser-reopen-design.md`.
 
+### 9. `!` shell mode in the TUI — in progress (issue #47)
+
+Claude Code-style: `!` on an empty input switches the input box into shell
+mode; Enter runs the command in the start directory (own privileges, no
+sandbox) and streams its output into the history; the result is sent as a
+`### $ <command>` fenced section under a configurable lead-in, or held and
+attached to the next message with `autoSend: false`. Lead-in and switch are
+resolved built-in → `createCli({ shell })` → `config.json`. Output is
+capped at 200 KiB (tail kept), stdout/stderr merged, `exit code` /
+`interrupted` labelled; Ctrl+C stops a running command; Ctrl+R kills it.
+Everything lives in `@chatbridge/cli`. Left for later: `Tab` command
+history, `/` path completion, `Ctrl+B` backgrounding, `cd` carry-over,
+ANSI stripping, running commands while a turn is in flight.
+Spec: `docs/superpowers/specs/2026-09-17-shell-mode-design.md`.
+
 ### 5. Company adoption
 
 Company repository builds `company-ai-cli` via `createCli({ name, provider, configDir })`
@@ -153,24 +168,6 @@ Not scheduled. Each item becomes a milestone when picked up.
   through `ChatSession` from the extension host, including headful `login()`,
   to confirm Playwright works under VSCode's Electron Node and how Chromium
   installation should be surfaced.
-- **`!` shell mode in the TUI.** Claude Code-style: `!` on an empty input
-  switches the input box into shell mode (`Escape` / `Backspace` / `Ctrl+U`
-  on an empty prompt exits). The command runs in the directory `chatbridge`
-  was started in, with the user's own privileges and no sandbox; the command
-  line and its output appear in the history. The output is then sent to the
-  service verbatim as a fenced block labelled with the command line (the
-  milestone 6 attachment shape) under a lead-in such as "Please check the
-  execution result.", so the model reacts to it in the same turn. The lead-in
-  is configurable in three layers: built-in default → vendor default through
-  `createCli` (like `banner`) → the user's `config.json`. Claude Code's
-  `respondToBashCommands: false` needs a different shape here, since every
-  message goes to the service: the off switch holds the output back and
-  attaches it to the next message the user composes. Everything lives in
-  `@chatbridge/cli`; one-shot mode is out of scope. Claude Code's verified
-  behaviour and the open questions for the design session (which extras to
-  take, key conflicts with the `@` popup and `Ctrl+R`, timeout / output cap,
-  stderr and exit-code labelling, per-turn lead-in override, streaming) are
-  recorded in issue #38.
 - **Message queue while a turn is in flight.** Claude Code-style: `Enter`
   while the status is `busy` queues the message instead of being rejected
   (as `ChatModel.submit()` does today), and the queued entries are listed

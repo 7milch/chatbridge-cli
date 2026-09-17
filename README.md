@@ -60,11 +60,19 @@ Providers are loaded with `--provider <npm-package|./path>` or from
 `~/.config/chatbridge/config.json`:
 
 ```json
-{ "defaultProvider": "@your-scope/your-provider" }
+{
+  "defaultProvider": "@your-scope/your-provider",
+  "shell": { "leadIn": "Please check the execution result.", "autoSend": true }
+}
 ```
 
 A globally installed CLI resolves an npm-package `defaultProvider` only if
 that provider is installed globally as well.
+
+`shell` is optional and configures `!` shell mode in the interactive TUI
+(see below): `leadIn` is the first line of the message sent with a
+command's output, `autoSend: false` holds the output back until your next
+message. Both override the defaults a derived CLI ships.
 
 A derived CLI passes its own identity to `createCli`:
 
@@ -73,6 +81,7 @@ createCli({
   name: "acme-ai",
   version: "2.4.0",            // shown by --version and in the startup banner
   banner: ["Acme internal assistant", "Conversations are not stored."], // optional
+  shell: { leadIn: "Here is the output of a command I ran:" }, // optional: default lead-in for ! shell mode
   provider,
 });
 ```
@@ -94,7 +103,8 @@ chat.
 - **Enter** sends. **Shift+Enter** (or **Ctrl+J**) inserts a newline;
   Shift+Enter needs a terminal that speaks the kitty keyboard protocol
   (iTerm2, kitty, WezTerm, Ghostty), Ctrl+J works everywhere. **Ctrl+R**
-  reopens the browser. **Ctrl+C** quits.
+  reopens the browser. **Ctrl+C** quits (while a `!` command runs it stops
+  the command instead).
 - **Ctrl+R** closes the browser (killing it after 5 s if it will not close),
   opens a fresh one with the saved auth state, and starts a new chat. The
   transcript stays on screen with a `── reopened ──` line; the service does
@@ -118,6 +128,25 @@ chat.
   1 MB per message, text files only, paths inside the working directory.
   Problems are shown as an error and nothing is sent; fix the message and
   press Enter again. One-shot mode (`-p`) sends the prompt verbatim.
+- Type **`!`** in an empty input to run a shell command (pasting text that
+  starts with `!` works too). The prompt turns into `! `; **Enter** runs
+  the command in the directory you started `chatbridge` in, with your own
+  user and environment and no sandbox. Its output streams into the history
+  under a `shell` label; the status row shows `Running…  12s · Ctrl+C
+  stop`. When the command finishes, the output is sent to the service as a
+  fenced block under `### $ <command>` after a lead-in line (default
+  `Please check the execution result.`, configurable in `config.json` and by
+  a derived CLI), so the assistant reacts to it in the same turn. A non-zero
+  exit code is appended as `exit code: N`; a stopped command is marked
+  `interrupted`. Output is capped at 200 KB: past that the command is killed
+  and only the tail is kept, with a `truncated` note. Shell mode stays on
+  for the next command; **Esc**, **Backspace**, or **Ctrl+U** on an empty
+  input leave it. `@` has no special meaning in shell mode. Each command
+  starts fresh in the start directory (`cd` does not carry over).
+- With `"shell": { "autoSend": false }` in `config.json` the output is held
+  instead of sent: the entry shows `📎 held, sent with your next message`,
+  the status row counts the held results, and they are appended to the next
+  message you send. Held results are dropped when you quit.
 - While a reply is pending the status line shows an activity indicator
   with the elapsed time against the `--timeout` budget, e.g.
   `○●○ Thinking…  12s / 120s`.
