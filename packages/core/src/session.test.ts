@@ -79,8 +79,26 @@ describe("runLogin", () => {
     ).rejects.toBeInstanceOf(LoginAbortedError);
     expect(Date.now() - started).toBeLessThan(1000);
     expect(f.rt.killed).toBe(1);
+    expect(f.rt.closed).toBe(0);
     expect(f.rt.saved).toBe(0);
   });
+
+  test("an abort while isLoggedIn is in flight is honoured, not dropped", async () => {
+    const f = fake();
+    // Slow enough that the abort below lands outside the poll sleep,
+    // while this call is still pending.
+    f.provider.isLoggedIn = async () => {
+      await new Promise((r) => setTimeout(r, 40));
+      return f.loggedIn;
+    };
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), 20);
+    await expect(
+      runLogin(opts(f, { signal: ac.signal })),
+    ).rejects.toBeInstanceOf(LoginAbortedError);
+    expect(f.rt.killed).toBe(1);
+    expect(f.rt.saved).toBe(0);
+  }, 1000);
 
   test("an already-aborted signal rejects before launching", async () => {
     const f = fake();

@@ -48,8 +48,12 @@ const LOGIN_NAVIGATION_TIMEOUT_MS = 30_000;
 const LOGIN_POLL_INTERVAL_MS = 1_000;
 
 /** Resolves after `ms`, or rejects with LoginAbortedError as soon as the
- * signal aborts, so a cancel never waits out the interval. */
+ * signal aborts, so a cancel never waits out the interval. An abort that
+ * landed before this call (while isLoggedIn or navigateToLogin was running)
+ * is caught by the entry check: adding a listener to an already-aborted
+ * signal would never fire, silently dropping the cancel. */
 function sleepUnlessAborted(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(new LoginAbortedError());
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
@@ -75,7 +79,8 @@ export async function runLogin(opts: LoginOptions): Promise<void> {
     opts.missingBrowserExecutable ??
       (opts.launch ? () => undefined : undefined),
   );
-  let aborted = false;
+  // A cancelled login presumes nothing about the page: kill, don't close.
+  const teardown = (aborted: boolean) => (aborted ? rt.kill() : rt.close());
   try {
     if (signal?.aborted) throw new LoginAbortedError();
     rt.page.setDefaultTimeout(LOGIN_NAVIGATION_TIMEOUT_MS);
@@ -83,8 +88,9 @@ export async function runLogin(opts: LoginOptions): Promise<void> {
       provider.navigateToLogin(rt.page),
     );
     onProgress?.(`Please log in to ${provider.name}.`);
-    // isLoggedIn itself is not interruptible: an abort raised while it is
-    // running takes effect at the next sleep, not mid-call.
+    // isLoggedIn itself is not interruptible: an abort that arrives while
+    // it is in flight takes effect as soon as that call returns, at the
+    // entry check of the sleep below, rather than mid-call.
     while (!(await provider.isLoggedIn(rt.page))) {
       await sleepUnlessAborted(
         opts.pollIntervalMs ?? LOGIN_POLL_INTERVAL_MS,
@@ -95,11 +101,10 @@ export async function runLogin(opts: LoginOptions): Promise<void> {
     await rt.saveAuthState();
     onProgress?.("✓ Session saved");
   } catch (err) {
-    if (err instanceof LoginAbortedError) aborted = true;
+    // A teardown failure must never replace the error already on its way out
+    // (a LoginAbortedError the caller matches on, say).
+    await teardown(err instanceof LoginAbortedError).catch(() => {});
     throw err;
-  } finally {
-    // A cancelled login presumes nothing about the page: kill, don't close.
-    if (aborted) await rt.kill();
-    else await rt.close();
   }
+  await teardown(false);
 }
