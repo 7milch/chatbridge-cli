@@ -126,6 +126,28 @@ describe("runCommand", () => {
     expect(gone(pid)).toBe(true);
   });
 
+  // macOS has no setsid; there is no portable way to leave the group.
+  test.skipIf(Bun.which("setsid") === null)(
+    "stop() settles done even when a process leaves the group and holds the pipe",
+    async () => {
+      // setsid puts the sleep in its own session, so the group SIGKILL
+      // misses it and it keeps the inherited stdout pipe open. Without the
+      // pipe teardown, "close" never fires and done stays pending.
+      const running = runCommand("setsid sleep 30 & echo x; sleep 5", {
+        cwd: process.cwd(),
+        shell: SH,
+      });
+      await sleep(200);
+      const before = Date.now();
+      running.stop();
+      const r = await running.done;
+      expect(Date.now() - before).toBeLessThan(4_000);
+      expect(r.interrupted).toBe(true);
+      expect(r.output).toBe("x\n");
+    },
+    10_000,
+  );
+
   test("a missing shell rejects done", async () => {
     await expect(
       runCommand("true", { cwd: process.cwd(), shell: "/no/such/shell" }).done,

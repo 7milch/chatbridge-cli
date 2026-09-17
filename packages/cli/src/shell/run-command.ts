@@ -30,14 +30,17 @@ export interface ShellResult {
 
 export interface RunningCommand {
   readonly done: Promise<ShellResult>;
-  /** SIGTERM to the process group, SIGKILL after KILL_GRACE_MS. `done`
-   * always settles. Idempotent: later calls, and calls after exit, do
-   * nothing. */
+  /** SIGTERM to the process group, SIGKILL after KILL_GRACE_MS, then the
+   * output pipes are destroyed. `done` always settles, even if a process
+   * left the group and still holds a pipe. Idempotent: later calls, and
+   * calls after exit, do nothing. */
   stop(): void;
 }
 
 export const MAX_OUTPUT_BYTES = 200 * 1024;
 export const KILL_GRACE_MS = 2_000;
+/** Grace after SIGKILL before the output pipes are destroyed. */
+const PIPE_TEARDOWN_MS = 500;
 const OUTPUT_THROTTLE_MS = 100;
 
 /** The user's login shell, used unvalidated: it only ever receives
@@ -95,7 +98,19 @@ export function runCommand(command: string, opts: RunOptions): RunningCommand {
 
   const terminate = () => {
     signal("SIGTERM");
-    killTimer = setTimeout(() => signal("SIGKILL"), KILL_GRACE_MS);
+    killTimer = setTimeout(() => {
+      signal("SIGKILL");
+      // "close" waits for the output pipes to reach EOF, and only a
+      // process that left the group (setsid, a daemonizing tool that kept
+      // our stdio) can still hold them open now. Force them shut so `done`
+      // settles instead of waiting on a process we cannot signal. Doing
+      // this here rather than on the child's "exit" keeps an in-group
+      // `cmd &` job — which the runner deliberately waits for — intact.
+      killTimer = setTimeout(() => {
+        child?.stdout?.destroy();
+        child?.stderr?.destroy();
+      }, PIPE_TEARDOWN_MS);
+    }, KILL_GRACE_MS);
   };
 
   const stop = () => {
