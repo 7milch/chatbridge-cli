@@ -1,4 +1,5 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
+import { constants, access } from "node:fs/promises";
 
 export interface RunOptions {
   /** Directory the command starts in. */
@@ -9,7 +10,7 @@ export interface RunOptions {
   /** Called with the whole output so far whenever it changes, throttled
    * to OUTPUT_THROTTLE_MS. */
   onOutput?: (text: string) => void;
-  /** Test-only: the shell binary. Default $SHELL or /bin/sh. */
+  /** The shell binary that runs the command. Default $SHELL or /bin/sh. */
   shell?: string;
 }
 
@@ -39,18 +40,19 @@ export const MAX_OUTPUT_BYTES = 200 * 1024;
 export const KILL_GRACE_MS = 2_000;
 const OUTPUT_THROTTLE_MS = 100;
 
+/** The user's login shell, used unvalidated: it only ever receives
+ * `-c <command>`, and the stderr merge is done by the POSIX wrapper below
+ * rather than by this shell, so non-POSIX shells (fish, csh) work too. */
 export function defaultShell(): string {
   return process.env.SHELL || "/bin/sh";
 }
 
-/** Merges the command's stderr into its stdout inside the shell, so both
- * streams reach us through a single pipe and arrival order is preserved
- * (two pipes are read independently and would interleave arbitrarily).
- * The prefix stays on the command's first line so shell error messages
- * keep the user's line numbering. */
-function mergeStderr(command: string): string {
-  return `exec 2>&1;${command}`;
-}
+/** `/bin/sh` script that execs its arguments with stderr merged into
+ * stdout, so both streams reach us through a single pipe and arrival order
+ * is preserved (two pipes are read independently and would interleave
+ * arbitrarily). The redirection lives here, in a POSIX shell, and the
+ * user's command string is handed to the user's own shell untouched. */
+const MERGE_WRAPPER = 'exec "$@" 2>&1';
 
 /** Runs `command` through `<shell> -c` in its own process group, with
  * stdin closed and the environment inherited. Never throws synchronously:
@@ -63,6 +65,7 @@ export function runCommand(command: string, opts: RunOptions): RunningCommand {
   let interrupted = false;
   let settled = false;
   let stopRequested = false;
+  let child: ChildProcess | undefined;
   let killTimer: ReturnType<typeof setTimeout> | undefined;
   let notifyTimer: ReturnType<typeof setTimeout> | undefined;
   /** Output has changed since the last onOutput call. */
@@ -70,79 +73,49 @@ export function runCommand(command: string, opts: RunOptions): RunningCommand {
 
   const text = () => buf.toString("utf8");
 
+  /** Only ever runs before `settled`: finish() clears the pending timer,
+   * which is what keeps onOutput from firing after the result is out. */
   const flush = () => {
     notifyTimer = undefined;
     unnotified = false;
     opts.onOutput?.(text());
   };
 
-  let stop: () => void = () => {};
+  const signal = (sig: NodeJS.Signals) => {
+    const pid = child?.pid;
+    if (pid === undefined) return;
+    try {
+      // Negative pid: the whole process group (detached: true gave the
+      // wrapper its own), so grandchildren go too.
+      process.kill(-pid, sig);
+    } catch {
+      // Already gone.
+    }
+  };
+
+  const terminate = () => {
+    signal("SIGTERM");
+    killTimer = setTimeout(() => signal("SIGKILL"), KILL_GRACE_MS);
+  };
+
+  const stop = () => {
+    if (settled || stopRequested) return;
+    stopRequested = true;
+    interrupted = true;
+    // Before the spawn (during the shell preflight) there is nothing to
+    // signal yet; the spawn step checks stopRequested instead.
+    if (child !== undefined) terminate();
+  };
+
+  const finish = () => {
+    if (settled) return;
+    settled = true;
+    if (killTimer !== undefined) clearTimeout(killTimer);
+    if (notifyTimer !== undefined) clearTimeout(notifyTimer);
+  };
 
   const done = new Promise<ShellResult>((resolve, reject) => {
-    let child: ReturnType<typeof spawn>;
-    try {
-      child = spawn(
-        opts.shell ?? defaultShell(),
-        ["-c", mergeStderr(command)],
-        {
-          cwd: opts.cwd,
-          detached: true,
-          stdio: ["ignore", "pipe", "pipe"],
-        },
-      );
-    } catch (err) {
-      reject(err);
-      return;
-    }
-
-    const signal = (sig: NodeJS.Signals) => {
-      if (child.pid === undefined) return;
-      try {
-        // Negative pid: the whole process group (detached: true gave the
-        // shell its own), so grandchildren go too.
-        process.kill(-child.pid, sig);
-      } catch {
-        // Already gone.
-      }
-    };
-
-    stop = () => {
-      if (settled || stopRequested) return;
-      stopRequested = true;
-      interrupted = true;
-      signal("SIGTERM");
-      killTimer = setTimeout(() => signal("SIGKILL"), KILL_GRACE_MS);
-    };
-
-    const onData = (chunk: Buffer) => {
-      buf = Buffer.concat([buf, chunk]);
-      if (buf.length > maxBytes) {
-        dropped += buf.length - maxBytes;
-        buf = buf.subarray(buf.length - maxBytes);
-        stop();
-      }
-      unnotified = true;
-      if (notifyTimer === undefined) {
-        notifyTimer = setTimeout(flush, OUTPUT_THROTTLE_MS);
-      }
-    };
-    child.stdout?.on("data", onData);
-    child.stderr?.on("data", onData);
-
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      if (killTimer !== undefined) clearTimeout(killTimer);
-      if (notifyTimer !== undefined) clearTimeout(notifyTimer);
-    };
-
-    child.on("error", (err) => {
-      finish();
-      reject(err);
-    });
-    // "close": every stdio pipe has drained, so the output is complete.
-    child.on("close", (code) => {
-      if (settled) return;
+    const settle = (code: number | null) => {
       finish();
       // The last throttled tick may still be pending: deliver the final
       // output before resolving so onOutput never lags the result.
@@ -151,15 +124,72 @@ export function runCommand(command: string, opts: RunOptions): RunningCommand {
         command,
         output: text(),
         droppedBytes: dropped,
-        exitCode: code ?? undefined,
+        // A stopped command reports no exit code even when it happened to
+        // exit on its own before the signal landed.
+        exitCode: interrupted ? undefined : (code ?? undefined),
         interrupted,
         durationMs: Date.now() - startedAt,
       });
+    };
+
+    const start = async () => {
+      const shell = opts.shell ?? defaultShell();
+      // The wrapper would turn a missing shell into exit 127 instead of a
+      // spawn error, so check a path-like shell up front and let `done`
+      // reject with its ENOENT / EACCES. A bare name is left to the
+      // wrapper's PATH lookup and surfaces as 127 in the output.
+      if (shell.includes("/")) await access(shell, constants.X_OK);
+      if (stopRequested) {
+        settle(null);
+        return;
+      }
+
+      // "sh" is $0 for the wrapper; shell/-c/command become its "$@".
+      child = spawn(
+        "/bin/sh",
+        ["-c", MERGE_WRAPPER, "sh", shell, "-c", command],
+        {
+          cwd: opts.cwd,
+          detached: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
+
+      const onData = (chunk: Buffer) => {
+        buf = Buffer.concat([buf, chunk]);
+        if (buf.length > maxBytes) {
+          // The cap bounds the bytes kept, not the length of the decoded
+          // string, and the head cut can split a multi-byte character.
+          dropped += buf.length - maxBytes;
+          buf = buf.subarray(buf.length - maxBytes);
+          stop();
+        }
+        unnotified = true;
+        if (notifyTimer === undefined) {
+          notifyTimer = setTimeout(flush, OUTPUT_THROTTLE_MS);
+        }
+      };
+      child.stdout?.on("data", onData);
+      child.stderr?.on("data", onData);
+
+      child.on("error", (err) => {
+        if (settled) return;
+        finish();
+        reject(err);
+      });
+      // "close": every stdio pipe has drained, so the output is complete.
+      child.on("close", (code) => {
+        if (settled) return;
+        settle(code);
+      });
+    };
+
+    start().catch((err) => {
+      if (settled) return;
+      finish();
+      reject(err);
     });
   });
 
-  return {
-    done,
-    stop: () => stop(),
-  };
+  return { done, stop: () => stop() };
 }

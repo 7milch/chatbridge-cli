@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MAX_OUTPUT_BYTES, runCommand } from "./run-command.js";
@@ -133,5 +139,77 @@ describe("runCommand", () => {
     }).done;
     expect(r.output.endsWith("ok")).toBe(true);
     expect(r.output).toContain("�");
+  });
+
+  test("a command that exits on its own while being stopped reports no exit code", async () => {
+    // Writes past the cap and exits by itself before SIGTERM can land, so
+    // the child's own code 7 must not leak into an interrupted result.
+    const r = await runCommand(
+      's=0123456789; i=0; while [ $i -lt 7 ]; do s="$s$s"; i=$((i+1)); done; printf \'%s\' "$s"; exit 7',
+      { cwd: process.cwd(), shell: SH, maxBytes: 32 },
+    ).done;
+    expect(r.interrupted).toBe(true);
+    expect(r.exitCode).toBeUndefined();
+    expect(r.droppedBytes).toBeGreaterThan(0);
+  });
+
+  test("a multi-line command runs every line", async () => {
+    const r = await runCommand("echo a\necho b", {
+      cwd: process.cwd(),
+      shell: SH,
+    }).done;
+    expect(r.output).toBe("a\nb\n");
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("a leading comment line does not swallow the command", async () => {
+    const r = await runCommand("# just a comment\necho ok", {
+      cwd: process.cwd(),
+      shell: SH,
+    }).done;
+    expect(r.output).toBe("ok\n");
+  });
+
+  test("shell errors keep the command's own line numbers", async () => {
+    const r = await runCommand("echo one\nnosuchcmd_xyz", {
+      cwd: process.cwd(),
+      shell: SH,
+    }).done;
+    expect(r.output).toContain("nosuchcmd_xyz");
+    // dash: "/bin/sh: 2: nosuchcmd_xyz: not found"
+    // bash: "/bin/bash: line 2: nosuchcmd_xyz: command not found"
+    expect(r.output).toMatch(/(?:^|\s)(?:line )?2:/m);
+    expect(r.exitCode).toBe(127);
+  });
+
+  test("a shell that cannot be executed rejects done", async () => {
+    await expect(
+      runCommand("true", { cwd: process.cwd(), shell: "/etc/hostname" }).done,
+    ).rejects.toMatchObject({ code: "EACCES" });
+  });
+
+  test("the stderr merge does not rely on the user's shell", async () => {
+    // A stand-in for a non-POSIX shell (fish, csh): it performs no
+    // redirection of its own and just reports the argv it was given, so
+    // this fails if `2>&1` is handed to the user's shell rather than done
+    // by the wrapper.
+    const dir = mkdtempSync(join(tmpdir(), "run-command-shell-"));
+    const fake = join(dir, "fakeshell");
+    writeFileSync(
+      fake,
+      '#!/bin/sh\nprintf \'argv:%s|%s\\n\' "$1" "$2"\necho on-stderr >&2\n',
+    );
+    chmodSync(fake, 0o755);
+    try {
+      const r = await runCommand("echo untouched >&2", {
+        cwd: process.cwd(),
+        shell: fake,
+      }).done;
+      expect(r.output).toContain("argv:-c|echo untouched >&2");
+      expect(r.output).toContain("on-stderr");
+      expect(r.exitCode).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
