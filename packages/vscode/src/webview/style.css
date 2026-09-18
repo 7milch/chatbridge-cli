@@ -22,7 +22,7 @@ body {
 }
 .message.user {
   background: var(--vscode-input-background);
-  border-left: 3px solid var(--vscode-focusBorder);
+  border: 1px solid var(--cb-user-border, var(--vscode-focusBorder));
 }
 .message.assistant {
   background: var(--vscode-editor-background);

@@ -31,6 +31,16 @@ describe("resolveUiConfig", () => {
     });
   });
 
+  test("userMessage alone makes the config non-empty and is copied", () => {
+    expect(
+      resolveUiConfig(
+        { userMessage: { borderColor: "#2f6f4f" } },
+        root,
+        exists,
+      ),
+    ).toEqual({ userMessage: { borderColor: "#2f6f4f" } });
+  });
+
   test("resolves the banner against the extension root", () => {
     const seen: string[] = [];
     const cfg = resolveUiConfig({ banner: "media/b.svg" }, root, (p) => {

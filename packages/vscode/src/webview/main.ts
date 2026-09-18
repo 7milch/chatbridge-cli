@@ -30,6 +30,13 @@ function applyConfig(c: UiConfig): void {
   if (c.sendButton?.foreground) {
     sendButton.style.setProperty("--cb-send-fg", c.sendButton.foreground);
   }
+  if (c.userMessage?.borderColor) {
+    // On the root element: message nodes are created after this runs.
+    document.documentElement.style.setProperty(
+      "--cb-user-border",
+      c.userMessage.borderColor,
+    );
+  }
   welcomeText.textContent = c.welcome ?? "";
   if (c.bannerUri) {
     banner.src = c.bannerUri;

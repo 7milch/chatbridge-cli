@@ -12,6 +12,8 @@ export interface ExtensionUiOptions {
   footer?: string;
   /** CSS colour strings for the Send button. */
   sendButton?: { background?: string; foreground?: string };
+  /** CSS colour string for the border around the user's own messages. */
+  userMessage?: { borderColor?: string };
 }
 
 /** Host-side resolved form: `bannerPath` is absolute and already validated.
@@ -21,6 +23,7 @@ export interface ResolvedUiConfig {
   bannerPath?: string;
   footer?: string;
   sendButton?: { background?: string; foreground?: string };
+  userMessage?: { borderColor?: string };
 }
 
 /** Validates the vendor's UI options at activation time so a missing banner
@@ -36,6 +39,7 @@ export function resolveUiConfig(
   if (ui.welcome !== undefined) config.welcome = ui.welcome;
   if (ui.footer !== undefined) config.footer = ui.footer;
   if (ui.sendButton !== undefined) config.sendButton = ui.sendButton;
+  if (ui.userMessage !== undefined) config.userMessage = ui.userMessage;
   if (ui.banner !== undefined) {
     const relative = normalize(ui.banner);
     if (

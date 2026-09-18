@@ -35,6 +35,7 @@ export interface UiConfig {
   bannerUri?: string;
   footer?: string;
   sendButton?: { background?: string; foreground?: string };
+  userMessage?: { borderColor?: string };
 }
 
 /** host → webview */

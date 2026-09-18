@@ -16,5 +16,6 @@ export const { activate, deactivate } = createExtension({
     banner: "media/banner.svg",
     footer: "Conversations are not stored by this extension.",
     sendButton: { background: "#2f6f4f", foreground: "#ffffff" },
+    userMessage: { borderColor: "#2f6f4f" },
   },
 });

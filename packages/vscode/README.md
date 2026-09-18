@@ -43,6 +43,8 @@ export const { activate, deactivate } = createExtension({
   - `footer` — one line under the composer, always visible.
   - `sendButton` — `{ background, foreground }` CSS colour strings for the
     Send button; each defaults to the VSCode button theme colour.
+  - `userMessage` — `{ borderColor }`, the CSS colour of the border drawn
+    around the user's own messages; defaults to the theme's focus border.
 
   ```ts
   createExtension({
@@ -52,6 +54,7 @@ export const { activate, deactivate } = createExtension({
       banner: "media/banner.svg",
       footer: "Conversations are not stored by this extension.",
       sendButton: { background: "#2f6f4f", foreground: "#ffffff" },
+      userMessage: { borderColor: "#2f6f4f" },
     },
   });
   ```
