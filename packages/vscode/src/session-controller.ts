@@ -157,8 +157,12 @@ export class SessionController {
     if (body === "" && this.pending.length === 0) return EMPTY;
     const attachments = this.pending;
     this.pending = [];
-    if (!this.canStartTurn) {
+    // A non-empty queue means earlier entries are waiting (the controller
+    // is `dead`, where draining stops): keep FIFO by queueing behind them
+    // and letting drain start the oldest, which reopens the browser.
+    if (!this.canStartTurn || this.queue.length > 0) {
       this.queue.push({ text: body, attachments });
+      this.drain();
       this.emit();
       return { ok: true, queued: true };
     }
@@ -182,10 +186,14 @@ export class SessionController {
     return this.runTurn(prompt);
   }
 
-  /** Starts the oldest queued entry, if any. Called at every transition
-   * back to a ready state, before the caller emits, so the webview never
-   * sees an idle frame with a queue still waiting. */
+  /** Starts the oldest queued entry, if any, when the controller is ready
+   * for a turn. Called at every transition back to a ready state, before
+   * the caller emits, so the webview never sees an idle frame with a
+   * queue still waiting. */
   private drain(): void {
+    // markLoggedIn() can arrive in any status; never start a second turn
+    // on top of a running one. The other call sites are already ready.
+    if (!this.canStartTurn) return;
     const next = this.queue.shift();
     if (next === undefined) return;
     void this.startTurn(next);

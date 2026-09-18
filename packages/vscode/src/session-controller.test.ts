@@ -577,6 +577,39 @@ describe("queue", () => {
     expect(h.controller.takeBack()).toEqual([]);
   });
 
+  test("markLoggedIn while busy does not start a second turn", async () => {
+    const h = harness();
+    const first = h.controller.send("one");
+    await tick();
+    await h.controller.send("two");
+    h.controller.markLoggedIn();
+    await tick();
+    expect(h.controller.getState().status).toBe("busy");
+    expect(h.sent).toEqual(["one"]);
+    expect(h.controller.getState().queue.map((e) => e.text)).toEqual(["two"]);
+    h.replies[0]?.resolve("r1");
+    await first;
+    await tick();
+    expect(h.sent).toEqual(["one", "two"]);
+  });
+
+  test("a direct send while dead queues behind the entries already waiting", async () => {
+    const h = harness();
+    const first = h.controller.send("one");
+    await tick();
+    await h.controller.send("two");
+    h.replies[0]?.reject(new Error("page closed"));
+    await first;
+    expect(h.controller.getState().status).toBe("dead");
+    expect(await h.controller.send("three")).toEqual({
+      ok: true,
+      queued: true,
+    });
+    await tick();
+    expect(h.sent).toEqual(["one", "two"]);
+    expect(h.controller.getState().queue.map((e) => e.text)).toEqual(["three"]);
+  });
+
   test("removeQueued drops one entry and ignores bad indexes", async () => {
     const h = harness();
     void h.controller.send("one");
