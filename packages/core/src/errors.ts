@@ -59,3 +59,20 @@ export class BlockedError extends ChatBridgeError {
     super("BLOCKED", message, options);
   }
 }
+
+/** Playwright's Chromium is not installed. The message names the expected
+ * path; the CLI prints an install hint and the VSCode extension offers an
+ * Install button. */
+export class BrowserUnavailableError extends ChatBridgeError {
+  constructor(message: string, options?: ErrorOptions) {
+    super("BROWSER_UNAVAILABLE", message, options);
+  }
+}
+
+/** `runLogin` was cancelled through its AbortSignal (the CLI's Ctrl-C, the
+ * extension's cancel button). The browser was killed; nothing was saved. */
+export class LoginAbortedError extends ChatBridgeError {
+  constructor(message = "Login cancelled.", options?: ErrorOptions) {
+    super("LOGIN_ABORTED", message, options);
+  }
+}

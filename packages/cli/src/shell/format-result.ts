@@ -1,4 +1,4 @@
-import { fenceFor } from "../fence.js";
+import { fenceFor } from "@chatbridge/core";
 import type { ShellResult } from "./run-command.js";
 
 /** The command on one line: embedded newlines become ` ⏎ `. */

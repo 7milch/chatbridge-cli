@@ -1,4 +1,4 @@
-import { ResponseTimeoutError } from "@chatbridge/core";
+import { ResponseTimeoutError, closeOrKill } from "@chatbridge/core";
 import {
   type Attachment,
   type Expansion,
@@ -19,7 +19,6 @@ import {
   DEFAULT_SHELL_CONFIG,
   type ShellConfig,
 } from "../shell/shell-config.js";
-import { closeOrKill } from "./close-session.js";
 
 /** What the model needs from a ChatSession; lets tests inject a fake. */
 export interface ChatSessionLike {

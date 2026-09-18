@@ -1,6 +1,12 @@
 import type { Provider } from "@chatbridge/provider";
-import { type AuthStore, BrowserRuntime } from "@chatbridge/runtime";
-import { ChatSession } from "./chat-session.js";
+import {
+  type AuthStore,
+  BrowserRuntime,
+  type LaunchOptions,
+} from "@chatbridge/runtime";
+import { ChatSession, type RuntimeLike } from "./chat-session.js";
+import { LoginAbortedError } from "./errors.js";
+import { launchRuntime } from "./launch-runtime.js";
 import { runStep } from "./run-step.js";
 
 export interface OneShotOptions {
@@ -27,34 +33,78 @@ export interface LoginOptions {
   provider: Provider;
   authStore: AuthStore;
   onProgress?: (message: string) => void;
+  /** Cancels the login: polling stops, the browser is killed, the promise
+   * rejects with LoginAbortedError. */
+  signal?: AbortSignal;
+  /** Test-only: replaces BrowserRuntime.launch. */
+  launch?: (opts: LaunchOptions) => Promise<RuntimeLike>;
+  /** Test-only: see ChatSessionOptions.missingBrowserExecutable. */
+  missingBrowserExecutable?: () => string | undefined;
+  /** Test-only: isLoggedIn poll interval; default 1 000 ms. */
+  pollIntervalMs?: number;
 }
 
 const LOGIN_NAVIGATION_TIMEOUT_MS = 30_000;
+const LOGIN_POLL_INTERVAL_MS = 1_000;
 
-/** Headful login flow: the user logs in manually; we poll for completion. */
-export async function runLogin(opts: LoginOptions): Promise<void> {
-  const { provider, authStore, onProgress } = opts;
-  onProgress?.("Opening browser...");
-  const rt = await BrowserRuntime.launch({
-    headless: false,
-    provider,
-    authStore,
+/** Resolves after `ms`, or rejects with LoginAbortedError as soon as the
+ * signal aborts, so a cancel never waits out the interval. An abort that
+ * landed before this call (while isLoggedIn or navigateToLogin was running)
+ * is caught by the entry check: adding a listener to an already-aborted
+ * signal would never fire, silently dropping the cancel. */
+function sleepUnlessAborted(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(new LoginAbortedError());
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    function onAbort() {
+      clearTimeout(timer);
+      reject(new LoginAbortedError());
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+/** Headful login flow: the user logs in manually; we poll for completion.
+ * No overall deadline (MFA may take a while); `signal` cancels. */
+export async function runLogin(opts: LoginOptions): Promise<void> {
+  const { provider, authStore, onProgress, signal } = opts;
+  if (signal?.aborted) throw new LoginAbortedError();
+  onProgress?.("Opening browser...");
+  const launch = opts.launch ?? BrowserRuntime.launch;
+  const rt = await launchRuntime(
+    () => launch({ headless: false, provider, authStore }),
+    opts.missingBrowserExecutable ??
+      (opts.launch ? () => undefined : undefined),
+  );
+  // A cancelled login presumes nothing about the page: kill, don't close.
+  const teardown = (aborted: boolean) => (aborted ? rt.kill() : rt.close());
   try {
+    if (signal?.aborted) throw new LoginAbortedError();
     rt.page.setDefaultTimeout(LOGIN_NAVIGATION_TIMEOUT_MS);
     await runStep("navigateToLogin", LOGIN_NAVIGATION_TIMEOUT_MS, () =>
       provider.navigateToLogin(rt.page),
     );
     onProgress?.(`Please log in to ${provider.name}.`);
-    // Poll until the provider reports completion. No overall deadline:
-    // the user may need time for MFA; Ctrl-C aborts.
+    // isLoggedIn itself is not interruptible: an abort that arrives while
+    // it is in flight takes effect as soon as that call returns, at the
+    // entry check of the sleep below, rather than mid-call.
     while (!(await provider.isLoggedIn(rt.page))) {
-      await rt.page.waitForTimeout(1000);
+      await sleepUnlessAborted(
+        opts.pollIntervalMs ?? LOGIN_POLL_INTERVAL_MS,
+        signal,
+      );
     }
     onProgress?.("✓ Login detected");
     await rt.saveAuthState();
     onProgress?.("✓ Session saved");
-  } finally {
-    await rt.close();
+  } catch (err) {
+    // A teardown failure must never replace the error already on its way out
+    // (a LoginAbortedError the caller matches on, say).
+    await teardown(err instanceof LoginAbortedError).catch(() => {});
+    throw err;
   }
+  await teardown(false);
 }

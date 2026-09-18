@@ -8,6 +8,7 @@ import {
   runOneShot,
 } from "@chatbridge/core";
 import { type CliConfig, configPath, loadConfig } from "./config.js";
+import { describeError, exitCodeFor } from "./exit-codes.js";
 import { resolveProvider } from "./resolve-provider.js";
 import { type ShellConfig, resolveShellConfig } from "./shell/shell-config.js";
 import { supportsInteractive } from "./tui/runtime-check.js";
@@ -38,19 +39,6 @@ export interface CreateCliOptions {
   /** Test-only: overrides "stdin and stdout are a TTY". */
   isTerminal?: boolean;
 }
-
-/** Single source of truth for `ChatBridgeError.code` → process exit code. */
-const EXIT_CODES: Record<string, number> = {
-  INVALID_ARGUMENT: 1,
-  INVALID_CONFIG: 1,
-  AUTH_REQUIRED: 2,
-  AUTH_EXPIRED: 3,
-  RESPONSE_TIMEOUT: 4,
-  PROVIDER_LOAD: 5,
-  INVALID_PROVIDER: 5,
-  INVALID_STATE: 1,
-  BLOCKED: 6,
-};
 
 const DEFAULT_TIMEOUT_SEC = 120;
 
@@ -94,7 +82,7 @@ export function createCli(opts: CreateCliOptions) {
       "Without -p, an interactive chat opens (needs a terminal and Bun >= 1.3 or Node >= 26.4).",
       "One-shot mode prints the AI response to stdout.",
       "Interactive mode: @ attaches a file, ! runs a shell command and sends its output.",
-      "Exit codes: 1 usage/config, 2 not logged in, 3 auth expired, 4 timeout, 5 provider load, 6 blocked by the service (try --headful).",
+      "Exit codes: 1 usage/config, 2 not logged in, 3 auth expired, 4 timeout, 5 provider load, 6 blocked by the service (try --headful), 7 Chromium not installed, 130 login cancelled.",
       ...(opts.provider
         ? [
             "",
@@ -145,7 +133,7 @@ export function createCli(opts: CreateCliOptions) {
       return 1;
     }
     if (err instanceof ChatBridgeError) {
-      process.stderr.write(`${opts.name}: ${err.message}\n`);
+      process.stderr.write(`${opts.name}: ${describeError(err)}\n`);
       if (process.env.CHATBRIDGE_DEBUG === "1" && err.cause !== undefined) {
         const cause = err.cause;
         const detail =
@@ -154,7 +142,7 @@ export function createCli(opts: CreateCliOptions) {
             : String(cause);
         process.stderr.write(`Caused by: ${detail}\n`);
       }
-      return EXIT_CODES[err.code] ?? 1;
+      return exitCodeFor(err.code);
     }
     process.stderr.write(
       `${opts.name}: unexpected error: ${err instanceof Error ? err.message : String(err)}\n`,
@@ -204,7 +192,19 @@ export function createCli(opts: CreateCliOptions) {
           baseDir: opts.baseDir,
         });
         if (sub === "login") {
-          await runLogin({ provider, authStore, onProgress: progress });
+          const ac = new AbortController();
+          const onSigint = () => ac.abort();
+          process.once("SIGINT", onSigint);
+          try {
+            await runLogin({
+              provider,
+              authStore,
+              onProgress: progress,
+              signal: ac.signal,
+            });
+          } finally {
+            process.off("SIGINT", onSigint);
+          }
           return 0;
         }
         if (sub === "logout") {

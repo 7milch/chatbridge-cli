@@ -1,0 +1,134 @@
+{
+  "name": "chatbridge-example-vscode-dummy-chat",
+  "displayName": "ChatBridge Dummy Chat",
+  "description": "Reference VSCode extension built with @chatbridge/vscode against the bundled dummy chat",
+  "private": true,
+  "version": "0.0.0",
+  "publisher": "chatbridge-examples",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/7milch/chatbridge-cli.git",
+    "directory": "examples/vscode-dummy-chat"
+  },
+  "engines": {
+    "vscode": "^1.100.0",
+    "node": ">=20"
+  },
+  "main": "./dist/extension.cjs",
+  "type": "module",
+  "activationEvents": [],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "chatbridge-dummy",
+          "title": "Dummy Chat",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "chatbridge-dummy": [
+        {
+          "id": "chatbridge-dummy.chat",
+          "name": "Chat",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "chatbridge-dummy.login",
+        "title": "Log in",
+        "category": "Dummy Chat"
+      },
+      {
+        "command": "chatbridge-dummy.logout",
+        "title": "Log out",
+        "category": "Dummy Chat"
+      },
+      {
+        "command": "chatbridge-dummy.newChat",
+        "title": "New Chat",
+        "category": "Dummy Chat",
+        "icon": "$(add)"
+      },
+      {
+        "command": "chatbridge-dummy.installBrowser",
+        "title": "Install Browser",
+        "category": "Dummy Chat"
+      },
+      {
+        "command": "chatbridge-dummy.sendSelection",
+        "title": "Send Selection to Dummy Chat",
+        "category": "Dummy Chat"
+      },
+      {
+        "command": "chatbridge-dummy.sendFile",
+        "title": "Send File to Dummy Chat",
+        "category": "Dummy Chat"
+      },
+      {
+        "command": "chatbridge-dummy.focus",
+        "title": "Focus Chat",
+        "category": "Dummy Chat"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "chatbridge-dummy.newChat",
+          "when": "view == chatbridge-dummy.chat",
+          "group": "navigation"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "chatbridge-dummy.sendSelection",
+          "group": "chatbridge"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "chatbridge-dummy.sendFile",
+          "when": "!explorerResourceIsFolder",
+          "group": "chatbridge"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Dummy Chat",
+      "properties": {
+        "chatbridge-dummy.headless": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run the browser without a window."
+        },
+        "chatbridge-dummy.timeoutSec": {
+          "type": "number",
+          "default": 120,
+          "description": "Seconds to wait for each browser step."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "e2e": "bun run build && bun test/run-e2e.ts",
+    "package": "bunx @vscode/vsce package --no-dependencies --out dist/"
+  },
+  "dependencies": {
+    "@chatbridge/vscode": "workspace:*",
+    "@chatbridge/example-dummy-chat": "workspace:*",
+    "playwright": "1.63.0"
+  },
+  "devDependencies": {
+    "@chatbridge/core": "workspace:*",
+    "@chatbridge/runtime": "workspace:*",
+    "@types/vscode": "1.100.0",
+    "@vscode/test-electron": "2.5.2",
+    "@vscode/vsce": "3.9.2",
+    "esbuild": "0.25.12"
+  }
+}

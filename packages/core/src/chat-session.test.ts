@@ -6,6 +6,7 @@ import {
   AuthExpiredError,
   AuthRequiredError,
   BlockedError,
+  BrowserUnavailableError,
   InvalidStateError,
   ResponseTimeoutError,
 } from "./errors.js";
@@ -36,7 +37,7 @@ interface Harness {
   killed: number;
   saved: number;
   saveShouldFail: boolean;
-  launch: () => Promise<RuntimeLike>;
+  launch: (opts?: unknown) => Promise<RuntimeLike>;
   loggedIn: boolean;
   /** When set, the provider gains detectBlock returning this value. */
   block: string | undefined;
@@ -140,6 +141,37 @@ describe("ChatSession.open", () => {
       AuthRequiredError,
     );
     expect(h.closed).toBe(0);
+  });
+
+  test("a headless open needs no headed-binary pre-check", async () => {
+    const h = harness();
+    const session = await ChatSession.open({
+      provider: h.provider,
+      authStore: store(true),
+      headless: true,
+      timeoutMs: 1000,
+      launch: h.launch,
+    });
+    expect(session).toBeInstanceOf(ChatSession);
+  });
+
+  test("a headful open fails the pre-check before launching", async () => {
+    const h = harness();
+    let launched = 0;
+    await expect(
+      ChatSession.open({
+        provider: h.provider,
+        authStore: store(true),
+        headless: false,
+        timeoutMs: 1000,
+        launch: async (o) => {
+          launched++;
+          return h.launch(o);
+        },
+        missingBrowserExecutable: () => "/x",
+      }),
+    ).rejects.toBeInstanceOf(BrowserUnavailableError);
+    expect(launched).toBe(0);
   });
 
   test("closes the browser and throws AuthExpiredError when not logged in", async () => {

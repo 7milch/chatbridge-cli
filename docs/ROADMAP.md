@@ -157,6 +157,23 @@ itself is never queued. Enter leaves shell mode after running the command
 while a turn is in flight.
 Spec: `docs/superpowers/specs/2026-09-17-shell-mode-design.md`.
 
+### 11. VSCode extension — done (issue #57, 2026-09-17)
+
+`@chatbridge/vscode`: `createExtension({ id, displayName, provider,
+configDir })` returns `activate` / `deactivate`; a vendor manifest declares
+the `<id>.*` view, commands and settings (validated on activation). Sidebar
+webview in vanilla TS (plain-text replies, attachment chips, Log in / New
+chat recovery), lazy browser launch in the extension host, login with a
+cancellable progress notification, Chromium install via Playwright's CLI
+spawned with the host binary, send-selection / send-file in the CLI's
+attachment format (helpers moved to core with `closeOrKill`). Runtime gaps
+#52 (`BrowserUnavailableError`, exit 7) and #53 (cancellable `runLogin`,
+exit 130) closed first. One `@vscode/test-electron` E2E in
+`examples/vscode-dummy-chat`, separate CI job. Left for later: Markdown
+rendering, history persistence, `@` completion, `!` shell mode, Chat
+Participant API.
+Spec: `docs/superpowers/specs/2026-09-17-vscode-extension-design.md`.
+
 ### 5. Company adoption
 
 Company repository builds `company-ai-cli` via `createCli({ name, provider, configDir })`
@@ -181,20 +198,6 @@ Not scheduled. Each item becomes a milestone when picked up.
   stays verbatim by default.
 - **Live re-scan of the mention index.** New files appear without a
   restart.
-- **VSCode extension (chat view).** A sidebar/panel chat UI on top of
-  `ChatSession`, shipped as a factory in the style of `createCli` so a vendor
-  repo supplies the Provider and packages the extension. Decided 2026-09-10:
-  the browser runs inside the extension host (core/runtime are Node-only, no
-  Bun APIs); the CLI-as-child-process alternative was rejected. Start with a
-  spike before any design: a minimal extension that drives the dummy chat
-  through `ChatSession` from the extension host, including headful `login()`,
-  to confirm Playwright works under VSCode's Electron Node and how Chromium
-  installation should be surfaced. Spike done 2026-09-17
-  (`docs/spike-notes/2026-09-17-vscode-extension.md`): everything works
-  unchanged on the extension host's Node 24, headful login included, and
-  the extension can install Chromium itself by spawning Playwright's CLI.
-  Two runtime gaps to close first: classify a missing browser executable
-  (`BrowserUnavailableError`, #52) and make `runLogin` cancellable (#53).
 - **Configurable retry and timeout for opening the browser.** Today
   `ChatSession.open()` runs launch → goto → isLoggedIn → startNewChat once,
   under the single `--timeout` that also covers turns, and `auth login`

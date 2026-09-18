@@ -5,6 +5,8 @@
     { "path": "packages/runtime" },
     { "path": "packages/core" },
     { "path": "packages/cli" },
-    { "path": "examples/dummy-chat" }
+    { "path": "packages/vscode" },
+    { "path": "examples/dummy-chat" },
+    { "path": "examples/vscode-dummy-chat" }
   ]
 }

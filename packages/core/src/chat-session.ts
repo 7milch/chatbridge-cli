@@ -11,6 +11,7 @@ import {
   InvalidStateError,
   ResponseTimeoutError,
 } from "./errors.js";
+import { launchRuntime } from "./launch-runtime.js";
 import { runStep } from "./run-step.js";
 
 /** The part of BrowserRuntime a session needs; lets tests inject a fake. */
@@ -30,6 +31,10 @@ export interface ChatSessionOptions {
   onProgress?: (message: string) => void;
   /** Test-only: replaces BrowserRuntime.launch. */
   launch?: (opts: LaunchOptions) => Promise<RuntimeLike>;
+  /** Test-only: replaces the missing-browser pre-check. Defaults to the
+   * runtime check for headed launches, and to "present" for headless
+   * launches or when `launch` is injected. */
+  missingBrowserExecutable?: () => string | undefined;
 }
 
 /** A conversation that keeps the browser open across turns. Turns are
@@ -86,7 +91,21 @@ export class ChatSession {
     onProgress?.("Opening browser...");
     const launch =
       opts.launch ?? ((o: LaunchOptions) => BrowserRuntime.launch(o));
-    const rt = await launch({ headless: opts.headless, provider, authStore });
+    // The default pre-check looks for the *headed* `chromium-<rev>` binary,
+    // but a headless session launches `chromium_headless_shell-<rev>`: on a
+    // `playwright install chromium --only-shell` machine the pre-check would
+    // reject a launch that works. So it runs for headed launches only; a
+    // genuinely missing headless shell is still caught by launchRuntime's
+    // `isMissingExecutableError` fallback. An injected check always wins
+    // (tests), and an injected `launch` never needs one.
+    const skipPreCheck = opts.launch !== undefined || opts.headless;
+    const preCheck =
+      opts.missingBrowserExecutable ??
+      (skipPreCheck ? () => undefined : undefined);
+    const rt = await launchRuntime(
+      () => launch({ headless: opts.headless, provider, authStore }),
+      preCheck,
+    );
     try {
       rt.page.setDefaultTimeout(timeoutMs);
       await runStep("goto", timeoutMs, () => rt.page.goto(provider.chatUrl));

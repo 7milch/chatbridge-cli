@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Packs the four publishable packages into $1 (default: ./packs) in
+# Packs the five publishable packages into $1 (default: ./packs) in
 # dependency order and sanity-checks each tarball.
 set -euo pipefail
 mkdir -p "${1:-packs}"
 out=$(cd "${1:-packs}" && pwd)
-for dir in packages/provider packages/runtime packages/core packages/cli; do
+for dir in packages/provider packages/runtime packages/core packages/cli packages/vscode; do
   (cd "$dir" && bun pm pack --destination "$out" --quiet)
 done
 for tgz in "$out"/*.tgz; do
@@ -18,6 +18,15 @@ for tgz in "$out"/*.tgz; do
   case "$listing" in
     *package/LICENSE*) ;;
     *) echo "$tgz: missing LICENSE" >&2; exit 1 ;;
+  esac
+  # The VSCode package ships a bundled webview; dist/index.js alone is not enough.
+  case "$tgz" in
+    *chatbridge-vscode-*.tgz)
+      case "$listing" in
+        *package/dist/webview/main.js*) ;;
+        *) echo "$tgz: missing dist/webview/main.js" >&2; exit 1 ;;
+      esac
+      ;;
   esac
   manifest=$(tar -xOf "$tgz" package/package.json)
   case "$manifest" in
