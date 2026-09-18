@@ -76,6 +76,11 @@ async function settle() {
   await new Promise((r) => setTimeout(r, 0));
 }
 
+/** Same as settle(), under the name the queue/reopen tests use. */
+function tick() {
+  return new Promise<void>((r) => setTimeout(r, 0));
+}
+
 describe("SessionController", () => {
   test("starts closed with an empty history", () => {
     const h = harness();
@@ -83,6 +88,7 @@ describe("SessionController", () => {
       status: "closed",
       messages: [],
       pendingAttachments: [],
+      queue: [],
     });
     expect(h.opens).toBe(0);
   });
@@ -119,18 +125,16 @@ describe("SessionController", () => {
     expect(h.sent).toEqual(["a", "b"]);
   });
 
-  test("send while busy is rejected without touching the session", async () => {
+  test("send while busy is queued, not sent to the session", async () => {
     const h = harness();
     const p = h.controller.send("a");
     await settle();
-    expect(await h.controller.send("b")).toEqual({
-      ok: false,
-      code: "INVALID_STATE",
-      message: "A send is already in progress.",
-    });
+    expect(await h.controller.send("b")).toEqual({ ok: true, queued: true });
+    expect(h.sent).toEqual(["a"]);
     h.replies[0].resolve("1");
     await p;
-    expect(h.sent).toEqual(["a"]);
+    await settle();
+    expect(h.sent).toEqual(["a", "b"]);
   });
 
   test("attachments are appended in the CLI format and cleared after send", async () => {
@@ -355,7 +359,7 @@ describe("SessionController", () => {
     const p = h.controller.send("a");
     await settle();
     const before = h.controller.getState().messages.length;
-    await h.controller.newChat();
+    expect(await h.controller.newChat()).toBe(false);
     expect(h.controller.getState().status).toBe("busy");
     expect(h.closed).toBe(0);
     // No separator was appended.
@@ -484,5 +488,162 @@ describe("SessionController", () => {
     expect(h.controller.getState().messages).toHaveLength(before);
     await h.controller.close();
     expect(h.closed).toBe(1);
+  });
+});
+
+describe("queue", () => {
+  test("send while busy queues and drains in order after the reply", async () => {
+    const h = harness();
+    const first = h.controller.send("one");
+    await tick();
+    expect(h.controller.getState().status).toBe("busy");
+    expect(await h.controller.send("two")).toEqual({ ok: true, queued: true });
+    expect(await h.controller.send("three")).toEqual({
+      ok: true,
+      queued: true,
+    });
+    expect(h.controller.getState().queue.map((e) => e.text)).toEqual([
+      "two",
+      "three",
+    ]);
+    h.replies[0]?.resolve("r1");
+    expect(await first).toEqual({ ok: true });
+    await tick();
+    // The next turn was claimed before the idle frame.
+    expect(h.controller.getState().status).toBe("busy");
+    expect(h.controller.getState().queue.map((e) => e.text)).toEqual(["three"]);
+    expect(h.sent).toEqual(["one", "two"]);
+    h.replies[1]?.resolve("r2");
+    await tick();
+    h.replies[2]?.resolve("r3");
+    await tick();
+    expect(h.sent).toEqual(["one", "two", "three"]);
+    expect(h.controller.getState().status).toBe("idle");
+    expect(h.controller.getState().queue).toEqual([]);
+  });
+
+  test("a queued entry carries the pending attachments", async () => {
+    const h = harness();
+    const first = h.controller.send("one");
+    await tick();
+    h.controller.addAttachment({ path: "a.ts", bytes: 3, content: "abc" });
+    await h.controller.send("two");
+    const s = h.controller.getState();
+    expect(s.pendingAttachments).toEqual([]);
+    expect(s.queue[0]?.attachments).toEqual([{ path: "a.ts", bytes: 3 }]);
+    h.replies[0]?.resolve("r1");
+    await first;
+    await tick();
+    expect(h.sent[1]).toContain("abc");
+    const user = h.controller.getState().messages.find((m) => m.text === "two");
+    expect(user?.attachments).toEqual([{ path: "a.ts", bytes: 3 }]);
+  });
+
+  test("blank text with no attachments is EMPTY even while busy", async () => {
+    const h = harness();
+    void h.controller.send("one");
+    await tick();
+    expect((await h.controller.send("  ")).ok).toBe(false);
+    expect(h.controller.getState().queue).toEqual([]);
+  });
+
+  test("a fatal error stops draining; the queue survives newChat and drains after it", async () => {
+    const h = harness();
+    const first = h.controller.send("one");
+    await tick();
+    await h.controller.send("two");
+    h.replies[0]?.reject(new Error("page closed"));
+    await first;
+    expect(h.controller.getState().status).toBe("dead");
+    expect(h.controller.getState().queue.map((e) => e.text)).toEqual(["two"]);
+    expect(h.sent).toEqual(["one"]);
+    await h.controller.newChat();
+    await tick();
+    expect(h.sent).toEqual(["one", "two"]);
+  });
+
+  test("takeBack returns the entries with attachments restored as pending", async () => {
+    const h = harness();
+    void h.controller.send("one");
+    await tick();
+    h.controller.addAttachment({ path: "a.ts", bytes: 3, content: "abc" });
+    await h.controller.send("two");
+    await h.controller.send("three");
+    const entries = h.controller.takeBack();
+    expect(entries.map((e) => e.text)).toEqual(["two", "three"]);
+    const s = h.controller.getState();
+    expect(s.queue).toEqual([]);
+    expect(s.pendingAttachments).toEqual([{ path: "a.ts", bytes: 3 }]);
+    expect(h.controller.takeBack()).toEqual([]);
+  });
+
+  test("removeQueued drops one entry and ignores bad indexes", async () => {
+    const h = harness();
+    void h.controller.send("one");
+    await tick();
+    await h.controller.send("two");
+    await h.controller.send("three");
+    h.controller.removeQueued(5);
+    h.controller.removeQueued(0);
+    expect(h.controller.getState().queue.map((e) => e.text)).toEqual(["three"]);
+  });
+});
+
+describe("reopen", () => {
+  test("mid-turn: the old result is dropped, history marked, queue drained", async () => {
+    const h = harness();
+    const first = h.controller.send("one");
+    await tick();
+    await h.controller.send("two");
+    const reopen = h.controller.reopen();
+    expect(h.controller.getState().status).toBe("reopening");
+    await reopen;
+    // The abandoned send settles late; nothing from it is recorded.
+    h.replies[0]?.resolve("stale");
+    expect(await first).toEqual({ ok: true });
+    await tick();
+    const s = h.controller.getState();
+    expect(s.messages.some((m) => m.text === "stale")).toBe(false);
+    expect(
+      s.messages.some((m) => m.role === "separator" && m.text === "reopened"),
+    ).toBe(true);
+    expect(h.opens).toBe(2);
+    expect(h.killed + h.closed).toBeGreaterThan(0);
+    expect(h.sent).toEqual(["one", "two"]);
+    expect(s.status).toBe("busy");
+  });
+
+  test("from dead: clears lastError and drops the error banner state", async () => {
+    const h = harness();
+    const first = h.controller.send("one");
+    await tick();
+    h.replies[0]?.reject(new Error("page closed"));
+    await first;
+    expect(h.controller.getState().lastError).toBe("UNKNOWN");
+    await h.controller.reopen();
+    const s = h.controller.getState();
+    expect(s.status).toBe("idle");
+    expect(s.lastError).toBeUndefined();
+  });
+
+  test("failure: error entry, dead, queue kept", async () => {
+    const h = harness();
+    void h.controller.send("one");
+    await tick();
+    await h.controller.send("two");
+    h.openError = new Error("launch failed");
+    await h.controller.reopen();
+    const s = h.controller.getState();
+    expect(s.status).toBe("dead");
+    expect(s.messages.at(-1)).toEqual({ role: "error", text: "launch failed" });
+    expect(s.queue.map((e) => e.text)).toEqual(["two"]);
+  });
+
+  test("a second reopen while one runs is ignored", async () => {
+    const h = harness();
+    const a = h.controller.reopen();
+    const b = h.controller.reopen();
+    await Promise.all([a, b]);
+    expect(h.opens).toBe(1);
   });
 });

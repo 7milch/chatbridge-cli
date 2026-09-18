@@ -117,7 +117,10 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
       await deps.clearAuth();
     },
 
-    newChat: () => controller.newChat(),
+    // Task 3 turns the refusal (false while busy) into a warning.
+    newChat: async () => {
+      await controller.newChat();
+    },
 
     async installBrowser() {
       if (await runInstall()) ui.showInformationMessage("Chromium installed.");

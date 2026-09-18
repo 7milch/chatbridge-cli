@@ -10,13 +10,28 @@ export interface Message {
 }
 
 /** closed: no browser. opening: ChatSession.open in flight. idle: ready.
- * busy: a turn is in flight. dead: fatal error; New chat or Log in recover. */
-export type Status = "closed" | "opening" | "idle" | "busy" | "dead";
+ * busy: a turn is in flight. reopening: Ctrl+R is replacing the browser.
+ * dead: fatal error; New chat, Log in or Reopen recover. */
+export type Status =
+  | "closed"
+  | "opening"
+  | "idle"
+  | "busy"
+  | "reopening"
+  | "dead";
+
+/** A message waiting for its turn: sent while the controller was not idle. */
+export interface QueueEntry {
+  text: string;
+  attachments: Attachment[];
+}
 
 export interface State {
   status: Status;
   messages: Message[];
   pendingAttachments: Attachment[];
+  /** Oldest first; drained one entry per turn end. */
+  queue: QueueEntry[];
   /** `ChatBridgeError.code` of the error that made the status `dead`. */
   lastError?: string;
 }
