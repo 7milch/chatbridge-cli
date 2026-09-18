@@ -174,6 +174,17 @@ rendering, history persistence, `@` completion, `!` shell mode, Chat
 Participant API.
 Spec: `docs/superpowers/specs/2026-09-17-vscode-extension-design.md`.
 
+### 12. VSCode parity: queue, Ctrl+R, slash commands, drop/paste — done (issue #64)
+
+`SessionController` gained the TUI's message queue (take back with Up) and
+`reopen()`; `<id>.reopen` command with a recommended Ctrl+R keybinding.
+Slash commands `/login /logout /new /reopen /help` defined once in core
+(`@chatbridge/core/slash-commands`) and handled by both UIs; the TUI now
+starts before the browser opens and `/login` runs the headful login from
+inside it. Dropped files and pasted editor selections become attachment
+chips in the webview. Ships as a 0.8.x patch.
+Spec: `docs/superpowers/specs/2026-09-18-vscode-parity-design.md`.
+
 ### 5. Company adoption
 
 Company repository builds `company-ai-cli` via `createCli({ name, provider, configDir })`

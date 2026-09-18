@@ -61,6 +61,20 @@ export const { activate, deactivate } = createExtension({
 - `baseDir` — test-only override for the base directory of the config /
   auth-state store.
 
+## Composer
+
+- **Enter** sends. While a turn is in flight the message is queued instead
+  and drains in order once the turn finishes; Shift+Enter inserts a newline.
+- **Up** on an empty composer takes the last queued message back for
+  editing; queued entries can also be removed individually.
+- **`/` commands** — `/login`, `/logout`, `/new`, `/reopen`, `/help`, the
+  same table the TUI uses. Only the bare form on its own counts, so
+  anything else (including `/usr/bin` style paths) is sent verbatim.
+- **Drop files** onto the composer to add them as attachment chips.
+- **Paste** text copied from an editor selection and it becomes a selection
+  chip (`path:L2-L3`) instead of inline text; unrelated clipboard text is
+  pasted as usual.
+
 ## Manifest
 
 The vendor's `package.json` must contribute, with `<id>` replaced by the
