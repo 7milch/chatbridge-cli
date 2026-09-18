@@ -206,7 +206,8 @@ export const { activate, deactivate } = createExtension({
 
 The manifest declares the view `<id>.chat`, the commands `<id>.login`,
 `logout`, `newChat`, `installBrowser`, `sendSelection`, `sendFile`, `focus`,
-and the settings `<id>.headless` / `<id>.timeoutSec`;
+and the settings `<id>.headless` / `<id>.timeoutSec`.
+
 Pass `ui` to brand the view: `welcome` text and a `banner` image above the
 empty history, a `footer` line under the composer, and `sendButton`
 colours.

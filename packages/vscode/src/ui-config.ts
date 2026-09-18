@@ -39,7 +39,9 @@ export function resolveUiConfig(
   if (ui.banner !== undefined) {
     const relative = normalize(ui.banner);
     if (
+      ui.banner.trim() === "" ||
       isAbsolute(ui.banner) ||
+      relative === "." ||
       relative === ".." ||
       relative.startsWith(`..${sep}`)
     ) {

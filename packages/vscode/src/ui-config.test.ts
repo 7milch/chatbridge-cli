@@ -49,6 +49,16 @@ describe("resolveUiConfig", () => {
     );
   });
 
+  test("an empty or current-directory banner path is rejected", () => {
+    // Without this guard normalize("") is "." and join(root, ".") is the
+    // extension directory itself, which existsSync happily accepts.
+    for (const banner of ["", "   ", "."]) {
+      expect(() => resolveUiConfig({ banner }, root, exists)).toThrow(
+        `${banner}: banner path must be relative to the extension root`,
+      );
+    }
+  });
+
   test("a banner escaping the extension root is rejected", () => {
     for (const banner of ["../secret.png", "/etc/passwd", "a/../../b.png"]) {
       expect(() => resolveUiConfig({ banner }, root, exists)).toThrow(

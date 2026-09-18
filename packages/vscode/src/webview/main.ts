@@ -137,8 +137,11 @@ function render(s: State): void {
   history.scrollTop = history.scrollHeight;
   renderStatus(s);
   renderAttachments(s);
+  // The welcome block takes over the history's space while it is shown, so
+  // it is centred in the view rather than pinned above an empty history.
   welcome.hidden =
     s.messages.length > 0 || (!config.welcome && !config.bannerUri);
+  history.hidden = !welcome.hidden;
   const locked = s.status === "busy" || s.status === "opening";
   input.disabled = locked;
   sendButton.disabled = locked;
