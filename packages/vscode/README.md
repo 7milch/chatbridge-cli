@@ -61,6 +61,23 @@ export const { activate, deactivate } = createExtension({
 - `baseDir` — test-only override for the base directory of the config /
   auth-state store.
 
+## Composer
+
+- **Enter** sends. While a turn is in flight the message is queued instead
+  and drains in order once the turn finishes; Shift+Enter inserts a newline.
+- **Up** on an empty composer takes the last queued message back for
+  editing; queued entries can also be removed individually.
+- **`/` commands** — `/login`, `/logout`, `/new`, `/reopen`, `/help`, the
+  same table the TUI uses. Only the bare form on its own counts, so
+  anything else (including `/usr/bin` style paths) is sent verbatim.
+- **Drop files** onto the composer to add them as attachment chips. Hold
+  **Shift** while dropping: without it VSCode keeps the drag for itself and
+  opens the file in an editor instead (the same rule as dropping into a text
+  editor).
+- **Paste** text copied from an editor selection and it becomes a selection
+  chip (`path:L2-L3`) instead of inline text; unrelated clipboard text is
+  pasted as usual.
+
 ## Manifest
 
 The vendor's `package.json` must contribute, with `<id>` replaced by the
@@ -68,7 +85,7 @@ The vendor's `package.json` must contribute, with `<id>` replaced by the
 
 - View `<id>.chat` (a webview, typically under its own `viewsContainers`
   entry)
-- Commands `<id>.login`, `<id>.logout`, `<id>.newChat`,
+- Commands `<id>.login`, `<id>.logout`, `<id>.newChat`, `<id>.reopen`,
   `<id>.installBrowser`, `<id>.sendSelection`, `<id>.sendFile`, `<id>.focus`
 - Settings `<id>.headless` (boolean) and `<id>.timeoutSec` (number)
 
@@ -78,7 +95,22 @@ missing ID:
 - `contributes.viewsContainers.activitybar[]` contains an entry with
   `id === <id>`
 - `contributes.views.<id>[]` contains an entry with `id === <id>.chat`
-- `contributes.commands[]` contains all seven `<id>.*` commands above
+- `contributes.commands[]` contains all eight `<id>.*` commands above
+
+A `keybindings` entry is recommended so Ctrl+R (Cmd+R on macOS) reopens the
+browser while the chat view is focused; it is not validated. The webview
+also handles the shortcut itself when the composer has focus.
+
+```json
+"keybindings": [
+  {
+    "command": "<id>.reopen",
+    "key": "ctrl+r",
+    "mac": "cmd+r",
+    "when": "focusedView == <id>.chat"
+  }
+]
+```
 
 `contributes.configuration` is not validated: a missing `<id>.headless` or
 `<id>.timeoutSec` setting simply falls back to the `createExtension`

@@ -34,3 +34,10 @@ export {
   closeOrKill,
   closeWithTimeout,
 } from "./close-session.js";
+export {
+  SLASH_COMMANDS,
+  type SlashCommand,
+  helpText,
+  parseSlashCommand,
+  unknownCommandMessage,
+} from "./slash-commands.js";

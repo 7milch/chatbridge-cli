@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { expectedContributions, missingContributions } from "./manifest.js";
+import {
+  COMMAND_NAMES,
+  expectedContributions,
+  missingContributions,
+} from "./manifest.js";
 
 const full = {
   contributes: {
@@ -27,6 +31,7 @@ describe("missingContributions", () => {
       "viewsContainers.activitybar: acme",
       "commands: acme.logout",
       "commands: acme.newChat",
+      "commands: acme.reopen",
       "commands: acme.installBrowser",
       "commands: acme.sendSelection",
       "commands: acme.sendFile",
@@ -35,6 +40,10 @@ describe("missingContributions", () => {
   });
 
   test("a manifest without contributes lists everything", () => {
-    expect(missingContributions({}, "x")).toHaveLength(9);
+    expect(missingContributions({}, "x")).toHaveLength(10);
+  });
+
+  test("COMMAND_NAMES has eight entries", () => {
+    expect(COMMAND_NAMES.length).toBe(8);
   });
 });

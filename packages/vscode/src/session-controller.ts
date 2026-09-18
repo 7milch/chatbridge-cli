@@ -7,7 +7,7 @@ import {
   formatAttachment,
   formatSize,
 } from "@chatbridge/core";
-import type { Message, State, Status } from "./protocol.js";
+import type { Message, QueueEntry, State, Status } from "./protocol.js";
 
 /** What the controller needs from a ChatSession; lets tests inject a fake. */
 export interface ChatSessionLike {
@@ -22,8 +22,17 @@ export interface PendingAttachment extends Attachment {
 }
 
 export type SendResult =
-  | { ok: true }
+  | { ok: true; queued?: true }
   | { ok: false; code: string; message: string };
+
+/** The separator pushed into the history by `reopen()`. */
+export const REOPENED_SEPARATOR = "reopened";
+
+/** Controller-internal queue entry: the attachments keep their content. */
+interface QueuedTurn {
+  text: string;
+  attachments: PendingAttachment[];
+}
 
 export type AddResult = { ok: true } | { ok: false; reason: string };
 
@@ -58,6 +67,12 @@ export class SessionController {
   private session: ChatSessionLike | undefined;
   /** The full prompt of the last send, for retryLast(). */
   private lastPrompt: string | undefined;
+  /** Turns sent while the controller was not ready, oldest first. */
+  private queue: QueuedTurn[] = [];
+  /** Bumped by every reopen; a send from an older generation is stale. */
+  private generation = 0;
+  /** The reopen in flight, so a second Ctrl+R joins it instead of racing. */
+  private reopening: Promise<void> | undefined;
   private readonly closeTimeoutMs: number;
 
   constructor(private readonly opts: SessionControllerOptions) {
@@ -74,6 +89,10 @@ export class SessionController {
       pendingAttachments: this.pending.map(({ path, bytes }) => ({
         path,
         bytes,
+      })),
+      queue: this.queue.map((q) => ({
+        text: q.text,
+        attachments: q.attachments.map(({ path, bytes }) => ({ path, bytes })),
       })),
     };
     if (this.lastError !== undefined) state.lastError = this.lastError;
@@ -119,30 +138,84 @@ export class SessionController {
     this.emit();
   }
 
-  /** Sends the text plus the pending attachments as one turn. Never
-   * throws: the outcome is the result and the history. */
+  /** True when a turn can start right now. `dead` counts: an explicit
+   * send is the user retrying, and only automatic draining must stop
+   * while the controller is dead. */
+  private get canStartTurn(): boolean {
+    return (
+      this.status === "idle" ||
+      this.status === "closed" ||
+      this.status === "dead"
+    );
+  }
+
+  /** Sends the text plus the pending attachments as one turn, or queues it
+   * when a turn is already running. Never throws: the outcome is the
+   * result and the history. */
   async send(text: string): Promise<SendResult> {
-    if (this.status === "busy" || this.status === "opening") {
-      return {
-        ok: false,
-        code: "INVALID_STATE",
-        message: "A send is already in progress.",
-      };
-    }
     const body = text.trim() === "" ? "" : text;
     if (body === "" && this.pending.length === 0) return EMPTY;
-    const sections = this.pending.map((a) =>
+    const attachments = this.pending;
+    this.pending = [];
+    // A non-empty queue means earlier entries are waiting (the controller
+    // is `dead`, where draining stops): keep FIFO by queueing behind them
+    // and letting drain start the oldest, which reopens the browser.
+    if (!this.canStartTurn || this.queue.length > 0) {
+      this.queue.push({ text: body, attachments });
+      this.drain();
+      this.emit();
+      return { ok: true, queued: true };
+    }
+    return this.startTurn({ text: body, attachments });
+  }
+
+  /** Pushes the user entry and runs the turn. Shared by send and drain. */
+  private startTurn(turn: QueuedTurn): Promise<SendResult> {
+    const sections = turn.attachments.map((a) =>
       formatAttachment(a.path, a.content),
     );
-    const prompt = [body, ...sections].filter((s) => s !== "").join("\n\n");
-    const attachments = this.pending.map(({ path, bytes }) => ({
-      path,
-      bytes,
-    }));
-    this.pending = [];
-    this.push({ role: "user", text: body, attachments });
+    const prompt = [turn.text, ...sections]
+      .filter((s) => s !== "")
+      .join("\n\n");
+    this.push({
+      role: "user",
+      text: turn.text,
+      attachments: turn.attachments.map(({ path, bytes }) => ({ path, bytes })),
+    });
     this.lastPrompt = prompt;
     return this.runTurn(prompt);
+  }
+
+  /** Starts the oldest queued entry, if any, when the controller is ready
+   * for a turn. Called at every transition back to a ready state, before
+   * the caller emits, so the webview never sees an idle frame with a
+   * queue still waiting. */
+  private drain(): void {
+    // markLoggedIn() can arrive in any status; never start a second turn
+    // on top of a running one. The other call sites are already ready.
+    if (!this.canStartTurn) return;
+    const next = this.queue.shift();
+    if (next === undefined) return;
+    void this.startTurn(next);
+  }
+
+  /** Empties the queue back into the composer: the entries are returned
+   * and their attachments become pending again. */
+  takeBack(): QueueEntry[] {
+    if (this.queue.length === 0) return [];
+    const entries = this.queue.splice(0);
+    for (const e of entries) this.pending.push(...e.attachments);
+    this.emit();
+    return entries.map((e) => ({
+      text: e.text,
+      attachments: e.attachments.map(({ path, bytes }) => ({ path, bytes })),
+    }));
+  }
+
+  removeQueued(index: number): void {
+    if (index < 0 || index >= this.queue.length) return;
+    this.queue.splice(index, 1);
+    this.emit();
   }
 
   /** Re-runs the last prompt after a recoverable fatal error (a missing
@@ -150,7 +223,7 @@ export class SessionController {
    * the history reads user → assistant. */
   async retryLast(): Promise<SendResult> {
     if (this.lastPrompt === undefined) return EMPTY;
-    if (this.status === "busy" || this.status === "opening") {
+    if (!this.canStartTurn) {
       return {
         ok: false,
         code: "INVALID_STATE",
@@ -169,17 +242,29 @@ export class SessionController {
     // `lastError` would keep the webview's error banner up after a
     // successful send from `dead`.
     this.lastError = undefined;
+    const generation = this.generation;
     try {
       if (this.session === undefined) {
         this.setStatus("opening");
-        this.session = await this.opts.openSession();
+        const session = await this.opts.openSession();
+        // A reopen ran while we were opening: this browser is an orphan.
+        if (generation !== this.generation) {
+          await closeOrKill(session, this.closeTimeoutMs);
+          return { ok: true };
+        }
+        this.session = session;
       }
       this.setStatus("busy");
       const reply = await this.session.send(prompt);
+      if (generation !== this.generation) return { ok: true }; // stale
       this.messages.push({ role: "assistant", text: reply });
-      this.setStatus("idle");
+      // Claim the next turn before emitting, so no idle frame is shown.
+      this.status = "idle";
+      this.drain();
+      this.emit();
       return { ok: true };
     } catch (err) {
+      if (generation !== this.generation) return { ok: true }; // stale
       return this.fail(err);
     }
   }
@@ -195,7 +280,9 @@ export class SessionController {
     // Show the error before `dropSession` (up to `closeTimeoutMs`) runs.
     this.emit();
     if (code === "RESPONSE_TIMEOUT") {
-      this.setStatus("idle");
+      this.status = "idle";
+      this.drain();
+      this.emit();
     } else {
       this.lastError = code;
       await this.dropSession();
@@ -210,21 +297,68 @@ export class SessionController {
     if (old !== undefined) await closeOrKill(old, this.closeTimeoutMs);
   }
 
-  /** Ctrl+R of the TUI: drop the browser, mark the break, reopen lazily. */
-  async newChat(): Promise<void> {
-    await this.discard("New chat");
+  /** Ctrl+R of the TUI: drop the browser, mark the break, reopen lazily.
+   * False when a turn is in flight, so the caller can warn. */
+  async newChat(): Promise<boolean> {
+    return this.discard("New chat");
+  }
+
+  /** Replaces the browser in every state. The in-flight turn, if any, is
+   * abandoned: its result is dropped by the generation check. A second
+   * call while one is running joins the first. */
+  reopen(): Promise<void> {
+    if (this.reopening) return this.reopening;
+    const run = this.runReopen().finally(() => {
+      this.reopening = undefined;
+    });
+    this.reopening = run;
+    return run;
+  }
+
+  private async runReopen(): Promise<void> {
+    const generation = ++this.generation;
+    this.setStatus("reopening");
+    await this.dropSession();
+    try {
+      const session = await this.opts.openSession();
+      // `close()` (deactivate) ran while the browser was opening: this one
+      // is an orphan nobody would ever close, and the controller is closed.
+      if (generation !== this.generation) {
+        await closeOrKill(session, this.closeTimeoutMs);
+        return;
+      }
+      this.session = session;
+      this.lastError = undefined;
+      this.messages.push({ role: "separator", text: REOPENED_SEPARATOR });
+      this.status = "idle";
+      this.drain();
+      this.emit();
+    } catch (err) {
+      const code = err instanceof ChatBridgeError ? err.code : "UNKNOWN";
+      const message = err instanceof Error ? err.message : String(err);
+      const hint = this.opts.hints?.[code];
+      this.messages.push({
+        role: "error",
+        text: hint === undefined ? message : `${message}\n${hint}`,
+      });
+      this.lastError = code;
+      this.setStatus("dead");
+    }
   }
 
   /** Closes the session (if any) and pushes `separator`. Refused (returns
    * false) while a turn is in flight. Clears a dead state. */
   async discard(separator: string): Promise<boolean> {
-    if (this.status === "busy" || this.status === "opening") return false;
+    if (!this.canStartTurn) return false;
     await this.dropSession();
     this.lastError = undefined;
     // A fresh chat must not re-send a prompt from before the break.
     this.lastPrompt = undefined;
     this.status = "closed";
-    this.push({ role: "separator", text: separator });
+    this.messages.push({ role: "separator", text: separator });
+    // The queue outlives the break: drain it into the new chat.
+    this.drain();
+    this.emit();
     return true;
   }
 
@@ -234,11 +368,16 @@ export class SessionController {
       this.lastError = undefined;
       this.status = "closed";
     }
-    this.push({ role: "separator", text: "Logged in" });
+    this.messages.push({ role: "separator", text: "Logged in" });
+    this.drain();
+    this.emit();
   }
 
   /** deactivate: close the browser, keep the history. Idempotent. */
   async close(): Promise<void> {
+    // A reopen in flight is stale from here on: its new browser must be
+    // closed rather than adopted by a controller the user has shut down.
+    this.generation++;
     await this.dropSession();
     if (this.status !== "dead") this.status = "closed";
     this.emit();

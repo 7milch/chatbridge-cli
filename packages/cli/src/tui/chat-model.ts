@@ -1,4 +1,15 @@
-import { ResponseTimeoutError, closeOrKill } from "@chatbridge/core";
+import {
+  AuthExpiredError,
+  AuthRequiredError,
+  BrowserUnavailableError,
+  InvalidStateError,
+  LoginAbortedError,
+  ResponseTimeoutError,
+  closeOrKill,
+  helpText,
+  parseSlashCommand,
+  unknownCommandMessage,
+} from "@chatbridge/core";
 import {
   type Attachment,
   type Expansion,
@@ -27,7 +38,13 @@ export interface ChatSessionLike {
   kill(): Promise<void>;
 }
 
-export type Role = "user" | "assistant" | "error" | "separator" | "shell";
+export type Role =
+  | "user"
+  | "assistant"
+  | "error"
+  | "separator"
+  | "shell"
+  | "help";
 export interface Message {
   role: Role;
   text: string;
@@ -41,21 +58,44 @@ export interface Message {
    * error entry pushed right after it says why. */
   failed?: boolean;
 }
-/** idle: accepting input. busy: a turn is in flight; input is queued.
- * running: a shell command is in flight (the input box is locked to shell
- * mode, Ctrl+C stops it); a message typed meanwhile is queued too.
- * resetting: the browser is being replaced. dead: a fatal error happened;
- * only Ctrl+R (reset) or Ctrl+C (quit) make sense. */
-export type Status = "idle" | "busy" | "running" | "resetting" | "dead";
+/** opening: the first session is being opened; the UI is already up and
+ * anything typed is queued. idle: accepting input. busy: a turn is in
+ * flight; input is queued. running: a shell command is in flight (the input
+ * box is locked to shell mode, Ctrl+C stops it); a message typed meanwhile
+ * is queued too. resetting: the browser is being replaced. logging-in: a
+ * `/login` browser window is open; Ctrl+C cancels it. dead: a fatal error
+ * happened; only Ctrl+R (reset) or Ctrl+C (quit) make sense. */
+export type Status =
+  | "opening"
+  | "idle"
+  | "busy"
+  | "running"
+  | "resetting"
+  | "logging-in"
+  | "dead";
 
 /** How long a reset waits for the old browser to close before killing it. */
 export const RESET_CLOSE_TIMEOUT_MS = 5_000;
 export const SEPARATOR_TEXT = "reopened";
+/** `/new` marks the history with this instead of SEPARATOR_TEXT: the
+ * browser is replaced either way, but the user asked for a fresh chat. */
+export const NEW_CHAT_SEPARATOR = "new chat";
+/** Remedies for the two failures a user can fix from inside the TUI. */
+export const AUTH_HINT = "Type /login to log in.";
+export const INSTALL_HINT = "Run: npx playwright install chromium";
 
 export interface ChatModelOptions {
-  /** Opens a replacement session for reset(). The first session is opened
-   * by the caller before any UI exists so startup errors surface plainly. */
+  /** Opens a session: called once by the constructor and by every reset.
+   * The UI is up before it resolves, so an opening failure is an error
+   * entry in the history rather than a crash before the first frame. */
   openSession: () => Promise<ChatSessionLike>;
+  /** `/login`: the headful login; resolves when the auth state is saved. */
+  login: (opts: {
+    signal: AbortSignal;
+    onProgress: (message: string) => void;
+  }) => Promise<void>;
+  /** `/logout`: deletes the saved auth state. */
+  clearAuth: () => Promise<void>;
   /** Turns the typed text into the prompt to send. Default: expandMentions
    * against process.cwd(). Tests inject a fake. */
   expand?: (text: string) => Promise<Expansion>;
@@ -72,7 +112,7 @@ export interface ChatModelOptions {
 /** Conversation state for the interactive UI. No OpenTUI dependency. */
 export class ChatModel {
   readonly messages: Message[] = [];
-  status: Status = "idle";
+  status: Status = "opening";
   /** The last fatal error; the reason the model is `dead`. Cleared by a
    * successful reset. Reported by the app when the user quits. */
   fatal: unknown = undefined;
@@ -84,7 +124,20 @@ export class ChatModel {
   readonly queue: string[] = [];
   /** Called after every state change. */
   onChange: () => void = () => {};
-  private current: ChatSessionLike;
+  /** Resolves when the initial open settled (idle or dead). Never rejects,
+   * so teardown can always wait for it. */
+  readonly ready: Promise<void>;
+  /** The last progress line from the running login, for the status row. */
+  loginProgress: string | undefined;
+  /** Where a turn that ended while `/login` was running left the model.
+   * The login owns the status meanwhile, so the turn records its outcome
+   * here and runLogin restores it instead of the status it captured. */
+  private settledDuringLogin: Status | undefined;
+  /** Undefined until the first open succeeds, and between a reset's close
+   * and the replacement. */
+  private current: ChatSessionLike | undefined;
+  /** The AbortController of the running login, or undefined when none. */
+  private loginAbort: AbortController | undefined;
   /** Bumped by every reset; a send from an older generation is stale and
    * its outcome is dropped. */
   private generation = 0;
@@ -94,6 +147,8 @@ export class ChatModel {
   /** The shell command in flight, so stopShell() and reset() can end it. */
   private running: RunningCommand | undefined;
   private readonly openSession: () => Promise<ChatSessionLike>;
+  private readonly login: ChatModelOptions["login"];
+  private readonly clearAuth: () => Promise<void>;
   private readonly expand: (text: string) => Promise<Expansion>;
   private readonly closeTimeoutMs: number;
   private readonly shell: ShellConfig;
@@ -103,19 +158,74 @@ export class ChatModel {
   ) => RunningCommand;
   private readonly cwd: string;
 
-  constructor(session: ChatSessionLike, opts: ChatModelOptions) {
-    this.current = session;
+  constructor(opts: ChatModelOptions) {
     this.openSession = opts.openSession;
+    this.login = opts.login;
+    this.clearAuth = opts.clearAuth;
     this.expand =
       opts.expand ?? ((text) => expandMentions(text, process.cwd()));
     this.closeTimeoutMs = opts.closeTimeoutMs ?? RESET_CLOSE_TIMEOUT_MS;
     this.shell = opts.shell ?? DEFAULT_SHELL_CONFIG;
     this.runCommand = opts.runCommand ?? runCommandDefault;
     this.cwd = opts.cwd ?? process.cwd();
+    // Last: openInitial may settle synchronously enough to touch the
+    // fields above.
+    this.ready = this.openInitial();
   }
 
-  /** The session in use right now; teardown closes this one. */
-  get session(): ChatSessionLike {
+  /** The session in use right now; teardown closes this one. Undefined
+   * while the first open is in flight, and after it failed. */
+  get session(): ChatSessionLike | undefined {
+    return this.current;
+  }
+
+  /** The eager first open. Anything typed meanwhile is queued by submit()
+   * and drained here, so startup never swallows input. A reset (Ctrl+R,
+   * `/new`, `/reopen`, `/logout`) typed meanwhile takes over: this open is
+   * then stale, and the session it produces would be a second live browser
+   * nobody ever closes. */
+  private async openInitial(): Promise<void> {
+    const generation = this.generation;
+    let session: ChatSessionLike;
+    try {
+      session = await this.openSession();
+    } catch (err) {
+      if (generation !== this.generation) return; // stale: reset ran
+      this.messages.push({ role: "error", text: this.describe(err) });
+      this.fatal = err;
+      this.status = "dead";
+      this.onChange();
+      return;
+    }
+    if (generation !== this.generation) {
+      await closeOrKill(session, this.closeTimeoutMs);
+      return; // stale: the reset owns the session now
+    }
+    this.current = session;
+    this.status = "idle";
+    this.drain();
+    this.onChange();
+  }
+
+  /** Error text plus the TUI-side remedy for the failures a user can fix
+   * without leaving the app. */
+  private describe(err: unknown): string {
+    const message = err instanceof Error ? err.message : String(err);
+    if (err instanceof AuthRequiredError || err instanceof AuthExpiredError) {
+      return `${message}\n${AUTH_HINT}`;
+    }
+    if (err instanceof BrowserUnavailableError) {
+      return `${message}\n${INSTALL_HINT}`;
+    }
+    return message;
+  }
+
+  /** The session for a send; only reachable from `idle`, where it exists.
+   * The guard keeps that invariant honest instead of asserting it away. */
+  private requireSession(): ChatSessionLike {
+    if (this.current === undefined) {
+      throw new InvalidStateError("No chat session is open.");
+    }
     return this.current;
   }
 
@@ -130,12 +240,39 @@ export class ChatModel {
     if (!prompt) {
       return false;
     }
+    // A command is never queued: it acts on the model itself, so it runs in
+    // whatever state the model is in.
+    const slash = parseSlashCommand(prompt);
+    if (slash) return this.runSlash(slash);
     if (this.status !== "idle") {
       this.queue.push(prompt);
       this.onChange();
       return true;
     }
     return this.runTurn(prompt, false);
+  }
+
+  /** Whether a `/login` owns the model right now. A getter, not an inline
+   * comparison: at the turn ends below TypeScript has narrowed
+   * `this.status` to the value it held before the await. */
+  private get isLoggingIn(): boolean {
+    return this.status === "logging-in";
+  }
+
+  /** Ends a turn: moves to the settled status and continues the queue.
+   * While `/login` is running the login owns the status and the browser
+   * window, so the outcome is only recorded — restoring `idle` here would
+   * overwrite `logging-in`, drain the queue onto the old session and turn
+   * Ctrl+C from "cancel the login" into "quit". `drains` is false for the
+   * one end that deliberately does not continue: a MentionError put the
+   * entry back at the front of the queue. */
+  private settle(status: "idle" | "dead", drains = true): void {
+    if (this.isLoggingIn) {
+      this.settledDuringLogin = status;
+      return;
+    }
+    this.status = status;
+    if (status === "idle" && drains) this.drain();
   }
 
   /** Sends the oldest queued entry as the next turn, if any. Called at every
@@ -164,10 +301,10 @@ export class ChatModel {
       // A mention problem is the user's to fix; anything else is a bug.
       if (err instanceof MentionError) {
         if (fromQueue) this.queue.unshift(prompt);
-        this.status = "idle";
+        this.settle("idle", false);
       } else {
         this.fatal = err;
-        this.status = "dead";
+        this.settle("dead");
       }
       this.onChange();
       return false;
@@ -201,6 +338,8 @@ export class ChatModel {
   async runShell(command: string): Promise<boolean> {
     const cmd = command.trim();
     if (!cmd || this.status !== "idle") return false;
+    // Only to fail loudly if `idle` ever stops implying an open session.
+    this.requireSession();
     this.status = "running";
     const entry: Message = {
       role: "shell",
@@ -248,10 +387,9 @@ export class ChatModel {
         role: "error",
         text: `could not start shell: ${message}`,
       });
-      this.status = "idle";
       // A turn end like any other: anything typed while the command was
       // starting is next in line.
-      this.drain();
+      this.settle("idle");
       this.onChange();
       return true;
     }
@@ -263,13 +401,16 @@ export class ChatModel {
       this.onChange();
       return true; // stale: reset ran; nothing is sent or held
     }
-    if (!this.shell.autoSend) {
+    // A `/login` typed while the command ran owns the status and the
+    // browser: auto-sending now would push the result into the old session
+    // behind the user's back. Hold it like autoSend: false does, so it
+    // goes out with the next message after the post-login reset.
+    if (!this.shell.autoSend || this.isLoggingIn) {
       this.heldResults.push(result);
       entry.held = true;
-      this.status = "idle";
       // The result is held before draining, so a queued message carries it
       // out exactly as a typed one would.
-      this.drain();
+      this.settle("idle");
       this.onChange();
       return true;
     }
@@ -295,32 +436,28 @@ export class ChatModel {
     prompt: string,
     releasesHeld = false,
   ): Promise<void> {
-    const session = this.current;
+    const session = this.requireSession();
     const generation = this.generation;
     try {
       const reply = await session.send(prompt);
       if (generation !== this.generation) return; // stale: reset ran
       if (releasesHeld) this.releaseHeld();
       this.messages.push({ role: "assistant", text: reply });
-      this.status = "idle";
+      this.settle("idle");
     } catch (err) {
       if (generation !== this.generation) return; // stale: reset ran
       const message = err instanceof Error ? err.message : String(err);
       this.messages.push({ role: "error", text: message });
       // A timeout leaves the browser usable; anything else ends the session.
       if (err instanceof ResponseTimeoutError) {
-        this.status = "idle";
+        this.settle("idle");
       } else {
         this.fatal = err;
-        this.status = "dead";
+        this.settle("dead");
       }
     }
-    // Claim the next turn before the view sees this one end, so it never
-    // draws an idle frame with entries still waiting. The one exception is a
-    // MentionError on a dequeued entry: that puts the entry back at the front
-    // of the queue while the model is idle, and the view shows the take-back
-    // guide.
-    if (this.status === "idle") this.drain();
+    // settle() claimed the next turn before the view sees this one end, so
+    // it never draws an idle frame with entries still waiting.
     this.onChange();
   }
 
@@ -340,6 +477,132 @@ export class ChatModel {
     return entries;
   }
 
+  /** Runs one `/command`. Resolves like submit(): true when the input was
+   * taken, false for an unknown command, which the view refills so the
+   * user can fix the typo. */
+  private async runSlash(
+    slash: NonNullable<ReturnType<typeof parseSlashCommand>>,
+  ): Promise<boolean> {
+    if ("unknown" in slash) {
+      this.messages.push({
+        role: "error",
+        text: unknownCommandMessage(slash.unknown),
+      });
+      this.onChange();
+      return false;
+    }
+    switch (slash.command) {
+      case "help":
+        this.messages.push({ role: "help", text: helpText() });
+        this.onChange();
+        return true;
+      case "new":
+        await this.reset(NEW_CHAT_SEPARATOR);
+        return true;
+      case "reopen":
+        await this.reset();
+        return true;
+      case "logout": {
+        // Announced before the reset, so the history reads in the order the
+        // steps happened even when reopening then fails.
+        this.messages.push({ role: "separator", text: "Logged out" });
+        this.onChange();
+        try {
+          await this.clearAuth();
+        } catch (err) {
+          // The auth state is still on disk, so the session is still valid:
+          // say so and leave both alone rather than closing a usable chat.
+          this.messages.push({ role: "error", text: this.describe(err) });
+          this.onChange();
+          return true;
+        }
+        await this.reset();
+        return true;
+      }
+      case "login":
+        await this.runLogin();
+        return true;
+    }
+  }
+
+  /** `/login`. Ignored while one is already running: there is a single
+   * browser window and a second one would fight over the auth state. On
+   * success the session is reopened so the new auth state is used. */
+  private async runLogin(): Promise<void> {
+    if (this.loginAbort) return;
+    const ac = new AbortController();
+    // Claimed before the first await, so a `/login` typed while the open
+    // below settles is ignored like any other second one.
+    this.loginAbort = ac;
+    try {
+      // The status the login returns to has to be one the model can leave
+      // again: `opening` and `resetting` belong to work in flight, and
+      // restoring either would strand the model there forever. Let that
+      // work settle first and go back to whatever it produced. A loop, not
+      // one check: a reset starting during the wait puts the model back
+      // into `resetting`.
+      while (this.status === "opening" || this.status === "resetting") {
+        await (this.status === "opening" ? this.ready : this.pendingReset);
+      }
+      // A reset in that window already aborted this controller, and the
+      // login below would only learn of it through a listener it has yet to
+      // register — it would never settle. Report it as cancelled here.
+      if (ac.signal.aborted) {
+        this.messages.push({ role: "separator", text: "Login cancelled" });
+        this.onChange();
+        return;
+      }
+      const previous = this.status;
+      this.settledDuringLogin = undefined;
+      this.status = "logging-in";
+      this.onChange();
+      try {
+        await this.login({
+          signal: ac.signal,
+          onProgress: (message) => {
+            this.loginProgress = message;
+            this.onChange();
+          },
+        });
+        this.messages.push({ role: "separator", text: "Logged in" });
+        this.loginProgress = undefined;
+        this.status = this.settledDuringLogin ?? previous;
+        // The guard is still held: a `/login` typed during this reset would
+        // otherwise open a second browser window to log in with.
+        await this.reset();
+        return;
+      } catch (err) {
+        this.messages.push(
+          err instanceof LoginAbortedError
+            ? { role: "separator", text: "Login cancelled" }
+            : {
+                role: "error",
+                text: err instanceof Error ? err.message : String(err),
+              },
+        );
+        // Only when nothing else has claimed the model since: a reset that
+        // cancelled this login owns the status now. A turn that ended
+        // during the login left its outcome in `settledDuringLogin`; that
+        // is where the model really is, and its queue is still waiting.
+        if (this.status === "logging-in") {
+          this.status = this.settledDuringLogin ?? previous;
+          if (this.status === "idle") this.drain();
+        }
+      }
+      this.onChange();
+    } finally {
+      this.loginAbort = undefined;
+      this.loginProgress = undefined;
+      this.settledDuringLogin = undefined;
+    }
+  }
+
+  /** Ctrl+C during `/login`; the login rejects with LoginAbortedError. No-op
+   * in every other state. */
+  cancelLogin(): void {
+    this.loginAbort?.abort();
+  }
+
   /** The in-flight reset, or undefined when none is running. Teardown awaits
    * it so the session it opens is not leaked. */
   get pendingReset(): Promise<void> | undefined {
@@ -351,33 +614,37 @@ export class ChatModel {
    * page mid-turn. A running shell command is stopped first and its output
    * is neither sent nor held. Ignored while a reset is already running. On
    * failure the model is `dead` with the reopen error as `fatal`. */
-  reset(): Promise<void> {
+  reset(separator: string = SEPARATOR_TEXT): Promise<void> {
     if (this.status === "resetting") return Promise.resolve();
+    // A login holds a browser window the user is no longer waiting on; the
+    // reset wins, and runLogin reports it as cancelled.
+    this.cancelLogin();
     // runReset sets the status synchronously, so the guard above rejects a
     // second Ctrl+R in the same tick.
-    const run = this.runReset();
+    const run = this.runReset(separator);
     this.pending = run;
     return run.finally(() => {
       if (this.pending === run) this.pending = undefined;
     });
   }
 
-  private async runReset(): Promise<void> {
+  private async runReset(separator: string): Promise<void> {
     this.stopShell();
     this.status = "resetting";
     this.generation++;
     this.onChange();
     const old = this.current;
-    await closeOrKill(old, this.closeTimeoutMs);
+    // Undefined when the first open failed: there is nothing to close.
+    if (old !== undefined) await closeOrKill(old, this.closeTimeoutMs);
+    this.current = undefined;
     try {
       this.current = await this.openSession();
-      this.messages.push({ role: "separator", text: SEPARATOR_TEXT });
+      this.messages.push({ role: "separator", text: separator });
       this.fatal = undefined;
       this.status = "idle";
       this.drain();
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.messages.push({ role: "error", text: message });
+      this.messages.push({ role: "error", text: this.describe(err) });
       this.fatal = err;
       this.status = "dead";
     }

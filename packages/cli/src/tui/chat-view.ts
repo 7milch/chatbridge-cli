@@ -17,9 +17,10 @@ import type { ResolvedSpinner } from "./spinner.js";
 import { MUTED_COLOR, type Styler, colored, styled, theme } from "./theme.js";
 
 // Status-row texts must fit 80 columns: the row is one fixed line and
-// clips. Shift+Enter is left out for room (README documents it).
+// clips. Shift+Enter and Ctrl+J are left out for room (README documents
+// them): with `/ commands` added the newline hint no longer fits.
 export const GUIDE =
-  "Enter send · Ctrl+J newline · @ file · ! shell · Ctrl+R reopen · Ctrl+C quit";
+  "Enter send · @ file · ! shell · / commands · Ctrl+R reopen · Ctrl+C quit";
 export const SHELL_GUIDE =
   "Enter run · Esc exit shell · Ctrl+R reopen · Ctrl+C quit";
 /** The idle guide while shell results are held; shorter to leave room for
@@ -27,19 +28,25 @@ export const SHELL_GUIDE =
 export const HELD_GUIDE =
   "Enter send · @ file · ! shell · Ctrl+R reopen · Ctrl+C quit";
 /** Shown instead of GUIDE once a fatal error left the session unusable. */
-export const DEAD_GUIDE = "Ctrl+R reopen · Ctrl+C quit";
+export const DEAD_GUIDE = "Ctrl+R reopen · /login · Ctrl+C quit";
 /** Idle or dead guide while queued entries are waiting. */
 export const QUEUE_GUIDE = "Up take back · Ctrl+R reopen · Ctrl+C quit";
 /** Rows the queue list may take; a longer queue ends with a "+N more" row. */
 export const MAX_QUEUE_ROWS = 5;
 export const RESETTING_STATUS = "Reopening browser...";
+/** Shown while the first session is being opened, before the chat is
+ * usable; the UI is already up and anything typed is queued. */
+export const OPENING_STATUS = "Opening browser...";
+/** Shown while `/login` holds a browser window open. */
+export const LOGIN_STATUS = "Log in in the browser window… (Ctrl+C cancel)";
 const RUNNING_LABEL = "Running…";
 export const SHELL_PLACEHOLDER = "Run a shell command";
 const PLACEHOLDER = "Type a message";
 const HELD_FOOTER = "📎 held, sent with your next message";
 /** Footer of a shell entry whose shell could not be spawned. */
 const FAILED_FOOTER = "did not start";
-const LABELS: Record<Exclude<Role, "separator">, () => StyledText> = {
+// `help` is the app talking, not the service: its entry is the text alone.
+const LABELS: Record<Exclude<Role, "separator" | "help">, () => StyledText> = {
   user: () => styled(theme.user("user")),
   assistant: () => styled(theme.assistant("assistant")),
   error: () => styled(theme.error("error")),
@@ -360,6 +367,18 @@ export class ChatView {
         this.stopSpinner();
         this.status.content = styled(theme.muted(RESETTING_STATUS));
         break;
+      case "opening":
+        this.stopSpinner();
+        this.status.content = styled(theme.muted(OPENING_STATUS));
+        break;
+      case "logging-in":
+        this.stopSpinner();
+        // The progress line replaces the hint once the login reports one;
+        // it says what the login is waiting for.
+        this.status.content = styled(
+          theme.muted(this.model.loginProgress ?? LOGIN_STATUS),
+        );
+        break;
       case "dead":
         this.stopSpinner();
         this.status.content = styled(
@@ -644,6 +663,17 @@ export class ChatView {
       box.add(
         new TextRenderable(this.renderer, {
           content: styled(theme.muted(`── ${message.text} ──`)),
+          wrapMode: "none",
+        }),
+      );
+      return box;
+    }
+    if (message.role === "help") {
+      // Pre-aligned columns: wrapping would break them, so a narrow
+      // terminal clips instead.
+      box.add(
+        new TextRenderable(this.renderer, {
+          content: styled(theme.muted(message.text)),
           wrapMode: "none",
         }),
       );

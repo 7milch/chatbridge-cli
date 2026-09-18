@@ -1,20 +1,55 @@
 import { describe, expect, test } from "bun:test";
+import { AuthRequiredError, LoginAbortedError } from "@chatbridge/core";
 import type { Page, Provider } from "@chatbridge/provider";
 import type { AuthStore } from "@chatbridge/runtime";
 import { createTestRenderer } from "@opentui/core/testing";
 import { FileIndex } from "../mentions/file-index.js";
 import type { ShellResult } from "../shell/run-command.js";
-import { ChatModel } from "./chat-model.js";
+import {
+  ChatModel,
+  type ChatModelOptions,
+  type ChatSessionLike,
+} from "./chat-model.js";
 import { ChatView } from "./chat-view.js";
-import { runInteractive, waitForQuit } from "./run-interactive.js";
+import {
+  runInteractive,
+  teardownExitMessage,
+  waitForQuit,
+} from "./run-interactive.js";
 import { resolveSpinner } from "./spinner.js";
+
+/** Builds a model whose first open resolves to `session` and whose reopens
+ * go to `opts.openSession`, then waits for the eager open so the model
+ * starts idle. */
+async function modelWith(
+  session: ChatSessionLike,
+  opts: Partial<ChatModelOptions> = {},
+): Promise<ChatModel> {
+  const reopen = opts.openSession;
+  let opened = false;
+  const model = new ChatModel({
+    login: async () => {},
+    clearAuth: async () => {},
+    ...opts,
+    openSession: async () => {
+      if (!opened) {
+        opened = true;
+        return session;
+      }
+      if (!reopen) throw new Error("not expected");
+      return reopen();
+    },
+  });
+  await model.ready;
+  return model;
+}
 
 describe("waitForQuit", () => {
   test("resolves when the renderer is destroyed from outside", async () => {
     // OpenTUI's own SIGINT/SIGTERM/SIGHUP handlers destroy the renderer
     // without exiting the process.
     const t = await createTestRenderer({ width: 40, height: 12 });
-    const model = new ChatModel(
+    const model = await modelWith(
       {
         async send() {
           return "";
@@ -46,7 +81,7 @@ describe("waitForQuit", () => {
   test("does not resolve on a fatal error; Ctrl+C then returns it", async () => {
     const t = await createTestRenderer({ width: 40, height: 12 });
     const boom = new Error("page closed");
-    const model = new ChatModel(
+    const model = await modelWith(
       {
         async send() {
           throw boom;
@@ -86,7 +121,7 @@ describe("waitForQuit", () => {
 
   test("Ctrl+C from a healthy model resolves undefined", async () => {
     const t = await createTestRenderer({ width: 40, height: 12 });
-    const model = new ChatModel(
+    const model = await modelWith(
       {
         async send() {
           return "";
@@ -124,7 +159,7 @@ describe("waitForQuit", () => {
       exitOnCtrlC: false,
     });
     let stopped = 0;
-    const model = new ChatModel(
+    const model = await modelWith(
       {
         async send() {
           return "";
@@ -186,6 +221,62 @@ describe("waitForQuit", () => {
     view.destroy();
     t.renderer.destroy();
   });
+
+  test("Ctrl+C during /login cancels the login instead of quitting", async () => {
+    // As runInteractive builds it: OpenTUI's own Ctrl+C would otherwise
+    // destroy the renderer, which is a quit of its own.
+    const t = await createTestRenderer({
+      width: 40,
+      height: 12,
+      exitOnCtrlC: false,
+    });
+    const model = await modelWith(
+      {
+        async send() {
+          return "";
+        },
+        async close() {},
+        async kill() {},
+      },
+      {
+        openSession: async () => {
+          throw new Error("not expected");
+        },
+        login: ({ signal }) =>
+          new Promise((_, rej) =>
+            signal.addEventListener("abort", () =>
+              rej(new LoginAbortedError()),
+            ),
+          ),
+      },
+    );
+    const view = new ChatView(t.renderer, model, {
+      title: "test-cli",
+      providerName: "dummy-chat",
+      timeoutMs: 1_000,
+      headless: true,
+      banner: [],
+      spinner: resolveSpinner(),
+      index: FileIndex.fromPaths([]),
+    });
+    const quit = waitForQuit(t.renderer, model);
+    const login = model.submit("/login");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(model.status).toBe("logging-in");
+    t.mockInput.pressKey("c", { ctrl: true });
+    await login;
+    expect(model.messages.at(-1)?.text).toBe("Login cancelled");
+    const raced = await Promise.race([
+      quit.then(() => "resolved"),
+      new Promise((r) => setTimeout(() => r("pending"), 50)),
+    ]);
+    expect(raced).toBe("pending");
+    // A second Ctrl+C, now that the login is gone, quits as usual.
+    t.mockInput.pressKey("c", { ctrl: true });
+    expect(await quit).toBeUndefined();
+    view.destroy();
+    t.renderer.destroy();
+  });
 });
 
 /** Minimal ChatSession dependencies: a provider that never needs a browser.
@@ -242,8 +333,29 @@ function sessionOpts(gate?: Promise<void>, failSave = false) {
   };
 }
 
+describe("teardownExitMessage", () => {
+  test("a settled teardown blames the close", () => {
+    expect(teardownExitMessage(true, true)).toBe(
+      "browser did not close within 5 s; exiting\n",
+    );
+    expect(teardownExitMessage(true, false)).toBe(
+      "browser did not close within 5 s; exiting\n",
+    );
+  });
+
+  test("an unsettled wait names the promise that was raced", () => {
+    expect(teardownExitMessage(false, true)).toBe(
+      "browser reopen did not finish within 5 s; exiting\n",
+    );
+    // No reset was in flight: the wait was the eager first open.
+    expect(teardownExitMessage(false, false)).toBe(
+      "browser did not finish opening within 5 s; exiting\n",
+    );
+  });
+});
+
 describe("runInteractive", () => {
-  test("closes the session when the renderer fails to start", async () => {
+  test("a renderer that fails to start rejects without opening a browser", async () => {
     const s = sessionOpts();
     const boom = new Error("no tty");
     await expect(
@@ -253,7 +365,9 @@ describe("runInteractive", () => {
         index: FileIndex.fromPaths([]),
       }),
     ).rejects.toBe(boom);
-    expect(s.launches[0]?.closed).toBe(1);
+    // The model opens the session, and there is no model yet: nothing to
+    // leak, and nothing to close.
+    expect(s.launches).toEqual([]);
   });
 
   test("shows the default banner with the provider name, then quits on destroy", async () => {
@@ -456,6 +570,7 @@ describe("runInteractive", () => {
       index: FileIndex.fromPaths([]),
     });
     let frame = "";
+
     for (let i = 0; i < 50 && !frame.includes("Ctrl+R reopen"); i++) {
       await new Promise((r) => setTimeout(r, 20));
       await t.renderOnce();
@@ -477,5 +592,31 @@ describe("runInteractive", () => {
       t.mockInput.pressKey("c", { ctrl: true });
     }
     await run;
+  });
+
+  test("an open that fails with AuthRequiredError shows in the TUI and is reported at quit", async () => {
+    const t = await createTestRenderer({ width: 80, height: 20 });
+    const boom = new AuthRequiredError("not logged in");
+    const run = runInteractive({
+      ...sessionOpts().opts,
+      createSession: () => Promise.reject(boom),
+      createRenderer: async () => t.renderer,
+      index: FileIndex.fromPaths([]),
+    });
+    let frame = "";
+    for (let i = 0; i < 50 && !frame.includes("not logged in"); i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      await t.renderOnce();
+      frame = t.captureCharFrame();
+    }
+    try {
+      // The UI came up despite the failure, and says how to fix it.
+      expect(frame).toContain("not logged in");
+      expect(frame).toContain("Type /login to log in.");
+      expect(frame).toContain("Ctrl+R reopen · /login · Ctrl+C quit");
+    } finally {
+      t.mockInput.pressKey("c", { ctrl: true });
+    }
+    expect(await run).toEqual({ fatal: boom });
   });
 });

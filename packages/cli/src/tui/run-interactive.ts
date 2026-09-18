@@ -2,6 +2,7 @@ import {
   ChatSession,
   type ChatSessionOptions,
   closeWithTimeout,
+  runLogin,
 } from "@chatbridge/core";
 import {
   type CliRenderer,
@@ -11,7 +12,11 @@ import {
 import { FileIndex } from "../mentions/file-index.js";
 import type { ShellConfig } from "../shell/shell-config.js";
 import { resolveBanner } from "./banner.js";
-import { ChatModel } from "./chat-model.js";
+import {
+  ChatModel,
+  type ChatModelOptions,
+  type ChatSessionLike,
+} from "./chat-model.js";
 import { ChatView } from "./chat-view.js";
 import { type SpinnerOptions, resolveSpinner } from "./spinner.js";
 
@@ -30,6 +35,10 @@ export interface InteractiveOptions extends ChatSessionOptions {
   createRenderer?: () => Promise<CliRenderer>;
   /** Test-only: replaces the working-directory index. */
   index?: FileIndex;
+  /** Test-only: replaces ChatSession.open. */
+  createSession?: () => Promise<ChatSessionLike>;
+  /** Test-only: replaces runLogin. */
+  login?: ChatModelOptions["login"];
 }
 
 const CLOSE_TIMEOUT_MS = 5_000;
@@ -65,6 +74,12 @@ export function waitForQuit(
   return new Promise<unknown>((resolve) => {
     (renderer.keyInput as unknown as KeypressSource).on("keypress", (key) => {
       if (!key.ctrl || key.name !== "c") return;
+      // A login holds a browser window the user is waiting in; Ctrl+C
+      // there cancels it rather than tearing the whole TUI down.
+      if (model.status === "logging-in") {
+        model.cancelLogin();
+        return;
+      }
       if (model.status === "running") {
         model.stopShell();
         return;
@@ -103,9 +118,23 @@ async function settleReset(
   }
 }
 
-/** Opens a ChatSession (errors propagate before any UI exists), runs the
- * TUI until the user quits, then restores the terminal. Resolves with the
- * model's unrecovered fatal error, if any, for the caller to report. */
+/** The stderr line before the hard exit. `settled` false means the race in
+ * `settleReset` timed out; which promise it was decides the wording — a
+ * quit typed at startup waits for the eager first open, not for a reopen. */
+export function teardownExitMessage(
+  settled: boolean,
+  waitedForReset: boolean,
+): string {
+  if (settled) return "browser did not close within 5 s; exiting\n";
+  return waitedForReset
+    ? "browser reopen did not finish within 5 s; exiting\n"
+    : "browser did not finish opening within 5 s; exiting\n";
+}
+
+/** Runs the TUI until the user quits, then restores the terminal. The
+ * session is opened by the model once the UI is up, so an opening failure
+ * is an error entry rather than a crash. Resolves with the model's
+ * unrecovered fatal error, if any, for the caller to report. */
 export async function runInteractive(
   opts: InteractiveOptions,
 ): Promise<{ fatal?: unknown }> {
@@ -123,24 +152,25 @@ export async function runInteractive(
     else opts.onProgress?.(message);
   };
   const sessionOpts: InteractiveOptions = { ...opts, onProgress };
-  const session = await ChatSession.open(sessionOpts);
-  let index: FileIndex;
-  let renderer: CliRenderer;
-  try {
-    index = opts.index ?? (await FileIndex.build({ cwd: process.cwd() }));
-    renderer = await (
-      opts.createRenderer ?? (() => createCliRenderer({ exitOnCtrlC: false }))
-    )();
-  } catch (err) {
-    // The session is already open; nothing else would ever close it.
-    await closeWithTimeout(session, CLOSE_TIMEOUT_MS);
-    throw err;
-  }
+  const index = opts.index ?? (await FileIndex.build({ cwd: process.cwd() }));
+  const renderer = await (
+    opts.createRenderer ?? (() => createCliRenderer({ exitOnCtrlC: false }))
+  )();
   let view: ChatView | undefined;
   let model: ChatModel | undefined;
   try {
-    model = new ChatModel(session, {
-      openSession: () => ChatSession.open(sessionOpts),
+    model = new ChatModel({
+      openSession: opts.createSession ?? (() => ChatSession.open(sessionOpts)),
+      login:
+        opts.login ??
+        (({ signal, onProgress: report }) =>
+          runLogin({
+            provider: opts.provider,
+            authStore: opts.authStore,
+            signal,
+            onProgress: report,
+          })),
+      clearAuth: () => opts.authStore.clear(),
       shell: opts.shell,
     });
     view = new ChatView(renderer, model, {
@@ -163,19 +193,22 @@ export async function runInteractive(
     const fatal = await quit;
     return fatal === undefined ? {} : { fatal };
   } finally {
-    // A shell command must not outlive the TUI.
+    // Neither a shell command nor a login browser may outlive the TUI.
     model?.stopShell();
+    model?.cancelLogin();
     view?.setStatus(CLOSING_STATUS);
     // A reset in flight has already closed the old session and is about to
     // assign a new one; closing model.session now would leak that new browser
-    // and its Playwright connection would keep the process alive. Wait for the
-    // reset to settle first, under the same cap.
-    const settled = await settleReset(model?.pendingReset);
-    // After a reset the original `session` is already closed; close whichever
-    // one the model holds now.
+    // and its Playwright connection would keep the process alive. The same
+    // goes for the initial open, which a quit typed at startup can outrun.
+    // Wait for whichever is in flight, under the same cap.
+    const pendingReset = model?.pendingReset;
+    const settled = await settleReset(pendingReset ?? model?.ready);
+    // The model may still hold no session: the open above failed.
+    const open = model?.session;
     const closed =
       settled &&
-      (await closeWithTimeout(model?.session ?? session, CLOSE_TIMEOUT_MS));
+      (open === undefined || (await closeWithTimeout(open, CLOSE_TIMEOUT_MS)));
     view?.destroy();
     renderer.destroy();
     // The terminal is ours again: anything the teardown reported can be
@@ -187,9 +220,7 @@ export async function runInteractive(
       // The Playwright connection would keep the event loop alive forever;
       // the terminal is restored by now, so exiting hard is safe here.
       process.stderr.write(
-        settled
-          ? "browser did not close within 5 s; exiting\n"
-          : "browser reopen did not finish within 5 s; exiting\n",
+        teardownExitMessage(settled, pendingReset !== undefined),
       );
       process.exit(1);
     }

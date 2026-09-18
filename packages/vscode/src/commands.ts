@@ -20,12 +20,17 @@ export interface CommandHandlers {
   login(): Promise<void>;
   logout(): Promise<void>;
   newChat(): Promise<void>;
+  reopen(): Promise<void>;
   installBrowser(): Promise<void>;
   sendSelection(): Promise<void>;
   sendFile(uri: unknown): Promise<void>;
   focus(): void;
   /** From the webview's input box. */
   send(text: string): Promise<void>;
+  /** Files dropped on the webview; unreadable URIs are reported together. */
+  attachUris(uris: string[]): Promise<void>;
+  /** A paste into the input box; true when it became a selection chip. */
+  pasted(text: string): boolean;
 }
 
 function utf8Bytes(text: string): number {
@@ -41,7 +46,7 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
 
   function isBusy(): boolean {
     const status = controller.getState().status;
-    return status === "busy" || status === "opening";
+    return status === "busy" || status === "opening" || status === "reopening";
   }
 
   async function runInstall(): Promise<boolean> {
@@ -108,16 +113,35 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
     },
 
     async logout() {
-      if (!(await controller.discard("Logged out"))) {
+      if (isBusy()) {
         ui.showWarningMessage(
           "Wait for the current reply to finish, then log out.",
         );
         return;
       }
+      // The auth state goes first: `discard` drains the queue, and a queued
+      // entry would otherwise reopen the browser — and send — under the
+      // credentials the user just asked to delete.
       await deps.clearAuth();
+      if (!(await controller.discard("Logged out"))) {
+        // A turn started while the auth state was being deleted. The file
+        // is gone either way; only the session is still open, so warn about
+        // that alone.
+        ui.showWarningMessage(
+          "Wait for the current reply to finish, then log out.",
+        );
+      }
     },
 
-    newChat: () => controller.newChat(),
+    async newChat() {
+      if (!(await controller.newChat())) {
+        ui.showWarningMessage(
+          "Wait for the current reply to finish, or press Ctrl+R to reopen.",
+        );
+      }
+    },
+
+    reopen: () => controller.reopen(),
 
     async installBrowser() {
       if (await runInstall()) ui.showInformationMessage("Chromium installed.");
@@ -147,6 +171,31 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
     },
 
     focus: () => ui.focusView(),
+
+    async attachUris(uris) {
+      const skipped: string[] = [];
+      for (const raw of uris) {
+        try {
+          const doc = await ui.openDocument(ui.parseUri(raw));
+          attach(doc.path, doc.text);
+        } catch {
+          skipped.push(raw);
+        }
+      }
+      if (skipped.length > 0) {
+        ui.showWarningMessage(`Skipped: ${skipped.join(", ")}`);
+      }
+    },
+
+    pasted(text) {
+      const editor = ui.activeEditor();
+      const selection = editor?.selection;
+      if (!editor || !selection) return false;
+      const normalise = (s: string) => s.replace(/\r\n/g, "\n");
+      if (normalise(text) !== normalise(selection.text)) return false;
+      attachEditor(editor, true);
+      return true;
+    },
 
     async send(text) {
       const result = await controller.send(text);

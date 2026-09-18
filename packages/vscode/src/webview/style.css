@@ -137,3 +137,38 @@ body {
 #input:disabled {
   opacity: 0.5;
 }
+#queue {
+  list-style: none;
+  margin: 0;
+  padding: 0 8px;
+  font-size: 90%;
+  opacity: 0.8;
+}
+#queue li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#queue li .queue-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#inline-error {
+  padding: 2px 8px;
+  color: var(--vscode-errorForeground);
+  font-size: 90%;
+}
+.message.help {
+  font-family: var(--vscode-editor-font-family);
+  white-space: pre;
+  opacity: 0.8;
+}
+body.drop-target {
+  outline: 2px dashed var(--vscode-focusBorder);
+  outline-offset: -2px;
+}

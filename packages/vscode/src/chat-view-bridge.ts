@@ -1,4 +1,10 @@
-import type { State, ToHost, ToWebview, UiConfig } from "./protocol.js";
+import type {
+  State,
+  ToHost,
+  ToWebview,
+  UiConfig,
+  WebviewCommand,
+} from "./protocol.js";
 
 /** The slice of vscode.Webview the bridge uses; a fake in tests. */
 export interface WebviewLike {
@@ -9,8 +15,20 @@ export interface WebviewLike {
 export interface ChatViewHandlers {
   send(text: string): void;
   removeAttachment(index: number): void;
-  command(name: "login" | "newChat" | "installBrowser"): void;
+  takeBack(): void;
+  removeQueued(index: number): void;
+  command(name: WebviewCommand): void;
+  attachUris(uris: string[]): void;
+  pasted(id: number, text: string): void;
 }
+
+const COMMANDS: ReadonlySet<string> = new Set([
+  "login",
+  "logout",
+  "newChat",
+  "installBrowser",
+  "reopen",
+]);
 
 function isToHost(m: unknown): m is ToHost {
   if (typeof m !== "object" || m === null) return false;
@@ -22,12 +40,18 @@ function isToHost(m: unknown): m is ToHost {
       return typeof msg.text === "string";
     case "removeAttachment":
       return typeof msg.index === "number";
+    case "takeBack":
+      return true;
+    case "removeQueued":
+      return typeof msg.index === "number";
     case "command":
+      return typeof msg.name === "string" && COMMANDS.has(msg.name);
+    case "attachUris":
       return (
-        msg.name === "login" ||
-        msg.name === "newChat" ||
-        msg.name === "installBrowser"
+        Array.isArray(msg.uris) && msg.uris.every((u) => typeof u === "string")
       );
+    case "pasted":
+      return typeof msg.id === "number" && typeof msg.text === "string";
     default:
       return false;
   }
@@ -59,8 +83,20 @@ export class ChatViewBridge {
         case "removeAttachment":
           this.handlers.removeAttachment(raw.index);
           break;
+        case "takeBack":
+          this.handlers.takeBack();
+          break;
+        case "removeQueued":
+          this.handlers.removeQueued(raw.index);
+          break;
         case "command":
           this.handlers.command(raw.name);
+          break;
+        case "attachUris":
+          this.handlers.attachUris(raw.uris);
+          break;
+        case "pasted":
+          this.handlers.pasted(raw.id, raw.text);
           break;
       }
     });
@@ -74,6 +110,10 @@ export class ChatViewBridge {
 
   pushState(state: State): void {
     void this.webview?.postMessage({ type: "state", ...state });
+  }
+
+  pushPasteResult(id: number, attached: boolean): void {
+    void this.webview?.postMessage({ type: "pasteResult", id, attached });
   }
 
   pushProgress(text: string): void {
