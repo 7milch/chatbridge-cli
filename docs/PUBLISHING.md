@@ -1,14 +1,14 @@
 # Publishing
 
 Packages: `@chatbridge/provider`, `@chatbridge/runtime`, `@chatbridge/core`,
-`@chatbridge/cli`. Versions move in lockstep.
+`@chatbridge/cli`, `@chatbridge/vscode`. Versions move in lockstep.
 
 ## One-time setup (npm side, done by a maintainer)
 
 1. Confirm the `@chatbridge` scope: sign in to npmjs.com and create the
    organization `chatbridge` (Add Organization → free). If the name is taken,
    follow "Scope fallback" below before anything else.
-2. Trusted Publishing: for each of the four packages, open
+2. Trusted Publishing: for each of the five packages, open
    Package → Settings → Trusted Publisher and register
    - Provider: GitHub Actions
    - Repository: `7milch/chatbridge-cli`
@@ -16,13 +16,13 @@ Packages: `@chatbridge/provider`, `@chatbridge/runtime`, `@chatbridge/core`,
    Packages that do not exist yet cannot be configured; the very first
    publish of each package therefore happens once by hand. Run
    `bun run build` first — the pack script does not build:
-   `bun run build && scripts/pack-all.sh packs && for t in packs/chatbridge-provider-* packs/chatbridge-runtime-* packs/chatbridge-core-* packs/chatbridge-cli-*; do npm publish "$t" --access public; done`
+   `bun run build && scripts/pack-all.sh packs && for t in packs/chatbridge-provider-* packs/chatbridge-runtime-* packs/chatbridge-core-* packs/chatbridge-cli-* packs/chatbridge-vscode-*; do npm publish "$t" --access public; done`
    (in dependency order, with a granular access token). After that,
    register the trusted publisher and use the workflow.
 
 ## Cutting a release
 
-1. On `main`, bump `version` in the four `package.json` files to the same
+1. On `main`, bump `version` in the five `package.json` files to the same
    value, then run `rm bun.lock && bun install` and commit the regenerated
    lock together with the bump. This is required because `bun pm pack`
    resolves sibling `workspace:*` dependencies to the version recorded in
