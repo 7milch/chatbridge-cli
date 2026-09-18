@@ -4,17 +4,47 @@ import type { AuthStore } from "@chatbridge/runtime";
 import { createTestRenderer } from "@opentui/core/testing";
 import { FileIndex } from "../mentions/file-index.js";
 import type { ShellResult } from "../shell/run-command.js";
-import { ChatModel } from "./chat-model.js";
+import {
+  ChatModel,
+  type ChatModelOptions,
+  type ChatSessionLike,
+} from "./chat-model.js";
 import { ChatView } from "./chat-view.js";
 import { runInteractive, waitForQuit } from "./run-interactive.js";
 import { resolveSpinner } from "./spinner.js";
+
+/** Builds a model whose first open resolves to `session` and whose reopens
+ * go to `opts.openSession`, then waits for the eager open so the model
+ * starts idle. */
+async function modelWith(
+  session: ChatSessionLike,
+  opts: Partial<ChatModelOptions> = {},
+): Promise<ChatModel> {
+  const reopen = opts.openSession;
+  let opened = false;
+  const model = new ChatModel({
+    login: async () => {},
+    clearAuth: async () => {},
+    ...opts,
+    openSession: async () => {
+      if (!opened) {
+        opened = true;
+        return session;
+      }
+      if (!reopen) throw new Error("not expected");
+      return reopen();
+    },
+  });
+  await model.ready;
+  return model;
+}
 
 describe("waitForQuit", () => {
   test("resolves when the renderer is destroyed from outside", async () => {
     // OpenTUI's own SIGINT/SIGTERM/SIGHUP handlers destroy the renderer
     // without exiting the process.
     const t = await createTestRenderer({ width: 40, height: 12 });
-    const model = new ChatModel(
+    const model = await modelWith(
       {
         async send() {
           return "";
@@ -46,7 +76,7 @@ describe("waitForQuit", () => {
   test("does not resolve on a fatal error; Ctrl+C then returns it", async () => {
     const t = await createTestRenderer({ width: 40, height: 12 });
     const boom = new Error("page closed");
-    const model = new ChatModel(
+    const model = await modelWith(
       {
         async send() {
           throw boom;
@@ -86,7 +116,7 @@ describe("waitForQuit", () => {
 
   test("Ctrl+C from a healthy model resolves undefined", async () => {
     const t = await createTestRenderer({ width: 40, height: 12 });
-    const model = new ChatModel(
+    const model = await modelWith(
       {
         async send() {
           return "";
@@ -124,7 +154,7 @@ describe("waitForQuit", () => {
       exitOnCtrlC: false,
     });
     let stopped = 0;
-    const model = new ChatModel(
+    const model = await modelWith(
       {
         async send() {
           return "";
@@ -243,7 +273,7 @@ function sessionOpts(gate?: Promise<void>, failSave = false) {
 }
 
 describe("runInteractive", () => {
-  test("closes the session when the renderer fails to start", async () => {
+  test("a renderer that fails to start rejects without opening a browser", async () => {
     const s = sessionOpts();
     const boom = new Error("no tty");
     await expect(
@@ -253,7 +283,9 @@ describe("runInteractive", () => {
         index: FileIndex.fromPaths([]),
       }),
     ).rejects.toBe(boom);
-    expect(s.launches[0]?.closed).toBe(1);
+    // The model opens the session, and there is no model yet: nothing to
+    // leak, and nothing to close.
+    expect(s.launches).toEqual([]);
   });
 
   test("shows the default banner with the provider name, then quits on destroy", async () => {
@@ -456,6 +488,7 @@ describe("runInteractive", () => {
       index: FileIndex.fromPaths([]),
     });
     let frame = "";
+
     for (let i = 0; i < 50 && !frame.includes("Ctrl+R reopen"); i++) {
       await new Promise((r) => setTimeout(r, 20));
       await t.renderOnce();

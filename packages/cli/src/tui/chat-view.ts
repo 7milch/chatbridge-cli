@@ -44,6 +44,9 @@ const LABELS: Record<Exclude<Role, "separator">, () => StyledText> = {
   assistant: () => styled(theme.assistant("assistant")),
   error: () => styled(theme.error("error")),
   shell: () => styled(theme.shell("shell")),
+  // `/help` output is the app talking, not the service; Task 8 gives it its
+  // own treatment.
+  help: () => styled(theme.title("help")),
 };
 /** The input starts one row tall and grows with its content up to this. */
 export const MAX_INPUT_ROWS = 5;

@@ -2,6 +2,7 @@ import {
   ChatSession,
   type ChatSessionOptions,
   closeWithTimeout,
+  runLogin,
 } from "@chatbridge/core";
 import {
   type CliRenderer,
@@ -103,9 +104,10 @@ async function settleReset(
   }
 }
 
-/** Opens a ChatSession (errors propagate before any UI exists), runs the
- * TUI until the user quits, then restores the terminal. Resolves with the
- * model's unrecovered fatal error, if any, for the caller to report. */
+/** Runs the TUI until the user quits, then restores the terminal. The
+ * session is opened by the model once the UI is up, so an opening failure
+ * is an error entry rather than a crash. Resolves with the model's
+ * unrecovered fatal error, if any, for the caller to report. */
 export async function runInteractive(
   opts: InteractiveOptions,
 ): Promise<{ fatal?: unknown }> {
@@ -123,24 +125,23 @@ export async function runInteractive(
     else opts.onProgress?.(message);
   };
   const sessionOpts: InteractiveOptions = { ...opts, onProgress };
-  const session = await ChatSession.open(sessionOpts);
-  let index: FileIndex;
-  let renderer: CliRenderer;
-  try {
-    index = opts.index ?? (await FileIndex.build({ cwd: process.cwd() }));
-    renderer = await (
-      opts.createRenderer ?? (() => createCliRenderer({ exitOnCtrlC: false }))
-    )();
-  } catch (err) {
-    // The session is already open; nothing else would ever close it.
-    await closeWithTimeout(session, CLOSE_TIMEOUT_MS);
-    throw err;
-  }
+  const index = opts.index ?? (await FileIndex.build({ cwd: process.cwd() }));
+  const renderer = await (
+    opts.createRenderer ?? (() => createCliRenderer({ exitOnCtrlC: false }))
+  )();
   let view: ChatView | undefined;
   let model: ChatModel | undefined;
   try {
-    model = new ChatModel(session, {
+    model = new ChatModel({
       openSession: () => ChatSession.open(sessionOpts),
+      login: ({ signal, onProgress: report }) =>
+        runLogin({
+          provider: opts.provider,
+          authStore: opts.authStore,
+          signal,
+          onProgress: report,
+        }),
+      clearAuth: () => opts.authStore.clear(),
       shell: opts.shell,
     });
     view = new ChatView(renderer, model, {
@@ -171,11 +172,12 @@ export async function runInteractive(
     // and its Playwright connection would keep the process alive. Wait for the
     // reset to settle first, under the same cap.
     const settled = await settleReset(model?.pendingReset);
-    // After a reset the original `session` is already closed; close whichever
-    // one the model holds now.
+    // The model may hold no session at all: the first open failed, or it is
+    // still in flight. Task 8 makes teardown wait for `model.ready`.
+    const open = model?.session;
     const closed =
       settled &&
-      (await closeWithTimeout(model?.session ?? session, CLOSE_TIMEOUT_MS));
+      (open === undefined || (await closeWithTimeout(open, CLOSE_TIMEOUT_MS)));
     view?.destroy();
     renderer.destroy();
     // The terminal is ours again: anything the teardown reported can be

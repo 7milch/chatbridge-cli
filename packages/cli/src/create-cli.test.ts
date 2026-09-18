@@ -170,7 +170,10 @@ describe("interactive mode gate", () => {
     expect(stderrChunks.join("")).toContain("use -p <prompt>");
   });
 
-  test("bare invocation with a terminal but no auth exits 2 before any UI", async () => {
+  // Interactive mode no longer exits on a missing auth state: the TUI opens
+  // first and the error is an entry there, with `/login` to fix it. The
+  // pre-flight gate is one-shot mode's alone.
+  test("one-shot with no auth still exits 2 before any browser", async () => {
     captureStderr();
     const cli = createCli({
       name: "test-cli",
@@ -178,7 +181,7 @@ describe("interactive mode gate", () => {
       baseDir: setup(),
       isTerminal: true,
     });
-    expect(await cli.run(["bun", "cli"])).toBe(2);
+    expect(await cli.run(["bun", "cli", "-p", "hi"])).toBe(2);
     expect(stderrChunks.join("")).toContain("auth login");
   });
 
@@ -208,7 +211,7 @@ describe("interactive mode gate", () => {
     mkdirSync(join(dir, "test-cli"), { recursive: true });
     writeFileSync(
       join(dir, "test-cli", "config.json"),
-      JSON.stringify({ defaultProvider: 5 }),
+      JSON.stringify({ defaultProvider: 5, shell: { leadIn: 5 } }),
     );
     const cli = createCli({
       name: "test-cli",
@@ -216,9 +219,10 @@ describe("interactive mode gate", () => {
       baseDir: dir,
       isTerminal: true,
     });
-    // Past the config stage: the next gate is the missing auth state.
-    expect(await cli.run(["bun", "cli"])).toBe(2);
-    expect(stderrChunks.join("")).toContain("auth login");
+    // The invalid defaultProvider is skipped and the shell section is still
+    // validated: reaching its error proves both.
+    expect(await cli.run(["bun", "cli"])).toBe(1);
+    expect(stderrChunks.join("")).toContain('"shell.leadIn" must be a string');
   });
 
   test("a pinned-provider CLI still rejects a config.json that is not JSON", async () => {
