@@ -27,7 +27,12 @@ function fakeWebview() {
   };
 }
 
-const state: State = { status: "idle", messages: [], pendingAttachments: [] };
+const state: State = {
+  status: "idle",
+  messages: [],
+  pendingAttachments: [],
+  queue: [],
+};
 
 describe("ChatViewBridge", () => {
   test("ready → current state is posted", () => {
@@ -35,6 +40,8 @@ describe("ChatViewBridge", () => {
     const bridge = new ChatViewBridge(() => state, {
       send: (t) => calls.push(`send:${t}`),
       removeAttachment: (i) => calls.push(`remove:${i}`),
+      takeBack: () => calls.push("takeBack"),
+      removeQueued: (i) => calls.push(`removeQueued:${i}`),
       command: (n) => calls.push(`cmd:${n}`),
     });
     const w = fakeWebview();
@@ -51,6 +58,8 @@ describe("ChatViewBridge", () => {
     const bridge = new ChatViewBridge(() => state, {
       send() {},
       removeAttachment() {},
+      takeBack() {},
+      removeQueued() {},
       command() {},
     });
     bridge.pushState(state); // no webview yet: dropped, no throw
@@ -72,6 +81,8 @@ describe("ChatViewBridge", () => {
     const bridge = new ChatViewBridge(() => state, {
       send() {},
       removeAttachment() {},
+      takeBack() {},
+      removeQueued() {},
       command() {},
     });
     const w = fakeWebview();
@@ -86,12 +97,39 @@ describe("ChatViewBridge", () => {
     ]);
   });
 
+  test("queue messages and every command name reach their handler", () => {
+    const calls: string[] = [];
+    const bridge = new ChatViewBridge(() => state, {
+      send: (t) => calls.push(`send:${t}`),
+      removeAttachment: (i) => calls.push(`remove:${i}`),
+      takeBack: () => calls.push("takeBack"),
+      removeQueued: (i) => calls.push(`removeQueued:${i}`),
+      command: (n) => calls.push(`cmd:${n}`),
+    });
+    const w = fakeWebview();
+    bridge.attach(w.webview);
+    w.receive({ type: "takeBack" });
+    w.receive({ type: "removeQueued", index: 1 });
+    w.receive({ type: "command", name: "reopen" });
+    w.receive({ type: "command", name: "logout" });
+    w.receive({ type: "removeQueued" } as unknown as ToHost);
+    w.receive({ type: "command", name: "nope" } as unknown as ToHost);
+    expect(calls).toEqual([
+      "takeBack",
+      "removeQueued:1",
+      "cmd:reopen",
+      "cmd:logout",
+    ]);
+  });
+
   test("malformed messages are ignored", () => {
     const bridge = new ChatViewBridge(() => state, {
       send() {
         throw new Error("must not run");
       },
       removeAttachment() {},
+      takeBack() {},
+      removeQueued() {},
       command() {},
     });
     const w = fakeWebview();

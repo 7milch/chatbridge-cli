@@ -41,6 +41,8 @@ export interface CreateExtensionOptions {
 /** What `activate` returns: the E2E drives the controller directly. */
 export interface ExtensionApi {
   controller: SessionController;
+  /** The E2E drives the command handlers directly. */
+  handlers: CommandHandlers;
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -81,6 +83,8 @@ export function createExtension(opts: CreateExtensionOptions) {
       {
         send: (text) => void handlers.send(text),
         removeAttachment: (i) => controller?.removeAttachment(i),
+        takeBack: () => controller?.takeBack(),
+        removeQueued: (i) => controller?.removeQueued(i),
         command: (name) => void handlers[name](),
       },
     );
@@ -116,7 +120,11 @@ export function createExtension(opts: CreateExtensionOptions) {
       },
       onChange: (state) => {
         bridge.pushState(state);
-        if (state.status === "busy" || state.status === "opening")
+        if (
+          state.status === "busy" ||
+          state.status === "opening" ||
+          state.status === "reopening"
+        )
           statusBar.show();
         else statusBar.hide();
       },
@@ -163,7 +171,7 @@ export function createExtension(opts: CreateExtensionOptions) {
         ),
       );
     }
-    return { controller };
+    return { controller, handlers };
   }
 
   async function deactivate(): Promise<void> {

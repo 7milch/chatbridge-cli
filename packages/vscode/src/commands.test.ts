@@ -14,6 +14,7 @@ interface Fake {
     | "send"
     | "retryLast"
     | "newChat"
+    | "reopen"
     | "discard"
     | "markLoggedIn"
     | "addAttachment"
@@ -62,7 +63,13 @@ function fake(): Fake {
       f.log.push("retry");
       return { ok: true };
     },
-    newChat: async () => f.log.push("newChat"),
+    newChat: async () => {
+      f.log.push("newChat");
+      return !f.busy;
+    },
+    reopen: async () => {
+      f.log.push("reopen");
+    },
     discard: async (s) => {
       f.log.push(`discard:${s}`);
       return !f.busy;
@@ -214,6 +221,35 @@ describe("commands", () => {
     f.sendResults.push({ ok: false, code: "AUTH_EXPIRED", message: "expired" });
     await commands(f).send("hi");
     expect(f.log).toEqual(["send:hi"]);
+  });
+
+  test("reopen delegates to the controller", async () => {
+    const f = fake();
+    await commands(f).reopen();
+    expect(f.log).toEqual(["reopen"]);
+  });
+
+  test("newChat while busy warns instead of silently ignoring", async () => {
+    const f = fake();
+    f.busy = true;
+    await commands(f).newChat();
+    expect(f.log).toEqual([
+      "newChat",
+      "warn:Wait for the current reply to finish, or press Ctrl+R to reopen.",
+    ]);
+  });
+
+  test("newChat while idle does not warn", async () => {
+    const f = fake();
+    await commands(f).newChat();
+    expect(f.log).toEqual(["newChat"]);
+  });
+
+  test("send that was queued does not prompt for a browser install", async () => {
+    const f = fake();
+    f.sendResults.push({ ok: true, queued: true });
+    await commands(f).send("two");
+    expect(f.log).toEqual(["send:two"]);
   });
 
   test("installBrowser command runs the install under progress", async () => {

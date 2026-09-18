@@ -1,4 +1,10 @@
-import type { State, ToHost, ToWebview, UiConfig } from "./protocol.js";
+import type {
+  State,
+  ToHost,
+  ToWebview,
+  UiConfig,
+  WebviewCommand,
+} from "./protocol.js";
 
 /** The slice of vscode.Webview the bridge uses; a fake in tests. */
 export interface WebviewLike {
@@ -9,8 +15,18 @@ export interface WebviewLike {
 export interface ChatViewHandlers {
   send(text: string): void;
   removeAttachment(index: number): void;
-  command(name: "login" | "newChat" | "installBrowser"): void;
+  takeBack(): void;
+  removeQueued(index: number): void;
+  command(name: WebviewCommand): void;
 }
+
+const COMMANDS: ReadonlySet<string> = new Set([
+  "login",
+  "logout",
+  "newChat",
+  "installBrowser",
+  "reopen",
+]);
 
 function isToHost(m: unknown): m is ToHost {
   if (typeof m !== "object" || m === null) return false;
@@ -22,12 +38,12 @@ function isToHost(m: unknown): m is ToHost {
       return typeof msg.text === "string";
     case "removeAttachment":
       return typeof msg.index === "number";
+    case "takeBack":
+      return true;
+    case "removeQueued":
+      return typeof msg.index === "number";
     case "command":
-      return (
-        msg.name === "login" ||
-        msg.name === "newChat" ||
-        msg.name === "installBrowser"
-      );
+      return typeof msg.name === "string" && COMMANDS.has(msg.name);
     default:
       return false;
   }
@@ -58,6 +74,12 @@ export class ChatViewBridge {
           break;
         case "removeAttachment":
           this.handlers.removeAttachment(raw.index);
+          break;
+        case "takeBack":
+          this.handlers.takeBack();
+          break;
+        case "removeQueued":
+          this.handlers.removeQueued(raw.index);
           break;
         case "command":
           this.handlers.command(raw.name);

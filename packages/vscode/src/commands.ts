@@ -20,6 +20,7 @@ export interface CommandHandlers {
   login(): Promise<void>;
   logout(): Promise<void>;
   newChat(): Promise<void>;
+  reopen(): Promise<void>;
   installBrowser(): Promise<void>;
   sendSelection(): Promise<void>;
   sendFile(uri: unknown): Promise<void>;
@@ -41,7 +42,7 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
 
   function isBusy(): boolean {
     const status = controller.getState().status;
-    return status === "busy" || status === "opening";
+    return status === "busy" || status === "opening" || status === "reopening";
   }
 
   async function runInstall(): Promise<boolean> {
@@ -117,10 +118,15 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
       await deps.clearAuth();
     },
 
-    // Task 3 turns the refusal (false while busy) into a warning.
-    newChat: async () => {
-      await controller.newChat();
+    async newChat() {
+      if (!(await controller.newChat())) {
+        ui.showWarningMessage(
+          "Wait for the current reply to finish, or press Ctrl+R to reopen.",
+        );
+      }
     },
+
+    reopen: () => controller.reopen(),
 
     async installBrowser() {
       if (await runInstall()) ui.showInformationMessage("Chromium installed.");

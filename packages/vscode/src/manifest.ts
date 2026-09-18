@@ -2,6 +2,7 @@ export const COMMAND_NAMES = [
   "login",
   "logout",
   "newChat",
+  "reopen",
   "installBrowser",
   "sendSelection",
   "sendFile",

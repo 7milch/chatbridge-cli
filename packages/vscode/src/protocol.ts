@@ -36,12 +36,21 @@ export interface State {
   lastError?: string;
 }
 
+export type WebviewCommand =
+  | "login"
+  | "logout"
+  | "newChat"
+  | "installBrowser"
+  | "reopen";
+
 /** webview → host */
 export type ToHost =
   | { type: "ready" }
   | { type: "send"; text: string }
   | { type: "removeAttachment"; index: number }
-  | { type: "command"; name: "login" | "newChat" | "installBrowser" };
+  | { type: "takeBack" }
+  | { type: "removeQueued"; index: number }
+  | { type: "command"; name: WebviewCommand };
 
 /** Vendor UI customisation, as the webview receives it. */
 export interface UiConfig {

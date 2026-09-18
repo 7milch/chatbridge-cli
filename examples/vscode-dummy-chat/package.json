@@ -55,6 +55,11 @@
         "icon": "$(add)"
       },
       {
+        "command": "chatbridge-dummy.reopen",
+        "title": "Reopen Browser",
+        "category": "Dummy Chat"
+      },
+      {
         "command": "chatbridge-dummy.installBrowser",
         "title": "Install Browser",
         "category": "Dummy Chat"
@@ -73,6 +78,14 @@
         "command": "chatbridge-dummy.focus",
         "title": "Focus Chat",
         "category": "Dummy Chat"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "chatbridge-dummy.reopen",
+        "key": "ctrl+r",
+        "mac": "cmd+r",
+        "when": "focusedView == chatbridge-dummy.chat"
       }
     ],
     "menus": {
