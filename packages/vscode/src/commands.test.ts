@@ -168,6 +168,30 @@ describe("commands", () => {
     expect(f.cleared).toBe(0);
   });
 
+  test("logout warns when a turn starts while the auth state is deleted", async () => {
+    const f = fake();
+    // The turn starts during the clearAuth await: discard then refuses.
+    const handlers = createCommands({
+      displayName: "Acme AI",
+      controller: f.controller as SessionController,
+      ui: f.ui,
+      runLogin: f.login,
+      installBrowser: f.install,
+      loginOptions: () => ({}) as never,
+      installOptions: () => ({ cliPath: "/x/cli.js" }),
+      clearAuth: async () => {
+        f.log.push("clearAuth");
+        f.busy = true;
+      },
+    });
+    await handlers.logout();
+    expect(f.log).toEqual([
+      "clearAuth",
+      "discard:Logged out",
+      "warn:Wait for the current reply to finish, then log out.",
+    ]);
+  });
+
   test("a queued entry is not sent under the auth state logout deletes", async () => {
     const f = fake();
     const order: string[] = [];

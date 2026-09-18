@@ -252,6 +252,13 @@ export class ChatModel {
     return this.runTurn(prompt, false);
   }
 
+  /** Whether a `/login` owns the model right now. A getter, not an inline
+   * comparison: at the turn ends below TypeScript has narrowed
+   * `this.status` to the value it held before the await. */
+  private get isLoggingIn(): boolean {
+    return this.status === "logging-in";
+  }
+
   /** Ends a turn: moves to the settled status and continues the queue.
    * While `/login` is running the login owns the status and the browser
    * window, so the outcome is only recorded — restoring `idle` here would
@@ -260,7 +267,7 @@ export class ChatModel {
    * one end that deliberately does not continue: a MentionError put the
    * entry back at the front of the queue. */
   private settle(status: "idle" | "dead", drains = true): void {
-    if (this.status === "logging-in") {
+    if (this.isLoggingIn) {
       this.settledDuringLogin = status;
       return;
     }
@@ -394,7 +401,11 @@ export class ChatModel {
       this.onChange();
       return true; // stale: reset ran; nothing is sent or held
     }
-    if (!this.shell.autoSend) {
+    // A `/login` typed while the command ran owns the status and the
+    // browser: auto-sending now would push the result into the old session
+    // behind the user's back. Hold it like autoSend: false does, so it
+    // goes out with the next message after the post-login reset.
+    if (!this.shell.autoSend || this.isLoggingIn) {
       this.heldResults.push(result);
       entry.held = true;
       // The result is held before draining, so a queued message carries it

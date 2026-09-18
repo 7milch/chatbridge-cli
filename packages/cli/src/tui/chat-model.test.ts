@@ -1482,6 +1482,45 @@ describe("/login", () => {
     expect(model.status).toBe("idle");
   });
 
+  test("an autoSend shell result finishing during /login is held, not sent", async () => {
+    const a = fakeSession("a");
+    const b = fakeSession("b");
+    const runner = fakeRunner();
+    const login = deferred<void>();
+    const model = await modelWith(a.session, {
+      closeTimeoutMs: 20,
+      openSession: async () => b.session,
+      runCommand: runner.runCommand,
+      shell: { leadIn: "Check:", autoSend: true },
+      login: () => login.promise,
+      expand: async (t) => ({ prompt: t, attachments: [] }),
+    });
+    const shell = model.runShell("ls");
+    await tick();
+    expect(model.status).toBe("running");
+    const p = model.submit("/login");
+    expect(model.status).toBe("logging-in");
+    await model.submit("queued");
+    runner.emit("a.ts\n");
+    runner.finish({ exitCode: 0 });
+    expect(await shell).toBe(true);
+    // The login still owns the status and the browser window.
+    expect(model.status).toBe("logging-in");
+    expect(a.calls).toEqual([]);
+    expect(model.heldResults).toHaveLength(1);
+    expect(model.messages[0]).toMatchObject({ role: "shell", held: true });
+    expect(model.queue).toEqual(["queued"]);
+
+    login.resolve();
+    await p;
+    await tick();
+    expect(model.messages.map((m) => m.text)).toContain("Logged in");
+    expect(model.messages.map((m) => m.text)).toContain("reopened");
+    // The queued message goes to the new session and carries the result.
+    expect(a.calls).toEqual([]);
+    expect(b.calls).toEqual(["b:queued\n\n### $ ls\n```\na.ts\n```"]);
+  });
+
   test("cancel: Login cancelled, back to the previous status", async () => {
     const model = await modelWith(fakeSession().session, {
       login: ({ signal }) =>

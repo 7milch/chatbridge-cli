@@ -123,7 +123,14 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
       // entry would otherwise reopen the browser — and send — under the
       // credentials the user just asked to delete.
       await deps.clearAuth();
-      await controller.discard("Logged out");
+      if (!(await controller.discard("Logged out"))) {
+        // A turn started while the auth state was being deleted. The file
+        // is gone either way; only the session is still open, so warn about
+        // that alone.
+        ui.showWarningMessage(
+          "Wait for the current reply to finish, then log out.",
+        );
+      }
     },
 
     async newChat() {
