@@ -27,6 +27,11 @@ export {
 } from "./chat-view-bridge.js";
 export { buildHtml, type HtmlInputs } from "./webview-html.js";
 export {
+  type ExtensionUiOptions,
+  type ResolvedUiConfig,
+  resolveUiConfig,
+} from "./ui-config.js";
+export {
   createVscodeUi,
   type EditorSnapshot,
   type ProgressReporter,

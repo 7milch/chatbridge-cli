@@ -119,7 +119,20 @@ keeps `"type": "module"` in its manifest, which is why the entry point is
 a real vendor `.vsix` must ship `node_modules/playwright` so the Install
 button works for end users — drop `--no-dependencies` when packaging for
 distribution, or vendors hit "playwright is not bundled with this
-extension". Activation throws a message listing missing `contributes` IDs
+extension". Brand the view with the optional `ui` option (plain text only;
+the banner path is relative to the extension root and must ship in the
+`.vsix`):
+
+```ts
+ui: {
+  welcome: "Ask <Vendor> anything.",
+  banner: "media/banner.svg",
+  footer: "Conversations are not stored by this extension.",
+  sendButton: { background: "#2f6f4f", foreground: "#ffffff" },
+}
+```
+
+Activation throws a message listing missing `contributes` IDs
 when the manifest and `id` disagree. Verify by hand: F5 in VSCode → Log in
 → send → right-click a selection → send → New Chat → Log out.
 

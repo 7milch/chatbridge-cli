@@ -11,7 +11,7 @@ describe("buildHtml", () => {
       title: "Acme AI",
     });
     expect(html).toContain(
-      `content="default-src 'none'; script-src 'nonce-n0nce'; style-src vscode-webview://abc;"`,
+      `content="default-src 'none'; img-src vscode-webview://abc; script-src 'nonce-n0nce'; style-src vscode-webview://abc;"`,
     );
     expect(html).toContain(
       `<script nonce="n0nce" src="vscode-resource:/main.js">`,
@@ -21,6 +21,27 @@ describe("buildHtml", () => {
     );
     expect(html).toContain("<title>Acme AI</title>");
     expect(html).not.toContain("http://");
+  });
+
+  test("carries the welcome block and the footer, both hidden by default", () => {
+    const html = buildHtml({
+      cspSource: "x",
+      nonce: "n",
+      scriptUri: "s",
+      styleUri: "c",
+      title: "t",
+    });
+    expect(html).toContain('<div id="welcome" hidden>');
+    expect(html).toContain('<img id="banner" alt="" hidden>');
+    expect(html).toContain('<p id="welcome-text"></p>');
+    expect(html).toContain('<footer id="footer" hidden></footer>');
+    expect(html.indexOf('id="welcome"')).toBeLessThan(
+      html.indexOf('id="history"'),
+    );
+    expect(html.indexOf('id="composer"')).toBeLessThan(
+      html.indexOf('id="footer"'),
+    );
+    expect(html).not.toContain("style=");
   });
 
   test("escapes the title", () => {

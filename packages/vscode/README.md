@@ -32,6 +32,29 @@ export const { activate, deactivate } = createExtension({
   `120000`). The user's `<id>.timeoutSec` setting overrides it.
 - `headless` — whether sessions launch a headless browser (default `true`).
   The user's `<id>.headless` setting overrides it.
+- `ui` — optional vendor branding, all fields plain text (no HTML, no
+  Markdown):
+  - `welcome` — shown centred above the history while it is empty; `\n`
+    makes a line break. Hidden once the first message arrives.
+  - `banner` — image (png/svg) shown above `welcome`, same lifetime. The
+    path is relative to the extension root, must not escape it, and must
+    exist at activation — a missing file throws — so ship it in the
+    `.vsix` (keep it out of `.vscodeignore`).
+  - `footer` — one line under the composer, always visible.
+  - `sendButton` — `{ background, foreground }` CSS colour strings for the
+    Send button; each defaults to the VSCode button theme colour.
+
+  ```ts
+  createExtension({
+    id: "company-ai", displayName: "Company AI", provider,
+    ui: {
+      welcome: "Ask Company AI anything.",
+      banner: "media/banner.svg",
+      footer: "Conversations are not stored by this extension.",
+      sendButton: { background: "#2f6f4f", foreground: "#ffffff" },
+    },
+  });
+  ```
 - `baseDir` — test-only override for the base directory of the config /
   auth-state store.
 

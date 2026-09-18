@@ -1,4 +1,4 @@
-import type { State, ToHost, ToWebview } from "./protocol.js";
+import type { State, ToHost, ToWebview, UiConfig } from "./protocol.js";
 
 /** The slice of vscode.Webview the bridge uses; a fake in tests. */
 export interface WebviewLike {
@@ -43,12 +43,14 @@ export class ChatViewBridge {
     private readonly handlers: ChatViewHandlers,
   ) {}
 
-  attach(webview: WebviewLike): { dispose(): void } {
+  attach(webview: WebviewLike, uiConfig?: UiConfig): { dispose(): void } {
     this.webview = webview;
     const sub = webview.onDidReceiveMessage((raw) => {
       if (!isToHost(raw)) return;
       switch (raw.type) {
         case "ready":
+          if (uiConfig)
+            void webview.postMessage({ type: "config", ...uiConfig });
           this.pushState(this.getState());
           break;
         case "send":

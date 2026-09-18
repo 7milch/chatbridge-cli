@@ -28,7 +28,17 @@ export type ToHost =
   | { type: "removeAttachment"; index: number }
   | { type: "command"; name: "login" | "newChat" | "installBrowser" };
 
+/** Vendor UI customisation, as the webview receives it. */
+export interface UiConfig {
+  welcome?: string;
+  /** Webview URI (already converted with `asWebviewUri`). */
+  bannerUri?: string;
+  footer?: string;
+  sendButton?: { background?: string; foreground?: string };
+}
+
 /** host → webview */
 export type ToWebview =
   | ({ type: "state" } & State)
-  | { type: "progress"; text: string };
+  | { type: "progress"; text: string }
+  | ({ type: "config" } & UiConfig);

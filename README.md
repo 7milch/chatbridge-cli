@@ -207,6 +207,10 @@ export const { activate, deactivate } = createExtension({
 The manifest declares the view `<id>.chat`, the commands `<id>.login`,
 `logout`, `newChat`, `installBrowser`, `sendSelection`, `sendFile`, `focus`,
 and the settings `<id>.headless` / `<id>.timeoutSec`;
+Pass `ui` to brand the view: `welcome` text and a `banner` image above the
+empty history, a `footer` line under the composer, and `sendButton`
+colours.
+
 `examples/vscode-dummy-chat` is the template (esbuild CJS bundle, `vscode`
 and `playwright` external, webview assets copied next to the bundle). The
 browser runs inside the extension host and opens lazily on the first

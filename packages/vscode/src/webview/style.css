@@ -97,9 +97,28 @@ body {
   border: 1px solid var(--vscode-input-border, transparent);
   font-family: inherit;
 }
+#welcome {
+  padding: 16px 12px 0;
+  text-align: center;
+  opacity: 0.7;
+}
+#banner {
+  max-width: 100%;
+  height: auto;
+}
+#welcome-text {
+  margin: 8px 0 0;
+  white-space: pre-line;
+}
+#footer {
+  padding: 0 8px 8px;
+  text-align: center;
+  font-size: 90%;
+  opacity: 0.7;
+}
 #send {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--cb-send-bg, var(--vscode-button-background));
+  color: var(--cb-send-fg, var(--vscode-button-foreground));
   border: none;
   border-radius: 3px;
   padding: 0 12px;

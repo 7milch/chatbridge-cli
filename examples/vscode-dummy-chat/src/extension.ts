@@ -11,4 +11,10 @@ export const { activate, deactivate } = createExtension({
   ),
   configDir: "chatbridge",
   baseDir: process.env.CHATBRIDGE_DUMMY_BASE_DIR,
+  ui: {
+    welcome: "Ask the dummy chat anything.\nReplies are echoes.",
+    banner: "media/banner.svg",
+    footer: "Conversations are not stored by this extension.",
+    sendButton: { background: "#2f6f4f", foreground: "#ffffff" },
+  },
 });

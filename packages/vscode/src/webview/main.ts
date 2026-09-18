@@ -1,4 +1,10 @@
-import type { Message, State, ToHost, ToWebview } from "../protocol.js";
+import type {
+  Message,
+  State,
+  ToHost,
+  ToWebview,
+  UiConfig,
+} from "../protocol.js";
 
 declare function acquireVsCodeApi(): { postMessage(m: ToHost): void };
 const vscode = acquireVsCodeApi();
@@ -9,6 +15,31 @@ const attachments = document.getElementById("attachments") as HTMLElement;
 const form = document.getElementById("composer") as HTMLFormElement;
 const input = document.getElementById("input") as HTMLTextAreaElement;
 const sendButton = document.getElementById("send") as HTMLButtonElement;
+const welcome = document.getElementById("welcome") as HTMLElement;
+const welcomeText = document.getElementById("welcome-text") as HTMLElement;
+const banner = document.getElementById("banner") as HTMLImageElement;
+const footer = document.getElementById("footer") as HTMLElement;
+
+let config: UiConfig = {};
+
+function applyConfig(c: UiConfig): void {
+  config = c;
+  if (c.sendButton?.background) {
+    sendButton.style.setProperty("--cb-send-bg", c.sendButton.background);
+  }
+  if (c.sendButton?.foreground) {
+    sendButton.style.setProperty("--cb-send-fg", c.sendButton.foreground);
+  }
+  welcomeText.textContent = c.welcome ?? "";
+  if (c.bannerUri) {
+    banner.src = c.bannerUri;
+    banner.hidden = false;
+  } else {
+    banner.hidden = true;
+  }
+  footer.textContent = c.footer ?? "";
+  footer.hidden = !c.footer;
+}
 
 function el(tag: string, className: string, text?: string): HTMLElement {
   const e = document.createElement(tag);
@@ -106,6 +137,8 @@ function render(s: State): void {
   history.scrollTop = history.scrollHeight;
   renderStatus(s);
   renderAttachments(s);
+  welcome.hidden =
+    s.messages.length > 0 || (!config.welcome && !config.bannerUri);
   const locked = s.status === "busy" || s.status === "opening";
   input.disabled = locked;
   sendButton.disabled = locked;
@@ -135,6 +168,9 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
   if (m.type === "state") {
     const { type: _type, ...state } = m;
     render(state);
+  } else if (m.type === "config") {
+    const { type: _type, ...rest } = m;
+    applyConfig(rest);
   } else if (m.type === "progress") {
     const t = status.querySelector(".progress-text");
     if (t) t.textContent = m.text;

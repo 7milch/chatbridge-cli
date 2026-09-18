@@ -13,6 +13,7 @@ import { type CommandHandlers, createCommands } from "./commands.js";
 import { installBrowser } from "./install-browser.js";
 import { COMMAND_NAMES, missingContributions } from "./manifest.js";
 import { SessionController } from "./session-controller.js";
+import { type ExtensionUiOptions, resolveUiConfig } from "./ui-config.js";
 import { createVscodeUi } from "./vscode-ui.js";
 
 export interface CreateExtensionOptions {
@@ -30,6 +31,8 @@ export interface CreateExtensionOptions {
   headless?: boolean;
   /** Test-only: overrides the config/auth-store base directory. */
   baseDir?: string;
+  /** Vendor UI customisation: welcome text, banner, footer, Send colours. */
+  ui?: ExtensionUiOptions;
   /** Path of `playwright/cli.js`; defaults to
    * `<extension>/node_modules/playwright/cli.js`. */
   playwrightCliPath?: string;
@@ -57,6 +60,11 @@ export function createExtension(opts: CreateExtensionOptions) {
         `${opts.displayName}: package.json lacks contributes entries for "${opts.id}": ${missing.join(", ")}`,
       );
     }
+    const uiConfig = resolveUiConfig(
+      opts.ui,
+      context.extensionPath,
+      existsSync,
+    );
     const authStore = createAuthStore({
       configDir: opts.configDir ?? opts.id,
       providerName: opts.provider.name,
@@ -138,7 +146,12 @@ export function createExtension(opts: CreateExtensionOptions) {
     context.subscriptions.push(
       vscode.window.registerWebviewViewProvider(
         `${opts.id}.chat`,
-        new ChatViewProvider(context.extensionUri, opts.displayName, bridge),
+        new ChatViewProvider(
+          context.extensionUri,
+          opts.displayName,
+          bridge,
+          uiConfig,
+        ),
       ),
     );
     for (const name of COMMAND_NAMES) {

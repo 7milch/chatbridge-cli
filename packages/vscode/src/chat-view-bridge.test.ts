@@ -68,6 +68,24 @@ describe("ChatViewBridge", () => {
     expect(w.posted).toHaveLength(2);
   });
 
+  test("attach with a UI config → config is posted before the state", () => {
+    const bridge = new ChatViewBridge(() => state, {
+      send() {},
+      removeAttachment() {},
+      command() {},
+    });
+    const w = fakeWebview();
+    bridge.attach(w.webview, {
+      welcome: "Hi",
+      bannerUri: "vscode-resource:/b",
+    });
+    w.receive({ type: "ready" });
+    expect(w.posted).toEqual([
+      { type: "config", welcome: "Hi", bannerUri: "vscode-resource:/b" },
+      { type: "state", ...state },
+    ]);
+  });
+
   test("malformed messages are ignored", () => {
     const bridge = new ChatViewBridge(() => state, {
       send() {
