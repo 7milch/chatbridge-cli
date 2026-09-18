@@ -198,7 +198,14 @@ function render(s: State): void {
   input.disabled = false;
   sendButton.disabled = false;
   sendButton.textContent = active ? "Queue" : "Send";
-  input.focus();
+  // Only when nothing else holds focus: a render must not steal it from a
+  // selection in the history or from the status and queue buttons.
+  if (
+    document.activeElement === null ||
+    document.activeElement === document.body
+  ) {
+    input.focus();
+  }
   lastState = s;
 }
 
@@ -219,6 +226,9 @@ function submit(): void {
   if (slash) {
     input.value = "";
     if (slash.command === "help") {
+      // The welcome block hides the history; the help block must be seen.
+      welcome.hidden = true;
+      history.hidden = false;
       history.appendChild(el("div", "message help", helpText()));
       history.scrollTop = history.scrollHeight;
       return;
@@ -250,6 +260,8 @@ input.addEventListener("keydown", (e) => {
     e.preventDefault();
     const entries = lastState?.queue ?? [];
     input.value = entries.map((q) => q.text).join("\n\n");
+    // Setting the value fires no `input` event, so clear the error here.
+    showInlineError(undefined);
     vscode.postMessage({ type: "takeBack" });
   }
 });
