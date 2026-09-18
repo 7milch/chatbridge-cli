@@ -20,8 +20,10 @@ import {
   DEAD_GUIDE,
   GUIDE,
   HELD_GUIDE,
+  LOGIN_STATUS,
   MAX_INPUT_ROWS,
   MAX_QUEUE_ROWS,
+  OPENING_STATUS,
   QUEUE_GUIDE,
   RESETTING_STATUS,
   SHELL_GUIDE,
@@ -38,6 +40,7 @@ import { styled, theme } from "./theme.js";
 async function modelWith(
   session: ChatSessionLike,
   opts: Partial<ChatModelOptions> = {},
+  gate?: Promise<void>,
 ): Promise<ChatModel> {
   const reopen = opts.openSession;
   let opened = false;
@@ -48,13 +51,16 @@ async function modelWith(
     openSession: async () => {
       if (!opened) {
         opened = true;
+        if (gate) await gate;
         return session;
       }
       if (!reopen) throw new Error("not expected");
       return reopen();
     },
   });
-  await model.ready;
+  // A gated first open leaves the model `opening`, which is the point of
+  // the tests that pass one.
+  if (!gate) await model.ready;
   return model;
 }
 
@@ -153,6 +159,9 @@ async function setup(
     width?: number;
     runCommand?: (c: string, o: RunOptions) => RunningCommand;
     shell?: ShellConfig;
+    /** Holds the first open open, so the model stays `opening`. */
+    openGate?: Promise<void>;
+    login?: ChatModelOptions["login"];
   } = {},
 ) {
   const t = await createTestRenderer({
@@ -170,7 +179,9 @@ async function setup(
         opts.expand ?? (async (text) => ({ prompt: text, attachments: [] })),
       runCommand: opts.runCommand,
       shell: opts.shell,
+      ...(opts.login ? { login: opts.login } : {}),
     },
+    opts.openGate,
   );
   const view = new ChatView(t.renderer, model, {
     title: "test-cli",
@@ -376,6 +387,63 @@ describe("ChatView", () => {
     ]);
     expect(t.model.queue).toEqual(["second"]);
     expect(await t.frameWith("▹ second")).toContain("▹ second");
+  });
+
+  test("the status row says the browser is opening until the open lands", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = () => resolve();
+    });
+    const t = await setup({ openGate: gate });
+    expect(t.model.status).toBe("opening");
+    expect(await t.frameWith(OPENING_STATUS)).toContain(OPENING_STATUS);
+    release();
+    await t.model.ready;
+    expect(await t.frameWith(GUIDE)).toContain(GUIDE);
+  });
+
+  test("/login shows the login status, then the latest progress line", async () => {
+    let report!: (message: string) => void;
+    const done = deferred<void>();
+    const t = await setup({
+      login: async ({ onProgress }) => {
+        report = onProgress;
+        await done.promise;
+      },
+    });
+    const login = t.model.submit("/login");
+    expect(await t.frameWith(LOGIN_STATUS)).toContain(LOGIN_STATUS);
+    report("Waiting for the login page...");
+    const frame = await t.frameWith("Waiting for the login page...");
+    expect(frame).not.toContain(LOGIN_STATUS);
+    done.resolve();
+    await login;
+  });
+
+  test("a help entry renders verbatim with no role label", async () => {
+    const t = await setup();
+    await t.model.submit("/help");
+    const frame = await t.frameWith("/login");
+    expect(frame).toContain("/login   Log in in a browser window");
+    expect(frame).toContain("/help    List these commands");
+    // No "help" label row above it; the text is the whole entry.
+    expect(frame).not.toMatch(/^help\s*$/m);
+  });
+
+  test("the dead guide points at /login", async () => {
+    const t = await setup({
+      session: {
+        async send() {
+          throw new Error("page closed");
+        },
+        async close() {},
+        async kill() {},
+      },
+    });
+    await t.model.submit("boom");
+    expect(t.model.status).toBe("dead");
+    const frame = await t.frameWith(DEAD_GUIDE);
+    expect(frame).toContain("Ctrl+R reopen · /login · Ctrl+C quit");
   });
 
   test("setStatus replaces the guide on the status line", async () => {
@@ -831,7 +899,7 @@ describe("ChatView", () => {
   test("the guide mentions @ file", async () => {
     const t = await setup();
     expect(GUIDE).toBe(
-      "Enter send · Ctrl+J newline · @ file · ! shell · Ctrl+R reopen · Ctrl+C quit",
+      "Enter send · @ file · ! shell · / commands · Ctrl+R reopen · Ctrl+C quit",
     );
     // Must fit an 80-column terminal, or the status row clips.
     expect([...GUIDE].length).toBeLessThanOrEqual(80);

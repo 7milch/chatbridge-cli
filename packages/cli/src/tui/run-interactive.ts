@@ -12,7 +12,11 @@ import {
 import { FileIndex } from "../mentions/file-index.js";
 import type { ShellConfig } from "../shell/shell-config.js";
 import { resolveBanner } from "./banner.js";
-import { ChatModel } from "./chat-model.js";
+import {
+  ChatModel,
+  type ChatModelOptions,
+  type ChatSessionLike,
+} from "./chat-model.js";
 import { ChatView } from "./chat-view.js";
 import { type SpinnerOptions, resolveSpinner } from "./spinner.js";
 
@@ -31,6 +35,10 @@ export interface InteractiveOptions extends ChatSessionOptions {
   createRenderer?: () => Promise<CliRenderer>;
   /** Test-only: replaces the working-directory index. */
   index?: FileIndex;
+  /** Test-only: replaces ChatSession.open. */
+  createSession?: () => Promise<ChatSessionLike>;
+  /** Test-only: replaces runLogin. */
+  login?: ChatModelOptions["login"];
 }
 
 const CLOSE_TIMEOUT_MS = 5_000;
@@ -66,6 +74,12 @@ export function waitForQuit(
   return new Promise<unknown>((resolve) => {
     (renderer.keyInput as unknown as KeypressSource).on("keypress", (key) => {
       if (!key.ctrl || key.name !== "c") return;
+      // A login holds a browser window the user is waiting in; Ctrl+C
+      // there cancels it rather than tearing the whole TUI down.
+      if (model.status === "logging-in") {
+        model.cancelLogin();
+        return;
+      }
       if (model.status === "running") {
         model.stopShell();
         return;
@@ -133,14 +147,16 @@ export async function runInteractive(
   let model: ChatModel | undefined;
   try {
     model = new ChatModel({
-      openSession: () => ChatSession.open(sessionOpts),
-      login: ({ signal, onProgress: report }) =>
-        runLogin({
-          provider: opts.provider,
-          authStore: opts.authStore,
-          signal,
-          onProgress: report,
-        }),
+      openSession: opts.createSession ?? (() => ChatSession.open(sessionOpts)),
+      login:
+        opts.login ??
+        (({ signal, onProgress: report }) =>
+          runLogin({
+            provider: opts.provider,
+            authStore: opts.authStore,
+            signal,
+            onProgress: report,
+          })),
       clearAuth: () => opts.authStore.clear(),
       shell: opts.shell,
     });
@@ -164,16 +180,17 @@ export async function runInteractive(
     const fatal = await quit;
     return fatal === undefined ? {} : { fatal };
   } finally {
-    // A shell command must not outlive the TUI.
+    // Neither a shell command nor a login browser may outlive the TUI.
     model?.stopShell();
+    model?.cancelLogin();
     view?.setStatus(CLOSING_STATUS);
     // A reset in flight has already closed the old session and is about to
     // assign a new one; closing model.session now would leak that new browser
-    // and its Playwright connection would keep the process alive. Wait for the
-    // reset to settle first, under the same cap.
-    const settled = await settleReset(model?.pendingReset);
-    // The model may hold no session at all: the first open failed, or it is
-    // still in flight. Task 8 makes teardown wait for `model.ready`.
+    // and its Playwright connection would keep the process alive. The same
+    // goes for the initial open, which a quit typed at startup can outrun.
+    // Wait for whichever is in flight, under the same cap.
+    const settled = await settleReset(model?.pendingReset ?? model?.ready);
+    // The model may still hold no session: the open above failed.
     const open = model?.session;
     const closed =
       settled &&

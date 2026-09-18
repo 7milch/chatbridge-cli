@@ -1542,6 +1542,45 @@ describe("/login", () => {
     expect(calls).toBe(1);
   });
 
+  test("a reset while /login waits for the open cancels it instead of hanging", async () => {
+    // The login is only started after the open settles; a reset that runs
+    // in that window aborts the controller before the login can listen for
+    // it, so the wait itself must notice the cancellation.
+    const open = deferred<ChatSessionLike>();
+    const a = fakeSession("a");
+    const b = fakeSession("b");
+    let calls = 0;
+    const model = new ChatModel({
+      closeTimeoutMs: 20,
+      openSession: () => {
+        calls++;
+        return calls === 1 ? open.promise : Promise.resolve(b.session);
+      },
+      // Like runLogin: it only learns of an abort through the listener, so
+      // a controller aborted before this call would never settle it.
+      login: ({ signal }) =>
+        new Promise<void>((_, rej) =>
+          signal.addEventListener("abort", () => rej(new LoginAbortedError())),
+        ),
+      clearAuth: async () => {},
+    });
+    const p = model.submit("/login");
+    expect(model.status).toBe("opening");
+    const reset = model.reset();
+    open.resolve(a.session);
+    await reset;
+    await p;
+    expect(model.messages.some((m) => m.text === "Login cancelled")).toBe(true);
+    expect(model.status).toBe("idle");
+    expect(model.session).toBe(b.session);
+    // The single-flight guard was released: a second /login still runs.
+    const again = model.submit("/login");
+    await tick();
+    expect(model.status).toBe("logging-in");
+    model.cancelLogin();
+    await again;
+  });
+
   test("a reset during /login cancels the login and wins", async () => {
     const b = fakeSession("b");
     const model = await modelWith(fakeSession("a").session, {

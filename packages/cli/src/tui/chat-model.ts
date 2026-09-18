@@ -513,9 +513,20 @@ export class ChatModel {
       // The status the login returns to has to be one the model can leave
       // again: `opening` and `resetting` belong to work in flight, and
       // restoring either would strand the model there forever. Let that
-      // work settle first and go back to whatever it produced.
-      if (this.status === "opening") await this.ready;
-      else if (this.status === "resetting") await this.pendingReset;
+      // work settle first and go back to whatever it produced. A loop, not
+      // one check: a reset starting during the wait puts the model back
+      // into `resetting`.
+      while (this.status === "opening" || this.status === "resetting") {
+        await (this.status === "opening" ? this.ready : this.pendingReset);
+      }
+      // A reset in that window already aborted this controller, and the
+      // login below would only learn of it through a listener it has yet to
+      // register — it would never settle. Report it as cancelled here.
+      if (ac.signal.aborted) {
+        this.messages.push({ role: "separator", text: "Login cancelled" });
+        this.onChange();
+        return;
+      }
       const previous = this.status;
       this.status = "logging-in";
       this.onChange();

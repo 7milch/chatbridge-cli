@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { AuthRequiredError, LoginAbortedError } from "@chatbridge/core";
 import type { Page, Provider } from "@chatbridge/provider";
 import type { AuthStore } from "@chatbridge/runtime";
 import { createTestRenderer } from "@opentui/core/testing";
@@ -211,6 +212,62 @@ describe("waitForQuit", () => {
       new Promise((r) => setTimeout(() => r("pending"), 50)),
     ]);
     expect(raced).toBe("pending");
+    t.mockInput.pressKey("c", { ctrl: true });
+    expect(await quit).toBeUndefined();
+    view.destroy();
+    t.renderer.destroy();
+  });
+
+  test("Ctrl+C during /login cancels the login instead of quitting", async () => {
+    // As runInteractive builds it: OpenTUI's own Ctrl+C would otherwise
+    // destroy the renderer, which is a quit of its own.
+    const t = await createTestRenderer({
+      width: 40,
+      height: 12,
+      exitOnCtrlC: false,
+    });
+    const model = await modelWith(
+      {
+        async send() {
+          return "";
+        },
+        async close() {},
+        async kill() {},
+      },
+      {
+        openSession: async () => {
+          throw new Error("not expected");
+        },
+        login: ({ signal }) =>
+          new Promise((_, rej) =>
+            signal.addEventListener("abort", () =>
+              rej(new LoginAbortedError()),
+            ),
+          ),
+      },
+    );
+    const view = new ChatView(t.renderer, model, {
+      title: "test-cli",
+      providerName: "dummy-chat",
+      timeoutMs: 1_000,
+      headless: true,
+      banner: [],
+      spinner: resolveSpinner(),
+      index: FileIndex.fromPaths([]),
+    });
+    const quit = waitForQuit(t.renderer, model);
+    const login = model.submit("/login");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(model.status).toBe("logging-in");
+    t.mockInput.pressKey("c", { ctrl: true });
+    await login;
+    expect(model.messages.at(-1)?.text).toBe("Login cancelled");
+    const raced = await Promise.race([
+      quit.then(() => "resolved"),
+      new Promise((r) => setTimeout(() => r("pending"), 50)),
+    ]);
+    expect(raced).toBe("pending");
+    // A second Ctrl+C, now that the login is gone, quits as usual.
     t.mockInput.pressKey("c", { ctrl: true });
     expect(await quit).toBeUndefined();
     view.destroy();
@@ -510,5 +567,31 @@ describe("runInteractive", () => {
       t.mockInput.pressKey("c", { ctrl: true });
     }
     await run;
+  });
+
+  test("an open that fails with AuthRequiredError shows in the TUI and is reported at quit", async () => {
+    const t = await createTestRenderer({ width: 80, height: 20 });
+    const boom = new AuthRequiredError("not logged in");
+    const run = runInteractive({
+      ...sessionOpts().opts,
+      createSession: () => Promise.reject(boom),
+      createRenderer: async () => t.renderer,
+      index: FileIndex.fromPaths([]),
+    });
+    let frame = "";
+    for (let i = 0; i < 50 && !frame.includes("not logged in"); i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      await t.renderOnce();
+      frame = t.captureCharFrame();
+    }
+    try {
+      // The UI came up despite the failure, and says how to fix it.
+      expect(frame).toContain("not logged in");
+      expect(frame).toContain("Type /login to log in.");
+      expect(frame).toContain("Ctrl+R reopen · /login · Ctrl+C quit");
+    } finally {
+      t.mockInput.pressKey("c", { ctrl: true });
+    }
+    expect(await run).toEqual({ fatal: boom });
   });
 });
