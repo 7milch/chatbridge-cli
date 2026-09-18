@@ -12,7 +12,11 @@
   "type": "module",
   "engines": { "node": ">=20" },
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./slash-commands": {
+      "types": "./dist/slash-commands.d.ts",
+      "default": "./dist/slash-commands.js"
+    }
   },
   "files": ["dist", "README.md", "LICENSE"],
   "publishConfig": { "access": "public" },
