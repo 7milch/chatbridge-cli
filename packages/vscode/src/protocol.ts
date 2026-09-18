@@ -50,7 +50,11 @@ export type ToHost =
   | { type: "removeAttachment"; index: number }
   | { type: "takeBack" }
   | { type: "removeQueued"; index: number }
-  | { type: "command"; name: WebviewCommand };
+  | { type: "command"; name: WebviewCommand }
+  /** Files dropped on the webview, as URI strings. */
+  | { type: "attachUris"; uris: string[] }
+  /** A paste into the input box; `id` pairs it with its `pasteResult`. */
+  | { type: "pasted"; id: number; text: string };
 
 /** Vendor UI customisation, as the webview receives it. */
 export interface UiConfig {
@@ -66,4 +70,6 @@ export interface UiConfig {
 export type ToWebview =
   | ({ type: "state" } & State)
   | { type: "progress"; text: string }
-  | ({ type: "config" } & UiConfig);
+  | ({ type: "config" } & UiConfig)
+  /** Answer to `pasted`: when attached, the webview drops the pasted text. */
+  | { type: "pasteResult"; id: number; attached: boolean };

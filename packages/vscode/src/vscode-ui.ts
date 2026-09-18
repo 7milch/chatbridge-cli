@@ -26,6 +26,8 @@ export interface VscodeUi {
     task: (progress: ProgressReporter, signal: AbortSignal) => Promise<T>,
   ): Promise<T>;
   activeEditor(): EditorSnapshot | undefined;
+  /** Parses a URI string; throws when it is not a valid URI. */
+  parseUri(uri: string): unknown;
   /** Opens the document behind an explorer Uri (or any Uri) read-only. */
   openDocument(uri: unknown): Promise<{ path: string; text: string }>;
   focusView(): void;
@@ -79,6 +81,7 @@ export function createVscodeUi(api: typeof vscode, id: string): VscodeUi {
       }
       return snap;
     },
+    parseUri: (uri) => api.Uri.parse(uri, true),
     openDocument: async (uri) => {
       const doc = await api.workspace.openTextDocument(uri as vscode.Uri);
       return { path: relPath(doc.uri), text: doc.getText() };

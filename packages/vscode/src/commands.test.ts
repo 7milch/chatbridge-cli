@@ -51,7 +51,14 @@ function fake(): Fake {
       );
     },
     activeEditor: () => f.editor,
-    openDocument: async (uri) => ({ path: `doc:${String(uri)}`, text: "DOC" }),
+    parseUri: (uri) => uri,
+    openDocument: async (uri) => {
+      const raw = String(uri);
+      if (raw.endsWith("/dir") || !raw.startsWith("file:")) {
+        throw new Error(`cannot open ${raw}`);
+      }
+      return { path: `doc:${raw}`, text: "DOC" };
+    },
     focusView: () => f.log.push("focus"),
   };
   f.controller = {
@@ -313,5 +320,44 @@ describe("commands", () => {
     f.editor = { path: "j.md", text: "日本" };
     await commands(f).sendSelection();
     expect(f.log[0]).toBe("attach:j.md:6");
+  });
+
+  test("attachUris attaches every readable file and warns once about the rest", async () => {
+    const f = fake();
+    await commands(f).attachUris([
+      "file:///w/a.ts",
+      "file:///w/dir",
+      "untitled:x",
+      "file:///w/b.ts",
+    ]);
+    expect(f.log).toEqual([
+      "attach:doc:file:///w/a.ts:3",
+      "focus",
+      "attach:doc:file:///w/b.ts:3",
+      "focus",
+      "warn:Skipped: file:///w/dir, untitled:x",
+    ]);
+  });
+
+  test("pasted text equal to the editor selection becomes a selection chip", () => {
+    const f = fake();
+    f.editor = {
+      path: "src/x.ts",
+      text: "a\nb\nc\nd",
+      selection: { text: "b\nc", startLine: 2, endLine: 3 },
+    };
+    expect(commands(f).pasted("b\r\nc")).toBe(true);
+    expect(f.log).toEqual(["attach:src/x.ts:L2-L3:3", "focus"]);
+  });
+
+  test("pasted text that differs is not attached", () => {
+    const f = fake();
+    f.editor = {
+      path: "src/x.ts",
+      text: "a\nb",
+      selection: { text: "a", startLine: 1, endLine: 1 },
+    };
+    expect(commands(f).pasted("zzz")).toBe(false);
+    expect(f.log).toEqual([]);
   });
 });

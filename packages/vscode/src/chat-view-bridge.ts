@@ -18,6 +18,8 @@ export interface ChatViewHandlers {
   takeBack(): void;
   removeQueued(index: number): void;
   command(name: WebviewCommand): void;
+  attachUris(uris: string[]): void;
+  pasted(id: number, text: string): void;
 }
 
 const COMMANDS: ReadonlySet<string> = new Set([
@@ -44,6 +46,12 @@ function isToHost(m: unknown): m is ToHost {
       return typeof msg.index === "number";
     case "command":
       return typeof msg.name === "string" && COMMANDS.has(msg.name);
+    case "attachUris":
+      return (
+        Array.isArray(msg.uris) && msg.uris.every((u) => typeof u === "string")
+      );
+    case "pasted":
+      return typeof msg.id === "number" && typeof msg.text === "string";
     default:
       return false;
   }
@@ -84,6 +92,12 @@ export class ChatViewBridge {
         case "command":
           this.handlers.command(raw.name);
           break;
+        case "attachUris":
+          this.handlers.attachUris(raw.uris);
+          break;
+        case "pasted":
+          this.handlers.pasted(raw.id, raw.text);
+          break;
       }
     });
     return {
@@ -96,6 +110,10 @@ export class ChatViewBridge {
 
   pushState(state: State): void {
     void this.webview?.postMessage({ type: "state", ...state });
+  }
+
+  pushPasteResult(id: number, attached: boolean): void {
+    void this.webview?.postMessage({ type: "pasteResult", id, attached });
   }
 
   pushProgress(text: string): void {

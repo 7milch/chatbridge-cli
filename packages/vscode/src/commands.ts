@@ -27,6 +27,10 @@ export interface CommandHandlers {
   focus(): void;
   /** From the webview's input box. */
   send(text: string): Promise<void>;
+  /** Files dropped on the webview; unreadable URIs are reported together. */
+  attachUris(uris: string[]): Promise<void>;
+  /** A paste into the input box; true when it became a selection chip. */
+  pasted(text: string): boolean;
 }
 
 function utf8Bytes(text: string): number {
@@ -156,6 +160,31 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
     },
 
     focus: () => ui.focusView(),
+
+    async attachUris(uris) {
+      const skipped: string[] = [];
+      for (const raw of uris) {
+        try {
+          const doc = await ui.openDocument(ui.parseUri(raw));
+          attach(doc.path, doc.text);
+        } catch {
+          skipped.push(raw);
+        }
+      }
+      if (skipped.length > 0) {
+        ui.showWarningMessage(`Skipped: ${skipped.join(", ")}`);
+      }
+    },
+
+    pasted(text) {
+      const editor = ui.activeEditor();
+      const selection = editor?.selection;
+      if (!editor || !selection) return false;
+      const normalise = (s: string) => s.replace(/\r\n/g, "\n");
+      if (normalise(text) !== normalise(selection.text)) return false;
+      attachEditor(editor, true);
+      return true;
+    },
 
     async send(text) {
       const result = await controller.send(text);

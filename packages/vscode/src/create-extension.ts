@@ -86,6 +86,8 @@ export function createExtension(opts: CreateExtensionOptions) {
         takeBack: () => controller?.takeBack(),
         removeQueued: (i) => controller?.removeQueued(i),
         command: (name) => void handlers[name](),
+        attachUris: (uris) => void handlers.attachUris(uris),
+        pasted: (id, text) => bridge.pushPasteResult(id, handlers.pasted(text)),
       },
     );
 
