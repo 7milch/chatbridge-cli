@@ -176,17 +176,30 @@ export class ChatModel {
   }
 
   /** The eager first open. Anything typed meanwhile is queued by submit()
-   * and drained here, so startup never swallows input. */
+   * and drained here, so startup never swallows input. A reset (Ctrl+R,
+   * `/new`, `/reopen`, `/logout`) typed meanwhile takes over: this open is
+   * then stale, and the session it produces would be a second live browser
+   * nobody ever closes. */
   private async openInitial(): Promise<void> {
+    const generation = this.generation;
+    let session: ChatSessionLike;
     try {
-      this.current = await this.openSession();
-      this.status = "idle";
-      this.drain();
+      session = await this.openSession();
     } catch (err) {
+      if (generation !== this.generation) return; // stale: reset ran
       this.messages.push({ role: "error", text: this.describe(err) });
       this.fatal = err;
       this.status = "dead";
+      this.onChange();
+      return;
     }
+    if (generation !== this.generation) {
+      await closeOrKill(session, this.closeTimeoutMs);
+      return; // stale: the reset owns the session now
+    }
+    this.current = session;
+    this.status = "idle";
+    this.drain();
     this.onChange();
   }
 
@@ -464,14 +477,23 @@ export class ChatModel {
       case "reopen":
         await this.reset();
         return true;
-      case "logout":
+      case "logout": {
         // Announced before the reset, so the history reads in the order the
         // steps happened even when reopening then fails.
         this.messages.push({ role: "separator", text: "Logged out" });
         this.onChange();
-        await this.clearAuth();
+        try {
+          await this.clearAuth();
+        } catch (err) {
+          // The auth state is still on disk, so the session is still valid:
+          // say so and leave both alone rather than closing a usable chat.
+          this.messages.push({ role: "error", text: this.describe(err) });
+          this.onChange();
+          return true;
+        }
         await this.reset();
         return true;
+      }
       case "login":
         await this.runLogin();
         return true;
@@ -483,42 +505,53 @@ export class ChatModel {
    * success the session is reopened so the new auth state is used. */
   private async runLogin(): Promise<void> {
     if (this.loginAbort) return;
-    const previous = this.status;
     const ac = new AbortController();
+    // Claimed before the first await, so a `/login` typed while the open
+    // below settles is ignored like any other second one.
     this.loginAbort = ac;
-    this.status = "logging-in";
-    this.onChange();
     try {
-      await this.login({
-        signal: ac.signal,
-        onProgress: (message) => {
-          this.loginProgress = message;
-          this.onChange();
-        },
-      });
-      this.messages.push({ role: "separator", text: "Logged in" });
-      this.loginAbort = undefined;
-      this.loginProgress = undefined;
-      this.status = previous;
-      await this.reset();
-      return;
-    } catch (err) {
-      this.messages.push(
-        err instanceof LoginAbortedError
-          ? { role: "separator", text: "Login cancelled" }
-          : {
-              role: "error",
-              text: err instanceof Error ? err.message : String(err),
-            },
-      );
-      // Only when nothing else has claimed the model since: a reset that
-      // cancelled this login owns the status now.
-      if (this.status === "logging-in") this.status = previous;
+      // The status the login returns to has to be one the model can leave
+      // again: `opening` and `resetting` belong to work in flight, and
+      // restoring either would strand the model there forever. Let that
+      // work settle first and go back to whatever it produced.
+      if (this.status === "opening") await this.ready;
+      else if (this.status === "resetting") await this.pendingReset;
+      const previous = this.status;
+      this.status = "logging-in";
+      this.onChange();
+      try {
+        await this.login({
+          signal: ac.signal,
+          onProgress: (message) => {
+            this.loginProgress = message;
+            this.onChange();
+          },
+        });
+        this.messages.push({ role: "separator", text: "Logged in" });
+        this.loginProgress = undefined;
+        this.status = previous;
+        // The guard is still held: a `/login` typed during this reset would
+        // otherwise open a second browser window to log in with.
+        await this.reset();
+        return;
+      } catch (err) {
+        this.messages.push(
+          err instanceof LoginAbortedError
+            ? { role: "separator", text: "Login cancelled" }
+            : {
+                role: "error",
+                text: err instanceof Error ? err.message : String(err),
+              },
+        );
+        // Only when nothing else has claimed the model since: a reset that
+        // cancelled this login owns the status now.
+        if (this.status === "logging-in") this.status = previous;
+      }
+      this.onChange();
     } finally {
       this.loginAbort = undefined;
       this.loginProgress = undefined;
     }
-    this.onChange();
   }
 
   /** Ctrl+C during `/login`; the login rejects with LoginAbortedError. No-op

@@ -1287,6 +1287,28 @@ describe("startup", () => {
     expect(s.calls).toEqual(["hi"]);
   });
 
+  test("a reset while the first open is in flight wins; the late session is closed", async () => {
+    const open = deferred<ChatSessionLike>();
+    const first = fakeSession("a");
+    const b = fakeSession("b");
+    let n = 0;
+    const model = new ChatModel({
+      openSession: () =>
+        n++ === 0 ? open.promise : Promise.resolve(b.session),
+      login: async () => {},
+      clearAuth: async () => {},
+      closeTimeoutMs: 20,
+    });
+    const reset = model.reset();
+    open.resolve(first.session);
+    await model.ready;
+    await reset;
+    expect(model.session).toBe(b.session);
+    // Neither closed nor killed would mean a second live browser.
+    expect(first.state.closed + first.state.killed).toBe(1);
+    expect(model.status).toBe("idle");
+  });
+
   test("a failed open is dead with the /login hint for auth errors", async () => {
     const model = new ChatModel({
       openSession: async () => {
@@ -1375,6 +1397,23 @@ describe("slash commands", () => {
     expect(model.status).toBe("dead");
   });
 
+  test("/logout leaves the session alone when clearing auth fails", async () => {
+    const a = fakeSession();
+    // modelWith refuses a reopen, so a reset here would be a test failure.
+    const model = await modelWith(a.session, {
+      clearAuth: async () => {
+        throw new Error("EACCES: auth.json");
+      },
+    });
+    await model.submit("/logout");
+    expect(model.messages.at(-1)).toEqual({
+      role: "error",
+      text: "EACCES: auth.json",
+    });
+    expect(model.status).toBe("idle");
+    expect(model.session).toBe(a.session);
+  });
+
   test("a command runs while busy and is never queued", async () => {
     const s = fakeSession();
     const model = await modelWith(s.session, {
@@ -1461,6 +1500,46 @@ describe("/login", () => {
     login.resolve();
     await p;
     expect(model.loginProgress).toBeUndefined();
+  });
+
+  test("/login typed while opening waits for the open and returns to idle", async () => {
+    const open = deferred<ChatSessionLike>();
+    const s = fakeSession();
+    const login = deferred<void>();
+    const model = new ChatModel({
+      openSession: () => open.promise,
+      login: () => login.promise,
+      clearAuth: async () => {},
+    });
+    const p = model.submit("/login");
+    expect(model.status).toBe("opening");
+    open.resolve(s.session);
+    await model.ready;
+    await tick();
+    expect(model.status).toBe("logging-in");
+    login.reject(new Error("idp down"));
+    await p;
+    // The settled open's status, never the `opening` it was typed from.
+    expect(model.status).toBe("idle");
+  });
+
+  test("a /login typed during the post-login reset is ignored", async () => {
+    let calls = 0;
+    const b = fakeSession("b");
+    const reopen = deferred<ChatSessionLike>();
+    const model = await modelWith(fakeSession("a").session, {
+      closeTimeoutMs: 20,
+      openSession: () => reopen.promise,
+      login: async () => {
+        calls++;
+      },
+    });
+    const p = model.submit("/login");
+    await tick();
+    await model.submit("/login");
+    reopen.resolve(b.session);
+    await p;
+    expect(calls).toBe(1);
   });
 
   test("a reset during /login cancels the login and wins", async () => {
