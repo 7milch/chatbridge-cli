@@ -292,11 +292,18 @@ rendering.
 - `commands.test.ts`: `attachUris` mixed good/bad, paste equal / not equal,
   newChat-while-busy warning, reopen command.
 - `chat-view-bridge.test.ts`: new message types routed.
-- `examples/vscode-dummy-chat` E2E: one test each for "send while busy
-  queues and drains", "Ctrl+R mid-turn recovers", "/help renders",
-  "drop a file attaches" (dispatch a synthetic `drop` with `text/uri-list`
-  on the webview — the E2E confirms the MIME type VSCode actually sends
-  for an editor tab, recorded in the test), "paste selection attaches".
+- `examples/vscode-dummy-chat` E2E (shipped as one ordered scenario in
+  `test/suite.ts`, driven through the extension API): first turn opens the
+  browser lazily, `newChat` / `sendSelection` commands, "send while busy
+  queues and drains", the `reopen` command marks the history, "reopen
+  mid-turn drops the in-flight reply" (`controller.send(...)` then
+  `controller.reopen()`: no assistant entry for the abandoned turn, last
+  separator `reopened`, back to idle), "drop a file attaches" and "paste
+  selection attaches" — both driven host-side through
+  `handlers.attachUris` / `handlers.pasted` rather than a synthetic DOM
+  `drop` event, so the test exercises the code the webview calls without
+  depending on the MIME type VSCode puts on the drag. The webview DOM drop
+  path itself stays a manual smoke test.
 - Manifest test: eight commands required.
 
 ## Task order

@@ -118,6 +118,19 @@ async function settleReset(
   }
 }
 
+/** The stderr line before the hard exit. `settled` false means the race in
+ * `settleReset` timed out; which promise it was decides the wording — a
+ * quit typed at startup waits for the eager first open, not for a reopen. */
+export function teardownExitMessage(
+  settled: boolean,
+  waitedForReset: boolean,
+): string {
+  if (settled) return "browser did not close within 5 s; exiting\n";
+  return waitedForReset
+    ? "browser reopen did not finish within 5 s; exiting\n"
+    : "browser did not finish opening within 5 s; exiting\n";
+}
+
 /** Runs the TUI until the user quits, then restores the terminal. The
  * session is opened by the model once the UI is up, so an opening failure
  * is an error entry rather than a crash. Resolves with the model's
@@ -189,7 +202,8 @@ export async function runInteractive(
     // and its Playwright connection would keep the process alive. The same
     // goes for the initial open, which a quit typed at startup can outrun.
     // Wait for whichever is in flight, under the same cap.
-    const settled = await settleReset(model?.pendingReset ?? model?.ready);
+    const pendingReset = model?.pendingReset;
+    const settled = await settleReset(pendingReset ?? model?.ready);
     // The model may still hold no session: the open above failed.
     const open = model?.session;
     const closed =
@@ -206,9 +220,7 @@ export async function runInteractive(
       // The Playwright connection would keep the event loop alive forever;
       // the terminal is restored by now, so exiting hard is safe here.
       process.stderr.write(
-        settled
-          ? "browser did not close within 5 s; exiting\n"
-          : "browser reopen did not finish within 5 s; exiting\n",
+        teardownExitMessage(settled, pendingReset !== undefined),
       );
       process.exit(1);
     }

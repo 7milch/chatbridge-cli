@@ -1449,6 +1449,39 @@ describe("/login", () => {
     expect(b.calls).toEqual(["b:later"]);
   });
 
+  test("a turn ending during /login keeps logging-in and holds the queue", async () => {
+    const a = fakeSession("a");
+    const login = deferred<void>();
+    const model = await modelWith(a.session, {
+      ...noReopen,
+      login: () => login.promise,
+      expand: async (t) => ({ prompt: t, attachments: [] }),
+    });
+    void model.submit("first");
+    await tick();
+    expect(model.status).toBe("busy");
+    const p = model.submit("/login");
+    expect(model.status).toBe("logging-in");
+    await model.submit("queued");
+    // The reply arrives while the login browser is still open.
+    a.replies[0]?.resolve("r1");
+    await tick();
+    expect(model.status).toBe("logging-in");
+    expect(model.queue).toEqual(["queued"]);
+    expect(a.calls).toEqual(["a:first"]);
+    // The login fails: the model goes to where the turn left it, not to the
+    // `busy` it captured, and the queue moves again.
+    login.reject(new Error("no browser"));
+    await p;
+    await tick();
+    expect(model.status).toBe("busy");
+    expect(model.queue).toEqual([]);
+    expect(a.calls).toEqual(["a:first", "a:queued"]);
+    a.replies[1]?.resolve("r2");
+    await tick();
+    expect(model.status).toBe("idle");
+  });
+
   test("cancel: Login cancelled, back to the previous status", async () => {
     const model = await modelWith(fakeSession().session, {
       login: ({ signal }) =>

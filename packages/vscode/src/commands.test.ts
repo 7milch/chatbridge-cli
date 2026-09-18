@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { BrowserUnavailableError, LoginAbortedError } from "@chatbridge/core";
 import { type CommandDeps, createCommands } from "./commands.js";
-import type { SessionController } from "./session-controller.js";
+import {
+  type ChatSessionLike,
+  SessionController,
+} from "./session-controller.js";
 import type { EditorSnapshot, VscodeUi } from "./vscode-ui.js";
 
 interface Fake {
@@ -116,6 +119,7 @@ function commands(f: Fake) {
     loginOptions: () => ({}) as never,
     installOptions: () => ({ cliPath: "/x/cli.js" }),
     clearAuth: async () => {
+      f.log.push("clearAuth");
       f.cleared++;
     },
   });
@@ -147,10 +151,10 @@ describe("commands", () => {
     expect(f.log.at(-1)).toBe("error:Login failed: navigateToLogin failed");
   });
 
-  test("logout discards the session and clears the auth state", async () => {
+  test("logout clears the auth state before discarding the session", async () => {
     const f = fake();
     await commands(f).logout();
-    expect(f.log).toEqual(["discard:Logged out"]);
+    expect(f.log).toEqual(["clearAuth", "discard:Logged out"]);
     expect(f.cleared).toBe(1);
   });
 
@@ -159,10 +163,55 @@ describe("commands", () => {
     f.busy = true;
     await commands(f).logout();
     expect(f.log).toEqual([
-      "discard:Logged out",
       "warn:Wait for the current reply to finish, then log out.",
     ]);
     expect(f.cleared).toBe(0);
+  });
+
+  test("a queued entry is not sent under the auth state logout deletes", async () => {
+    const f = fake();
+    const order: string[] = [];
+    let rejectFirst!: (e: unknown) => void;
+    const session: ChatSessionLike = {
+      send: () =>
+        new Promise<string>((_res, rej) => {
+          rejectFirst = rej;
+        }),
+      close: async () => {},
+      kill: async () => {},
+    };
+    const controller = new SessionController({
+      openSession: async () => {
+        order.push("openSession");
+        return session;
+      },
+      closeTimeoutMs: 20,
+    });
+    const first = controller.send("in flight");
+    await new Promise((r) => setTimeout(r, 0));
+    await controller.send("queued");
+    // The turn dies, leaving the queued entry waiting with no turn running.
+    rejectFirst(new BrowserUnavailableError("gone"));
+    await first;
+    expect(controller.getState().status).toBe("dead");
+    expect(controller.getState().queue).toHaveLength(1);
+    const handlers = createCommands({
+      displayName: "Acme AI",
+      controller,
+      ui: f.ui,
+      runLogin: f.login,
+      installBrowser: f.install,
+      loginOptions: () => ({}) as never,
+      installOptions: () => ({ cliPath: "/x/cli.js" }),
+      clearAuth: async () => {
+        order.push("clearAuth");
+      },
+    });
+    await handlers.logout();
+    await new Promise((r) => setTimeout(r, 0));
+    // The queue drains after the logout, but never before the auth state is
+    // gone: the reopen for it must not use the deleted credentials.
+    expect(order).toEqual(["openSession", "clearAuth", "openSession"]);
   });
 
   test("login while a turn is in flight warns and does not run runLogin", async () => {

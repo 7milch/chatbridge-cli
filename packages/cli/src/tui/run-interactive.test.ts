@@ -11,7 +11,11 @@ import {
   type ChatSessionLike,
 } from "./chat-model.js";
 import { ChatView } from "./chat-view.js";
-import { runInteractive, waitForQuit } from "./run-interactive.js";
+import {
+  runInteractive,
+  teardownExitMessage,
+  waitForQuit,
+} from "./run-interactive.js";
 import { resolveSpinner } from "./spinner.js";
 
 /** Builds a model whose first open resolves to `session` and whose reopens
@@ -328,6 +332,27 @@ function sessionOpts(gate?: Promise<void>, failSave = false) {
     },
   };
 }
+
+describe("teardownExitMessage", () => {
+  test("a settled teardown blames the close", () => {
+    expect(teardownExitMessage(true, true)).toBe(
+      "browser did not close within 5 s; exiting\n",
+    );
+    expect(teardownExitMessage(true, false)).toBe(
+      "browser did not close within 5 s; exiting\n",
+    );
+  });
+
+  test("an unsettled wait names the promise that was raced", () => {
+    expect(teardownExitMessage(false, true)).toBe(
+      "browser reopen did not finish within 5 s; exiting\n",
+    );
+    // No reset was in flight: the wait was the eager first open.
+    expect(teardownExitMessage(false, false)).toBe(
+      "browser did not finish opening within 5 s; exiting\n",
+    );
+  });
+});
 
 describe("runInteractive", () => {
   test("a renderer that fails to start rejects without opening a browser", async () => {

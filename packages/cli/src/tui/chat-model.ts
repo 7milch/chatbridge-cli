@@ -129,6 +129,10 @@ export class ChatModel {
   readonly ready: Promise<void>;
   /** The last progress line from the running login, for the status row. */
   loginProgress: string | undefined;
+  /** Where a turn that ended while `/login` was running left the model.
+   * The login owns the status meanwhile, so the turn records its outcome
+   * here and runLogin restores it instead of the status it captured. */
+  private settledDuringLogin: Status | undefined;
   /** Undefined until the first open succeeds, and between a reset's close
    * and the replacement. */
   private current: ChatSessionLike | undefined;
@@ -248,6 +252,22 @@ export class ChatModel {
     return this.runTurn(prompt, false);
   }
 
+  /** Ends a turn: moves to the settled status and continues the queue.
+   * While `/login` is running the login owns the status and the browser
+   * window, so the outcome is only recorded — restoring `idle` here would
+   * overwrite `logging-in`, drain the queue onto the old session and turn
+   * Ctrl+C from "cancel the login" into "quit". `drains` is false for the
+   * one end that deliberately does not continue: a MentionError put the
+   * entry back at the front of the queue. */
+  private settle(status: "idle" | "dead", drains = true): void {
+    if (this.status === "logging-in") {
+      this.settledDuringLogin = status;
+      return;
+    }
+    this.status = status;
+    if (status === "idle" && drains) this.drain();
+  }
+
   /** Sends the oldest queued entry as the next turn, if any. Called at every
    * transition to idle that may continue the conversation. */
   private drain(): void {
@@ -274,10 +294,10 @@ export class ChatModel {
       // A mention problem is the user's to fix; anything else is a bug.
       if (err instanceof MentionError) {
         if (fromQueue) this.queue.unshift(prompt);
-        this.status = "idle";
+        this.settle("idle", false);
       } else {
         this.fatal = err;
-        this.status = "dead";
+        this.settle("dead");
       }
       this.onChange();
       return false;
@@ -360,10 +380,9 @@ export class ChatModel {
         role: "error",
         text: `could not start shell: ${message}`,
       });
-      this.status = "idle";
       // A turn end like any other: anything typed while the command was
       // starting is next in line.
-      this.drain();
+      this.settle("idle");
       this.onChange();
       return true;
     }
@@ -378,10 +397,9 @@ export class ChatModel {
     if (!this.shell.autoSend) {
       this.heldResults.push(result);
       entry.held = true;
-      this.status = "idle";
       // The result is held before draining, so a queued message carries it
       // out exactly as a typed one would.
-      this.drain();
+      this.settle("idle");
       this.onChange();
       return true;
     }
@@ -414,25 +432,21 @@ export class ChatModel {
       if (generation !== this.generation) return; // stale: reset ran
       if (releasesHeld) this.releaseHeld();
       this.messages.push({ role: "assistant", text: reply });
-      this.status = "idle";
+      this.settle("idle");
     } catch (err) {
       if (generation !== this.generation) return; // stale: reset ran
       const message = err instanceof Error ? err.message : String(err);
       this.messages.push({ role: "error", text: message });
       // A timeout leaves the browser usable; anything else ends the session.
       if (err instanceof ResponseTimeoutError) {
-        this.status = "idle";
+        this.settle("idle");
       } else {
         this.fatal = err;
-        this.status = "dead";
+        this.settle("dead");
       }
     }
-    // Claim the next turn before the view sees this one end, so it never
-    // draws an idle frame with entries still waiting. The one exception is a
-    // MentionError on a dequeued entry: that puts the entry back at the front
-    // of the queue while the model is idle, and the view shows the take-back
-    // guide.
-    if (this.status === "idle") this.drain();
+    // settle() claimed the next turn before the view sees this one end, so
+    // it never draws an idle frame with entries still waiting.
     this.onChange();
   }
 
@@ -528,6 +542,7 @@ export class ChatModel {
         return;
       }
       const previous = this.status;
+      this.settledDuringLogin = undefined;
       this.status = "logging-in";
       this.onChange();
       try {
@@ -540,7 +555,7 @@ export class ChatModel {
         });
         this.messages.push({ role: "separator", text: "Logged in" });
         this.loginProgress = undefined;
-        this.status = previous;
+        this.status = this.settledDuringLogin ?? previous;
         // The guard is still held: a `/login` typed during this reset would
         // otherwise open a second browser window to log in with.
         await this.reset();
@@ -555,13 +570,19 @@ export class ChatModel {
               },
         );
         // Only when nothing else has claimed the model since: a reset that
-        // cancelled this login owns the status now.
-        if (this.status === "logging-in") this.status = previous;
+        // cancelled this login owns the status now. A turn that ended
+        // during the login left its outcome in `settledDuringLogin`; that
+        // is where the model really is, and its queue is still waiting.
+        if (this.status === "logging-in") {
+          this.status = this.settledDuringLogin ?? previous;
+          if (this.status === "idle") this.drain();
+        }
       }
       this.onChange();
     } finally {
       this.loginAbort = undefined;
       this.loginProgress = undefined;
+      this.settledDuringLogin = undefined;
     }
   }
 

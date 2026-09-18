@@ -489,6 +489,34 @@ describe("SessionController", () => {
     await h.controller.close();
     expect(h.closed).toBe(1);
   });
+
+  test("close during a reopen closes the browser the reopen opens", async () => {
+    const open = deferred<ChatSessionLike>();
+    let closedLate = 0;
+    const late: ChatSessionLike = {
+      send: async () => "x",
+      close: async () => {
+        closedLate++;
+      },
+      kill: async () => {
+        closedLate++;
+      },
+    };
+    const controller = new SessionController({
+      openSession: () => open.promise,
+      closeTimeoutMs: 20,
+    });
+    const reopen = controller.reopen();
+    await settle();
+    await controller.close();
+    expect(controller.getState().status).toBe("closed");
+    open.resolve(late);
+    await reopen;
+    expect(closedLate).toBe(1);
+    const state = controller.getState();
+    expect(state.status).toBe("closed");
+    expect(state.messages).toEqual([]);
+  });
 });
 
 describe("queue", () => {

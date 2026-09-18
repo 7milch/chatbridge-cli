@@ -63,6 +63,25 @@ export async function run(): Promise<void> {
   assert.equal(s.status, "idle");
   assert.deepEqual(s.messages.at(-1), { role: "separator", text: "reopened" });
 
+  // Reopen mid-turn: the in-flight reply is dropped, not appended.
+  const stale = controller.send("stale me");
+  await controller.reopen();
+  await stale;
+  await waitForIdle(controller);
+  s = controller.getState();
+  assert.equal(
+    s.messages.some(
+      (m) => m.role === "assistant" && m.text.includes("stale me"),
+    ),
+    false,
+    "the reply from before the reopen must not reach the history",
+  );
+  assert.deepEqual(s.messages.filter((m) => m.role === "separator").at(-1), {
+    role: "separator",
+    text: "reopened",
+  });
+  assert.equal(s.status, "idle");
+
   // Drop: a workspace file URI becomes a chip.
   const dropDoc = await vscode.workspace.openTextDocument({
     language: "plaintext",

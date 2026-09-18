@@ -113,13 +113,17 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
     },
 
     async logout() {
-      if (!(await controller.discard("Logged out"))) {
+      if (isBusy()) {
         ui.showWarningMessage(
           "Wait for the current reply to finish, then log out.",
         );
         return;
       }
+      // The auth state goes first: `discard` drains the queue, and a queued
+      // entry would otherwise reopen the browser — and send — under the
+      // credentials the user just asked to delete.
       await deps.clearAuth();
+      await controller.discard("Logged out");
     },
 
     async newChat() {

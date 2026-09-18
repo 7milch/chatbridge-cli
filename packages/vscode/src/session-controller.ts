@@ -316,11 +316,18 @@ export class SessionController {
   }
 
   private async runReopen(): Promise<void> {
-    this.generation++;
+    const generation = ++this.generation;
     this.setStatus("reopening");
     await this.dropSession();
     try {
-      this.session = await this.opts.openSession();
+      const session = await this.opts.openSession();
+      // `close()` (deactivate) ran while the browser was opening: this one
+      // is an orphan nobody would ever close, and the controller is closed.
+      if (generation !== this.generation) {
+        await closeOrKill(session, this.closeTimeoutMs);
+        return;
+      }
+      this.session = session;
       this.lastError = undefined;
       this.messages.push({ role: "separator", text: REOPENED_SEPARATOR });
       this.status = "idle";
@@ -368,6 +375,9 @@ export class SessionController {
 
   /** deactivate: close the browser, keep the history. Idempotent. */
   async close(): Promise<void> {
+    // A reopen in flight is stale from here on: its new browser must be
+    // closed rather than adopted by a controller the user has shut down.
+    this.generation++;
     await this.dropSession();
     if (this.status !== "dead") this.status = "closed";
     this.emit();
