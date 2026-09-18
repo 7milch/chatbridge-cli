@@ -44,6 +44,24 @@ describe("buildHtml", () => {
     expect(html).not.toContain("style=");
   });
 
+  test("carries the queue list and the inline error slot", () => {
+    const html = buildHtml({
+      cspSource: "x",
+      nonce: "n",
+      scriptUri: "s",
+      styleUri: "c",
+      title: "t",
+    });
+    expect(html).toContain('<ul id="queue" hidden></ul>');
+    expect(html).toContain('<div id="inline-error" hidden></div>');
+    expect(html.indexOf('id="queue"')).toBeLessThan(
+      html.indexOf('id="composer"'),
+    );
+    expect(html.indexOf('id="inline-error"')).toBeLessThan(
+      html.indexOf('id="composer"'),
+    );
+  });
+
   test("escapes the title", () => {
     expect(
       buildHtml({

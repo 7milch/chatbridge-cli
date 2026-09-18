@@ -29,9 +29,11 @@ export function buildHtml(i: HtmlInputs): string {
 <div id="welcome" hidden><img id="banner" alt="" hidden><p id="welcome-text"></p></div>
 <main id="history" aria-live="polite"></main>
 <div id="status" hidden></div>
+<ul id="queue" hidden></ul>
 <div id="attachments"></div>
+<div id="inline-error" hidden></div>
 <form id="composer">
-<textarea id="input" rows="3" placeholder="Message (Enter to send, Shift+Enter for a newline)"></textarea>
+<textarea id="input" rows="3" placeholder="Message (Enter to send, Shift+Enter for a newline, / for commands)"></textarea>
 <button id="send" type="submit">Send</button>
 </form>
 <footer id="footer" hidden></footer>

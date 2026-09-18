@@ -1,6 +1,12 @@
+import {
+  helpText,
+  parseSlashCommand,
+  unknownCommandMessage,
+} from "@chatbridge/core/slash-commands";
 import type {
   Message,
   State,
+  Status,
   ToHost,
   ToWebview,
   UiConfig,
@@ -19,8 +25,11 @@ const welcome = document.getElementById("welcome") as HTMLElement;
 const welcomeText = document.getElementById("welcome-text") as HTMLElement;
 const banner = document.getElementById("banner") as HTMLImageElement;
 const footer = document.getElementById("footer") as HTMLElement;
+const queue = document.getElementById("queue") as HTMLElement;
+const inlineError = document.getElementById("inline-error") as HTMLElement;
 
 let config: UiConfig = {};
+let lastState: State | undefined;
 
 function applyConfig(c: UiConfig): void {
   config = c;
@@ -85,17 +94,24 @@ function renderMessage(m: Message): HTMLElement {
   return box;
 }
 
+function waitingText(status: Status): string {
+  if (status === "reopening") return "Reopening browser...";
+  if (status === "opening") return "Opening browser...";
+  return "Waiting...";
+}
+
 function renderStatus(s: State): void {
   status.replaceChildren();
   status.hidden = false;
-  if (s.status === "busy" || s.status === "opening") {
+  if (
+    s.status === "busy" ||
+    s.status === "opening" ||
+    s.status === "reopening"
+  ) {
     status.appendChild(el("span", "spinner"));
+    const queued = s.queue.length > 0 ? ` \u00b7 ${s.queue.length} queued` : "";
     status.appendChild(
-      el(
-        "span",
-        "progress-text",
-        s.status === "opening" ? "Opening browser..." : "Waiting...",
-      ),
+      el("span", "progress-text", `${waitingText(s.status)}${queued}`),
     );
     return;
   }
@@ -117,6 +133,11 @@ function renderStatus(s: State): void {
       );
     }
     status.appendChild(
+      button("Reopen", () =>
+        vscode.postMessage({ type: "command", name: "reopen" }),
+      ),
+    );
+    status.appendChild(
       button("New chat", () =>
         vscode.postMessage({ type: "command", name: "newChat" }),
       ),
@@ -124,6 +145,26 @@ function renderStatus(s: State): void {
     return;
   }
   status.hidden = true;
+}
+
+function renderQueue(s: State): void {
+  queue.replaceChildren();
+  queue.hidden = s.queue.length === 0;
+  s.queue.forEach((entry, index) => {
+    const li = document.createElement("li");
+    const firstLine = entry.text.split("\n")[0] ?? "";
+    const label =
+      entry.attachments.length > 0
+        ? `${firstLine} \u{1f4ce} ${entry.attachments.length}`
+        : firstLine;
+    li.appendChild(el("span", "queue-text", `\u25b9 ${label}`));
+    const x = button("\u00d7", () =>
+      vscode.postMessage({ type: "removeQueued", index }),
+    );
+    x.className = "chip-remove";
+    li.appendChild(x);
+    queue.appendChild(li);
+  });
 }
 
 function renderAttachments(s: State): void {
@@ -143,21 +184,49 @@ function render(s: State): void {
   history.replaceChildren(...s.messages.map(renderMessage));
   history.scrollTop = history.scrollHeight;
   renderStatus(s);
+  renderQueue(s);
   renderAttachments(s);
   // The welcome block takes over the history's space while it is shown, so
   // it is centred in the view rather than pinned above an empty history.
   welcome.hidden =
     s.messages.length > 0 || (!config.welcome && !config.bannerUri);
   history.hidden = !welcome.hidden;
-  const locked = s.status === "busy" || s.status === "opening";
-  input.disabled = locked;
-  sendButton.disabled = locked;
-  if (!locked) input.focus();
+  // The composer stays usable while a turn is in flight: what is typed then
+  // is queued instead of sent.
+  const active =
+    s.status === "busy" || s.status === "opening" || s.status === "reopening";
+  input.disabled = false;
+  sendButton.disabled = false;
+  sendButton.textContent = active ? "Queue" : "Send";
+  input.focus();
+  lastState = s;
+}
+
+function showInlineError(text: string | undefined): void {
+  inlineError.textContent = text ?? "";
+  inlineError.hidden = text === undefined;
 }
 
 function submit(): void {
   const text = input.value;
   if (text.trim() === "" && attachments.childElementCount === 0) return;
+  const slash = parseSlashCommand(text);
+  if (slash && "unknown" in slash) {
+    showInlineError(unknownCommandMessage(slash.unknown));
+    return;
+  }
+  showInlineError(undefined);
+  if (slash) {
+    input.value = "";
+    if (slash.command === "help") {
+      history.appendChild(el("div", "message help", helpText()));
+      history.scrollTop = history.scrollHeight;
+      return;
+    }
+    const name = slash.command === "new" ? "newChat" : slash.command;
+    vscode.postMessage({ type: "command", name });
+    return;
+  }
   vscode.postMessage({ type: "send", text });
   input.value = "";
 }
@@ -170,6 +239,30 @@ input.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
     e.preventDefault();
     submit();
+    return;
+  }
+  // Up on an empty composer pulls the whole queue back for editing.
+  if (
+    e.key === "ArrowUp" &&
+    input.value === "" &&
+    (lastState?.queue.length ?? 0) > 0
+  ) {
+    e.preventDefault();
+    const entries = lastState?.queue ?? [];
+    input.value = entries.map((q) => q.text).join("\n\n");
+    vscode.postMessage({ type: "takeBack" });
+  }
+});
+input.addEventListener("input", () => showInlineError(undefined));
+document.addEventListener("keydown", (e) => {
+  if (
+    e.key.toLowerCase() === "r" &&
+    (e.ctrlKey || e.metaKey) &&
+    !e.shiftKey &&
+    !e.altKey
+  ) {
+    e.preventDefault();
+    vscode.postMessage({ type: "command", name: "reopen" });
   }
 });
 
