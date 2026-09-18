@@ -267,8 +267,13 @@ input.addEventListener("keydown", (e) => {
 });
 input.addEventListener("input", () => showInlineError(undefined));
 
-// VSCode's explorer puts one file URI per line on `text/uri-list`; the format
-// also allows `#` comment lines, which are not URIs.
+// Observed with VSCode 1.138 (explorer item, Shift held): `text/uri-list` =
+// `file:///abs/path` one per line, plus `text/plain`, `resourceurls`,
+// `codefiles`, `codeeditors` and `application/vnd.code.uri-list`. The
+// uri-list format also allows `#` comment lines, which are not URIs.
+// Without Shift the workbench keeps the drag for itself (it sets
+// `pointer-events: none` on the webview iframe and opens the file in an
+// editor instead), so no event reaches this page at all.
 function urisFromDrop(dt: DataTransfer | null): string[] {
   const list = dt?.getData("text/uri-list") ?? "";
   return list

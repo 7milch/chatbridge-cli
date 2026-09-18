@@ -245,6 +245,12 @@ the palette commands (`logout` warns while busy, etc.).
 
 ### Drop
 
+VSCode only delivers a workbench drag (explorer item, editor tab, Finder
+file) to a webview while **Shift** is held; otherwise it blocks the iframe
+(`pointer-events: none`) and opens the file in an editor. The README tells
+users to Shift-drop; the webview cannot show a hint because no event
+reaches it without Shift.
+
 The webview's `drop` handler reads `text/uri-list` (one URI per line,
 `#` comments skipped) and posts `attachUris`; `dragover` calls
 `preventDefault` so the view is a drop target. VSCode fills `text/uri-list`

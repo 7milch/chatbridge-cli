@@ -70,7 +70,10 @@ export const { activate, deactivate } = createExtension({
 - **`/` commands** — `/login`, `/logout`, `/new`, `/reopen`, `/help`, the
   same table the TUI uses. Only the bare form on its own counts, so
   anything else (including `/usr/bin` style paths) is sent verbatim.
-- **Drop files** onto the composer to add them as attachment chips.
+- **Drop files** onto the composer to add them as attachment chips. Hold
+  **Shift** while dropping: without it VSCode keeps the drag for itself and
+  opens the file in an editor instead (the same rule as dropping into a text
+  editor).
 - **Paste** text copied from an editor selection and it becomes a selection
   chip (`path:L2-L3`) instead of inline text; unrelated clipboard text is
   pasted as usual.
