@@ -266,6 +266,64 @@ input.addEventListener("keydown", (e) => {
   }
 });
 input.addEventListener("input", () => showInlineError(undefined));
+
+// VSCode's explorer puts one file URI per line on `text/uri-list`; the format
+// also allows `#` comment lines, which are not URIs.
+function urisFromDrop(dt: DataTransfer | null): string[] {
+  const list = dt?.getData("text/uri-list") ?? "";
+  return list
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l !== "" && !l.startsWith("#"));
+}
+
+document.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  document.body.classList.add("drop-target");
+});
+document.addEventListener("dragleave", () =>
+  document.body.classList.remove("drop-target"),
+);
+document.addEventListener("drop", (e) => {
+  e.preventDefault();
+  document.body.classList.remove("drop-target");
+  const uris = urisFromDrop(e.dataTransfer);
+  if (uris.length > 0) vscode.postMessage({ type: "attachUris", uris });
+});
+
+// A paste of several lines may be an editor selection the host can turn into
+// an attachment chip. Ask it, and insert the text as typed if it says no or
+// does not answer in time.
+const PASTE_TIMEOUT_MS = 500;
+let pasteSeq = 0;
+const pendingPastes = new Map<
+  number,
+  { text: string; timer: ReturnType<typeof setTimeout> }
+>();
+
+function insertAtCaret(text: string): void {
+  input.focus();
+  if (!document.execCommand("insertText", false, text)) {
+    const { selectionStart, selectionEnd, value } = input;
+    input.value =
+      value.slice(0, selectionStart) + text + value.slice(selectionEnd);
+    const pos = selectionStart + text.length;
+    input.setSelectionRange(pos, pos);
+  }
+}
+
+input.addEventListener("paste", (e) => {
+  const text = e.clipboardData?.getData("text/plain") ?? "";
+  if (!text.includes("\n")) return; // single line: default paste
+  e.preventDefault();
+  const id = ++pasteSeq;
+  const timer = setTimeout(() => {
+    pendingPastes.delete(id);
+    insertAtCaret(text);
+  }, PASTE_TIMEOUT_MS);
+  pendingPastes.set(id, { text, timer });
+  vscode.postMessage({ type: "pasted", id, text });
+});
 document.addEventListener("keydown", (e) => {
   if (
     e.key.toLowerCase() === "r" &&
@@ -289,6 +347,12 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
   } else if (m.type === "progress") {
     const t = status.querySelector(".progress-text");
     if (t) t.textContent = m.text;
+  } else if (m.type === "pasteResult") {
+    const p = pendingPastes.get(m.id);
+    if (!p) return;
+    clearTimeout(p.timer);
+    pendingPastes.delete(m.id);
+    if (!m.attached) insertAtCaret(p.text);
   }
 });
 
