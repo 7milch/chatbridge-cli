@@ -115,13 +115,9 @@ non-default `playwright/cli.js` location). Bundle with esbuild (CJS,
 `vscode` and `playwright` external) to `dist/extension.cjs` — the example
 keeps `"type": "module"` in its manifest, which is why the entry point is
 `.cjs` and not `.js`. The example's `package` script runs
-`vsce package --no-dependencies`, which is only a CI packaging smoke test;
-a real vendor `.vsix` must ship `node_modules/playwright` so the Install
-button works for end users — drop `--no-dependencies` when packaging for
-distribution, or vendors hit "playwright is not bundled with this
-extension". Brand the view with the optional `ui` option (plain text only;
-the banner path is relative to the extension root and must ship in the
-`.vsix`):
+`vsce package --no-dependencies`, which is only a CI packaging smoke test.
+Brand the view with the optional `ui` option (plain text only; the banner
+path is relative to the extension root and must ship in the `.vsix`):
 
 ```ts
 ui: {
@@ -136,6 +132,26 @@ ui: {
 Activation throws a message listing missing `contributes` IDs
 when the manifest and `id` disagree. Verify by hand: F5 in VSCode → Log in
 → send → right-click a selection → send → New Chat → Log out.
+
+### Building the `.vsix`
+
+The `.vsix` must ship `node_modules/playwright` (the Install Browser button
+spawns its CLI; without it users see "playwright is not bundled with this
+extension"). Verified recipe, run in the extension folder:
+
+1. `package.json`: only `playwright` under `dependencies`;
+   `@chatbridge/vscode`, `esbuild`, `@vscode/vsce` under `devDependencies`
+   (esbuild inlines the `@chatbridge/*` packages).
+2. `bun run build` → `dist/extension.cjs` + `dist/webview/`.
+3. `rm -rf node_modules && npm install --omit=dev` — npm, not bun: vsce
+   collects dependencies by walking npm's `node_modules` layout, and bun's
+   symlinked tree makes that walk escape the folder. Leaves `playwright`
+   and `playwright-core` only.
+4. `npx @vscode/vsce package` (no `--no-dependencies`); about 4 MB / 185
+   files. Check with `unzip -l *.vsix | grep node_modules/playwright/cli.js`.
+5. `bun install` to restore the dev tree; `code --install-extension
+   <file>.vsix` to try it. Chromium is downloaded by the Install Browser
+   button on the user's machine, never packaged.
 
 ## DOM notes
 

@@ -90,11 +90,32 @@ Bundle with esbuild as CJS, with `vscode` and `playwright` marked external.
 `examples/vscode-dummy-chat` keeps `"type": "module"` in its manifest, so
 its bundle is `dist/extension.cjs`, not `.js` — match that if you copy the
 example's `esbuild.mjs`. Its `package` script runs
-`vsce package --no-dependencies`, which is only a CI packaging smoke test.
-A real vendor `.vsix` must ship `node_modules/playwright` so the Install
-Browser button works for end users: drop `--no-dependencies` when
-packaging for distribution, or vendors get "playwright is not bundled with
-this extension" from the Install button.
+`vsce package --no-dependencies`, which is only a CI packaging smoke test
+(its `workspace:*` dependencies cannot be npm-installed). A distributable
+`.vsix` must ship `node_modules/playwright` so the Install Browser button
+works for end users; without it the button reports "playwright is not
+bundled with this extension".
+
+### Building a distributable `.vsix` (vendor repo)
+
+1. In the extension's `package.json`, keep only `playwright` under
+   `dependencies`. `@chatbridge/vscode` (and everything it pulls in) is
+   inlined by esbuild, so it belongs in `devDependencies` together with
+   `esbuild` and `@vscode/vsce`.
+2. Build the bundle: `bun run build` (esbuild → `dist/extension.cjs` and
+   `dist/webview/`).
+3. Create a plain production `node_modules` with npm, not bun:
+   `rm -rf node_modules && npm install --omit=dev`. vsce discovers
+   dependencies by walking npm's layout; bun's symlinked workspace tree
+   makes that walk escape the folder. The result is just `playwright` and
+   `playwright-core`.
+4. `npx @vscode/vsce package` (no `--no-dependencies`). Expect roughly 4 MB
+   and about 185 files.
+5. Verify: `unzip -l *.vsix | grep node_modules/playwright/cli.js`. Then
+   restore the dev tree with `bun install`.
+6. Install locally with `code --install-extension <file>.vsix`. Chromium is
+   never inside the `.vsix`: end users get it from the Install Browser
+   button (or `npx playwright install chromium`).
 
 `examples/vscode-dummy-chat` in the framework repo is the reference
 implementation to copy into a vendor repo.

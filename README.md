@@ -220,6 +220,16 @@ Chromium is missing the extension offers to install it. Right-click a
 selection or a file to attach it to the next message in the CLI's
 `### path` fenced format.
 
+To build a distributable `.vsix`, keep only `playwright` under
+`dependencies` (the `@chatbridge/*` packages are inlined by esbuild), run
+the esbuild bundle, then `rm -rf node_modules && npm install --omit=dev`
+and `npx @vscode/vsce package` — npm rather than bun, because vsce walks
+npm's `node_modules` layout to collect dependencies. The result (about
+4 MB) ships `node_modules/playwright`, which the Install Browser button
+needs; Chromium itself is downloaded by that button, never packaged. The
+example's own `package` script uses `--no-dependencies` and is only a CI
+smoke test. Full steps: `packages/vscode/README.md`.
+
 ## Authentication
 
 The framework never stores usernames or passwords. You log in yourself in a headful browser, and the resulting browser authentication state is saved and reused on subsequent runs.
