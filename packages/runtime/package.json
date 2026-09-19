@@ -1,6 +1,6 @@
 {
   "name": "@chatbridge/runtime",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "description": "Playwright runtime for chatbridge: browser lifecycle and auth-state persistence",
   "license": "MIT",
   "repository": {

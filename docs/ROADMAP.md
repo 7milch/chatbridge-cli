@@ -210,6 +210,12 @@ Spec: `docs/superpowers/specs/2026-09-18-vscode-parity-design.md`.
 Bundles the deferred review follow-ups (#67, #59), the auto-resizing VSCode
 composer (#68) and TUI banner gradients (#65). Ships as a 0.8.x patch.
 
+### 14. Browser-open retry/timeout and banner gradient direction — done (issue #42, PR #82, 2026-09-19)
+
+The "Opening browser..." phase gets a per-step timeout and a retry count,
+resolved built-in → provider → config.json → env (#42); one-shot mode now
+reads config.json. Banner gradients gain a direction (#81). Ships as v0.8.3.
+
 ## Backlog
 
 Moved to GitHub. See the issues labelled
