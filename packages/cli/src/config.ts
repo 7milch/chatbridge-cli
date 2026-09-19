@@ -107,7 +107,11 @@ export async function loadConfig(
     const { timeoutSec, retries } = open as Record<string, unknown>;
     const out: NonNullable<CliConfig["open"]> = {};
     if (timeoutSec !== undefined) {
-      if (typeof timeoutSec !== "number" || !(timeoutSec > 0)) {
+      if (
+        typeof timeoutSec !== "number" ||
+        !Number.isFinite(timeoutSec) ||
+        !(timeoutSec > 0)
+      ) {
         throw invalid(file, '"open.timeoutSec" must be a positive number');
       }
       out.timeoutSec = timeoutSec;

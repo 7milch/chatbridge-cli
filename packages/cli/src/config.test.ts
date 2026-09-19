@@ -162,4 +162,18 @@ describe("loadConfig", () => {
     await expect(p).rejects.toBeInstanceOf(ChatBridgeError);
     await expect(p).rejects.toThrow(message);
   });
+
+  test.each([
+    // JSON.stringify(Infinity) is null, so this row's file content is
+    // written by hand: JSON.parse reads 1e999 as Infinity.
+    [
+      '{"open":{"timeoutSec":1e999}}',
+      '"open.timeoutSec" must be a positive number',
+    ],
+  ])("rejects %s", async (content, message) => {
+    writeFileSync(setup(), content);
+    const p = loadConfig({ configDir: "test-cli", baseDir });
+    await expect(p).rejects.toBeInstanceOf(ChatBridgeError);
+    await expect(p).rejects.toThrow(message);
+  });
 });

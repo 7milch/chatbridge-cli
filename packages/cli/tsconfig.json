@@ -12,5 +12,5 @@
   },
   "include": ["src"],
   "exclude": ["**/*.test.ts", "**/__fixtures__/**", "src/tui/test-helpers.ts"],
-  "references": [{ "path": "../core" }]
+  "references": [{ "path": "../core" }, { "path": "../provider" }]
 }
