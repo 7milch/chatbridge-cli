@@ -99,6 +99,8 @@ export function createExtension(opts: CreateExtensionOptions) {
         },
         removeQueued: (i) => controller?.removeQueued(i),
         command: (name) => void handlers[name](),
+        // wired in Task 7
+        customCommand: () => {},
         attachUris: (uris) => void handlers.attachUris(uris),
         pasted: (id, text) => bridge.pushPasteResult(id, handlers.pasted(text)),
       },
@@ -183,6 +185,8 @@ export function createExtension(opts: CreateExtensionOptions) {
           opts.displayName,
           bridge,
           uiConfig,
+          // wired in Task 7
+          undefined,
         ),
       ),
     );

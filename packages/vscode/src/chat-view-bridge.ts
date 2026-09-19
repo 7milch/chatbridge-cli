@@ -1,3 +1,4 @@
+import type { CommandInfo } from "@chatbridge/core";
 import type {
   QueueEntry,
   State,
@@ -19,6 +20,7 @@ export interface ChatViewHandlers {
   takeBack(): void;
   removeQueued(index: number): void;
   command(name: WebviewCommand): void;
+  customCommand(name: string, args: string, text: string): void;
   attachUris(uris: string[]): void;
   pasted(id: number, text: string): void;
 }
@@ -50,6 +52,12 @@ function isToHost(m: unknown): m is ToHost {
       return typeof msg.index === "number";
     case "command":
       return typeof msg.name === "string" && COMMANDS.has(msg.name);
+    case "customCommand":
+      return (
+        typeof msg.name === "string" &&
+        typeof msg.args === "string" &&
+        typeof msg.text === "string"
+      );
     case "attachUris":
       return (
         Array.isArray(msg.uris) && msg.uris.every((u) => typeof u === "string")
@@ -71,14 +79,23 @@ export class ChatViewBridge {
     private readonly handlers: ChatViewHandlers,
   ) {}
 
-  attach(webview: WebviewLike, uiConfig?: UiConfig): { dispose(): void } {
+  attach(
+    webview: WebviewLike,
+    uiConfig?: UiConfig,
+    commands?: CommandInfo[],
+  ): { dispose(): void } {
     this.webview = webview;
     const sub = webview.onDidReceiveMessage((raw) => {
       if (!isToHost(raw)) return;
       switch (raw.type) {
         case "ready":
-          if (uiConfig)
-            void webview.postMessage({ type: "config", ...uiConfig });
+          if (uiConfig || commands) {
+            void webview.postMessage({
+              type: "config",
+              ...uiConfig,
+              ...(commands ? { commands } : {}),
+            });
+          }
           this.pushState(this.getState());
           break;
         case "send":
@@ -95,6 +112,9 @@ export class ChatViewBridge {
           break;
         case "command":
           this.handlers.command(raw.name);
+          break;
+        case "customCommand":
+          this.handlers.customCommand(raw.name, raw.args, raw.text);
           break;
         case "attachUris":
           this.handlers.attachUris(raw.uris);

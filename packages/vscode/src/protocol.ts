@@ -1,4 +1,4 @@
-import type { Attachment } from "@chatbridge/core";
+import type { Attachment, CommandInfo } from "@chatbridge/core";
 
 export type Role = "user" | "assistant" | "error" | "separator" | "help";
 
@@ -53,6 +53,8 @@ export type ToHost =
   | { type: "takeBack" }
   | { type: "removeQueued"; index: number }
   | { type: "command"; name: WebviewCommand }
+  /** A provider `/command`; `text` is the line as typed, for the history. */
+  | { type: "customCommand"; name: string; args: string; text: string }
   /** Files dropped on the webview, as URI strings. */
   | { type: "attachUris"; uris: string[] }
   /** A paste into the input box; `id` pairs it with its `pasteResult`. */
@@ -72,7 +74,10 @@ export interface UiConfig {
 export type ToWebview =
   | ({ type: "state" } & State)
   | { type: "progress"; text: string }
-  | ({ type: "config" } & UiConfig)
+  | ({ type: "config" } & UiConfig & {
+        /** The provider's commands, so the webview can parse `/name args`. */
+        commands?: CommandInfo[];
+      })
   /** Answer to `pasted`: when attached, the webview drops the pasted text. */
   | { type: "pasteResult"; id: number; attached: boolean }
   /** Answer to `takeBack`: the entries removed from the queue. */

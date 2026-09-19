@@ -1,4 +1,5 @@
 import {
+  type CommandInfo,
   parseSlashCommand,
   unknownCommandMessage,
 } from "@chatbridge/core/slash-commands";
@@ -41,14 +42,17 @@ function fitComposer(): void {
 }
 
 let config: UiConfig = {};
+/** The provider's command names, from the `config` message. */
+let commandNames: ReadonlySet<string> = new Set();
 let lastState: State | undefined;
 /** The last `progress` line, so a re-render keeps it instead of falling
  * back to the generic waiting text. Cleared when the status leaves the
  * active set. */
 let lastProgress: string | undefined;
 
-function applyConfig(c: UiConfig): void {
+function applyConfig(c: UiConfig & { commands?: CommandInfo[] }): void {
   config = c;
+  commandNames = new Set((c.commands ?? []).map((x) => x.name));
   if (c.sendButton?.background) {
     sendButton.style.setProperty("--cb-send-bg", c.sendButton.background);
   }
@@ -251,7 +255,7 @@ function showInlineError(text: string | undefined): void {
 function submit(): void {
   const text = input.value;
   if (text.trim() === "" && attachments.childElementCount === 0) return;
-  const slash = parseSlashCommand(text);
+  const slash = parseSlashCommand(text, commandNames);
   if (slash && "unknown" in slash) {
     showInlineError(unknownCommandMessage(slash.unknown));
     return;
@@ -260,17 +264,19 @@ function submit(): void {
     showInlineError(slash.error);
     return;
   }
-  if (slash && "custom" in slash) {
-    // No provider command dispatch is wired up yet (that lands with
-    // ChatSession.runCommand); the webview never passes a non-empty custom
-    // set to parseSlashCommand, so this branch is unreachable today.
-    showInlineError(unknownCommandMessage(slash.custom));
-    return;
-  }
   showInlineError(undefined);
   if (slash) {
     input.value = "";
     fitComposer();
+    if ("custom" in slash) {
+      vscode.postMessage({
+        type: "customCommand",
+        name: slash.custom,
+        args: slash.args,
+        text: text.trim(),
+      });
+      return;
+    }
     const name = slash.command === "new" ? "newChat" : slash.command;
     vscode.postMessage({ type: "command", name });
     return;
