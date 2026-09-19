@@ -26,10 +26,10 @@ export interface VscodeUi {
     task: (progress: ProgressReporter, signal: AbortSignal) => Promise<T>,
   ): Promise<T>;
   activeEditor(): EditorSnapshot | undefined;
-  /** Parses a URI string; throws when it is not a valid URI. */
   /** True when the value is a real vscode.Uri: a command argument from an
    * unexpected caller is not. */
   isUri(value: unknown): boolean;
+  /** Parses a URI string; throws when it is not a valid URI. */
   parseUri(uri: string): unknown;
   /** Opens the document behind an explorer Uri (or any Uri) read-only. */
   openDocument(uri: unknown): Promise<{ path: string; text: string }>;

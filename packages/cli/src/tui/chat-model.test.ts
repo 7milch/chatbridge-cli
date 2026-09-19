@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   AuthRequiredError,
+  BlockedError,
   BrowserUnavailableError,
   LoginAbortedError,
   ResponseTimeoutError,
@@ -1323,6 +1324,20 @@ describe("startup", () => {
       role: "error",
       text: "not logged in\nType /login to log in.",
     });
+  });
+
+  test("BLOCKED gets the --headful hint", async () => {
+    const model = new ChatModel({
+      openSession: async () => {
+        throw new BlockedError('Blocked by "x": challenge page.');
+      },
+      login: async () => {},
+      clearAuth: async () => {},
+    });
+    await model.ready;
+    expect(model.messages.at(-1)?.text).toBe(
+      'Blocked by "x": challenge page. Try --headful.',
+    );
   });
 
   test("BROWSER_UNAVAILABLE gets the install hint", async () => {

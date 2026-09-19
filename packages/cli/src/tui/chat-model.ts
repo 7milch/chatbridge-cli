@@ -1,6 +1,7 @@
 import {
   AuthExpiredError,
   AuthRequiredError,
+  BlockedError,
   BrowserUnavailableError,
   InvalidStateError,
   LoginAbortedError,
@@ -217,6 +218,9 @@ export class ChatModel {
     if (err instanceof BrowserUnavailableError) {
       return `${message}\n${INSTALL_HINT}`;
     }
+    // Core leaves the --headful hint to the UI; in the TUI it is a restart
+    // flag, so it belongs on the message rather than in core.
+    if (err instanceof BlockedError) return `${message} Try --headful.`;
     return message;
   }
 

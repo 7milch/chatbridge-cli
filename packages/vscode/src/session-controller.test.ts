@@ -36,8 +36,10 @@ interface Harness {
   states: string[];
 }
 
-/** The fake ChatSession every harness hands out, wired to the counters. */
+/** The fake ChatSession every harness hands out, wired to the counters.
+ * close/kill are idempotent, like the real ChatSession's. */
 function sessionOf(h: Harness): ChatSessionLike {
+  let done = false;
   return {
     async send(prompt) {
       h.sent.push(prompt);
@@ -49,9 +51,13 @@ function sessionOf(h: Harness): ChatSessionLike {
       h.closeHangs
         ? new Promise<void>(() => {})
         : Promise.resolve().then(() => {
+            if (done) return;
+            done = true;
             h.closed++;
           }),
     async kill() {
+      if (done) return;
+      done = true;
       h.killed++;
     },
   };
@@ -497,12 +503,19 @@ describe("SessionController", () => {
   test("close during a reopen closes the browser the reopen opens", async () => {
     const open = deferred<ChatSessionLike>();
     let closedLate = 0;
+    let lateDone = false;
+    // Idempotent, like the real ChatSession: dropSession and the reopen's
+    // own generation check may both close it.
     const late: ChatSessionLike = {
       send: async () => "x",
       close: async () => {
+        if (lateDone) return;
+        lateDone = true;
         closedLate++;
       },
       kill: async () => {
+        if (lateDone) return;
+        lateDone = true;
         closedLate++;
       },
     };
@@ -629,10 +642,14 @@ describe("queue", () => {
     await settle();
     const close = h.controller.close();
     gate.resolve();
-    await Promise.all([send, close]);
+    // close() alone must not resolve before the browser it waited for is
+    // shut down, or deactivate would leave one running.
+    await close;
     expect(h.opens).toBe(1);
     expect(h.closed).toBe(1);
     expect(h.controller.getState().status).toBe("closed");
+    await send;
+    expect(h.closed + h.killed).toBe(1);
   });
 
   test("a drained send that hits a missing browser shows the install hint", async () => {

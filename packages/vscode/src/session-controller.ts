@@ -45,6 +45,9 @@ export type HintCode =
   | "RESPONSE_TIMEOUT";
 
 export interface TakeBackResult {
+  /** Every entry that was queued. `entries[i].attachments` lists everything
+   * that entry carried, including attachments that were *not* restored to
+   * pending: only their number is reported, in `droppedAttachments`. */
   entries: QueueEntry[];
   /** Attachments left out because restoring them would exceed MAX_TOTAL_BYTES. */
   droppedAttachments: number;
@@ -174,12 +177,10 @@ export class SessionController {
     if (body === "" && this.pending.length === 0) return EMPTY;
     const attachments = this.pending;
     this.pending = [];
-    // Invariant: a non-empty queue means the controller could not start a
-    // turn when the last entry arrived and has not become ready since
-    // (every ready transition drains first). Keep FIFO by queueing.
-    if (this.queue.length > 0 && this.canStartTurn && this.status !== "dead") {
-      throw new Error("queue not drained on a ready controller");
-    }
+    // A non-empty queue means the controller was not ready when the last
+    // entry arrived and has not become ready since — every ready transition
+    // drains first; `closed` after deactivate can still hold a queue, which
+    // the next send queues behind. Either way, keep FIFO by queueing.
     if (!this.canStartTurn || this.queue.length > 0) {
       this.queue.push({ text: body, attachments });
       this.drain();
@@ -282,6 +283,7 @@ export class SessionController {
         this.setStatus("opening");
         const session = await this.trackOpen(this.opts.openSession());
         // A reopen ran while we were opening: this browser is an orphan.
+        // dropSession may have closed it already; close/kill are idempotent.
         if (generation !== this.generation) {
           await closeOrKill(session, this.closeTimeoutMs);
           return { ok: true };
@@ -345,12 +347,18 @@ export class SessionController {
   }
 
   private async dropSession(): Promise<void> {
-    // An open still in flight would assign `this.session` after we return;
-    // its generation check then closes it, but only if we let it finish.
-    await this.opening?.catch(() => undefined);
+    // An open still in flight would assign `this.session` after we return,
+    // so wait for it and close the browser it produced here: the caller
+    // (close(), discard()) must not return with one still running.
+    const opened = await this.opening?.catch(() => undefined);
     const old = this.session;
     this.session = undefined;
     if (old !== undefined) await closeOrKill(old, this.closeTimeoutMs);
+    // The opener's own generation check will close this one too; close()
+    // and kill() are idempotent, so closing it twice is harmless.
+    else if (opened !== undefined) {
+      await closeOrKill(opened, this.closeTimeoutMs);
+    }
   }
 
   /** Ctrl+R of the TUI: drop the browser, mark the break, reopen lazily.
@@ -378,7 +386,8 @@ export class SessionController {
     try {
       const session = await this.trackOpen(this.opts.openSession());
       // `close()` (deactivate) ran while the browser was opening: this one
-      // is an orphan nobody would ever close, and the controller is closed.
+      // is an orphan, and the controller is closed. dropSession may have
+      // closed it already; close/kill are idempotent.
       if (generation !== this.generation) {
         await closeOrKill(session, this.closeTimeoutMs);
         return;
