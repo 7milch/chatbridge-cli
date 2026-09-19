@@ -235,6 +235,157 @@ describe("ChatSession.open", () => {
   });
 });
 
+describe("open retries", () => {
+  function flakyLaunch(h: Harness, failures: number, err: () => Error) {
+    let calls = 0;
+    const real = h.launch;
+    h.launch = async (o) => {
+      calls++;
+      if (calls <= failures) throw err();
+      return real(o);
+    };
+    return () => calls;
+  }
+
+  test("retries 0 launches once and rethrows the launch error", async () => {
+    const h = harness();
+    const calls = flakyLaunch(h, 1, () => new Error("boom"));
+    await expect(
+      ChatSession.open({ ...opts(h), open: { timeoutMs: 1000, retries: 0 } }),
+    ).rejects.toThrow("boom");
+    expect(calls()).toBe(1);
+  });
+
+  test("a failed launch is retried and reports the attempt", async () => {
+    const h = harness();
+    const calls = flakyLaunch(h, 1, () => new Error("boom"));
+    const progress: string[] = [];
+    const s = await ChatSession.open({
+      ...opts(h),
+      open: { timeoutMs: 1000, retries: 1 },
+      onProgress: (m) => progress.push(m),
+    });
+    expect(calls()).toBe(2);
+    expect(progress).toEqual([
+      "Opening browser...",
+      "Opening browser... (attempt 2/2)",
+    ]);
+    await s.kill();
+  });
+
+  test("a timeout after launch closes the browser and retries", async () => {
+    const h = harness();
+    let gotos = 0;
+    const real = h.launch;
+    h.launch = async (o) => {
+      const rt = await real(o);
+      rt.page.goto = (async () => {
+        gotos++;
+        if (gotos === 1) {
+          const e = new Error("t/o");
+          e.name = "TimeoutError";
+          throw e;
+        }
+        return null;
+      }) as unknown as typeof rt.page.goto;
+      return rt;
+    };
+    const s = await ChatSession.open({
+      ...opts(h),
+      open: { timeoutMs: 1000, retries: 2 },
+    });
+    expect(gotos).toBe(2);
+    expect(h.closed).toBe(1);
+    await s.kill();
+  });
+
+  test("the last attempt's error is thrown unchanged", async () => {
+    const h = harness();
+    let n = 0;
+    flakyLaunch(h, 5, () => new Error(`boom ${++n}`));
+    await expect(
+      ChatSession.open({ ...opts(h), open: { timeoutMs: 1000, retries: 2 } }),
+    ).rejects.toThrow("boom 3");
+  });
+
+  test.each([
+    [
+      "AuthExpiredError",
+      (h: Harness) => {
+        h.loggedIn = false;
+      },
+    ],
+    [
+      "BlockedError",
+      (h: Harness) => {
+        h.loggedIn = false;
+        h.hasDetectBlock = true;
+        h.block = "challenge";
+      },
+    ],
+  ])("%s is not retried", async (_name, arrange) => {
+    const h = harness();
+    arrange(h);
+    let launches = 0;
+    const real = h.launch;
+    h.launch = async (o) => {
+      launches++;
+      return real(o);
+    };
+    await expect(
+      ChatSession.open({ ...opts(h), open: { timeoutMs: 1000, retries: 3 } }),
+    ).rejects.toBeInstanceOf(
+      _name === "BlockedError" ? BlockedError : AuthExpiredError,
+    );
+    expect(launches).toBe(1);
+    expect(h.closed).toBe(1);
+  });
+
+  test("BrowserUnavailableError is not retried", async () => {
+    const h = harness();
+    let launches = 0;
+    h.launch = async () => {
+      launches++;
+      throw new Error("x");
+    };
+    await expect(
+      ChatSession.open({
+        ...opts(h),
+        open: { timeoutMs: 1000, retries: 3 },
+        missingBrowserExecutable: () => "/nowhere/chromium",
+      }),
+    ).rejects.toBeInstanceOf(BrowserUnavailableError);
+    expect(launches).toBe(0);
+  });
+
+  test("open defaults to the turn timeout and no retries", async () => {
+    const h = harness();
+    const calls = flakyLaunch(h, 1, () => new Error("boom"));
+    await expect(ChatSession.open(opts(h))).rejects.toThrow("boom");
+    expect(calls()).toBe(1);
+  });
+
+  test("opening steps use open.timeoutMs, not timeoutMs", async () => {
+    const h = harness();
+    let defaultTimeout: number | undefined;
+    const real = h.launch;
+    h.launch = async (o) => {
+      const rt = await real(o);
+      rt.page.setDefaultTimeout = (ms: number) => {
+        defaultTimeout = ms;
+      };
+      return rt;
+    };
+    const s = await ChatSession.open({
+      ...opts(h),
+      timeoutMs: 1000,
+      open: { timeoutMs: 7000, retries: 0 },
+    });
+    expect(defaultTimeout).toBe(7000);
+    await s.kill();
+  });
+});
+
 describe("ChatSession.send", () => {
   test("returns the provider reply and supports several turns", async () => {
     const h = harness();

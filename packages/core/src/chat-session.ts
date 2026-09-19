@@ -8,6 +8,7 @@ import {
   AuthExpiredError,
   AuthRequiredError,
   BlockedError,
+  BrowserUnavailableError,
   InvalidStateError,
   ResponseTimeoutError,
 } from "./errors.js";
@@ -22,11 +23,22 @@ export interface RuntimeLike {
   kill(): Promise<void>;
 }
 
+/** Resolved knobs for the opening phase. */
+export interface OpenOptions {
+  /** Per-step timeout for goto / isLoggedIn / startNewChat. */
+  timeoutMs: number;
+  /** Re-runs of the whole phase after a retryable failure. */
+  retries: number;
+}
+
 export interface ChatSessionOptions {
   provider: Provider;
   authStore: AuthStore;
   headless: boolean;
   timeoutMs: number;
+  /** Opening-phase knobs. Default: `{ timeoutMs, retries: 0 }`, which is
+   * the pre-0.8.3 behaviour. */
+  open?: OpenOptions;
   /** Progress messages (stderr in the CLI). Never receives auth content. */
   onProgress?: (message: string) => void;
   /** Test-only: replaces BrowserRuntime.launch. */
@@ -91,8 +103,9 @@ export class ChatSession {
     );
   }
 
-  /** authStore.has() → launch → goto chatUrl → isLoggedIn → startNewChat.
-   * If any step after launch fails, the browser is closed first. */
+  /** authStore.has(), then up to `open.retries + 1` attempts of the opening
+   * phase (see `attempt`). A retryable failure closes the browser and opens
+   * again; the last attempt's error propagates unchanged. */
   static async open(opts: ChatSessionOptions): Promise<ChatSession> {
     const { provider, authStore, onProgress, timeoutMs } = opts;
     if (!authStore.has()) {
@@ -100,16 +113,43 @@ export class ChatSession {
         `No saved auth state for provider "${provider.name}". Run \`auth login\` first.`,
       );
     }
-    onProgress?.("Opening browser...");
+    const open = opts.open ?? { timeoutMs, retries: 0 };
     const launch =
       opts.launch ?? ((o: LaunchOptions) => BrowserRuntime.launch(o));
     const preCheck =
       opts.missingBrowserExecutable ??
       (needsHeadedPreCheck(opts) ? undefined : () => undefined);
-    const rt = await launchRuntime(
-      () => launch({ headless: opts.headless, provider, authStore }),
-      preCheck,
-    );
+    const attempts = open.retries + 1;
+    for (let attempt = 1; ; attempt++) {
+      onProgress?.(
+        attempt === 1
+          ? "Opening browser..."
+          : `Opening browser... (attempt ${attempt}/${attempts})`,
+      );
+      try {
+        const rt = await ChatSession.attempt(
+          () => launch({ headless: opts.headless, provider, authStore }),
+          preCheck,
+          provider,
+          open.timeoutMs,
+        );
+        return new ChatSession(rt, provider, timeoutMs, onProgress);
+      } catch (err) {
+        if (attempt >= attempts || !isRetryableOpenError(err)) throw err;
+      }
+    }
+  }
+
+  /** One opening attempt: launch → goto chatUrl → isLoggedIn →
+   * startNewChat. If any step after launch fails, the browser is closed
+   * before the error propagates. */
+  private static async attempt(
+    launch: () => Promise<RuntimeLike>,
+    preCheck: (() => string | undefined) | undefined,
+    provider: Provider,
+    timeoutMs: number,
+  ): Promise<RuntimeLike> {
+    const rt = await launchRuntime(launch, preCheck);
     try {
       rt.page.setDefaultTimeout(timeoutMs);
       await runStep("goto", timeoutMs, () => rt.page.goto(provider.chatUrl));
@@ -121,7 +161,7 @@ export class ChatSession {
       await rt.close();
       throw err;
     }
-    return new ChatSession(rt, provider, timeoutMs, onProgress);
+    return rt;
   }
 
   /** sendMessage → waitForResponse for one turn. A timeout leaves the
@@ -211,4 +251,15 @@ export class ChatSession {
     this.closed = true;
     await this.rt.kill();
   }
+}
+
+/** Auth, block and missing-Chromium failures cannot be fixed by opening
+ * again; everything else (launch errors, step timeouts, page errors) can. */
+export function isRetryableOpenError(err: unknown): boolean {
+  return !(
+    err instanceof AuthRequiredError ||
+    err instanceof AuthExpiredError ||
+    err instanceof BlockedError ||
+    err instanceof BrowserUnavailableError
+  );
 }

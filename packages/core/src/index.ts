@@ -8,7 +8,9 @@ export {
 export {
   ChatSession,
   type ChatSessionOptions,
+  type OpenOptions,
   type RuntimeLike,
+  isRetryableOpenError,
 } from "./chat-session.js";
 export { launchRuntime } from "./launch-runtime.js";
 export { createAuthStore } from "./create-auth-store.js";
