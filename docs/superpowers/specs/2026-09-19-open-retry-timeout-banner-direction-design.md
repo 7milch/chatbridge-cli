@@ -144,7 +144,6 @@ docs (`docs/` provider authoring guide, if present) get the `open` field.
 
 `packages/provider/src/index.ts`, `packages/core/src/chat-session.ts`,
 `packages/cli/src/config.ts`, `packages/cli/src/open-options.ts` (new),
-`packages/cli/src/create-cli.ts`, `packages/cli/src/one-shot.ts` (or wherever
-`runOneShot` builds session options), `packages/cli/src/tui/run-interactive.ts`,
+`packages/cli/src/create-cli.ts`, `packages/core/src/session.ts` (`runOneShot` and `OneShotOptions` gain `open`), `packages/cli/src/tui/run-interactive.ts`,
 `packages/cli/src/tui/banner-options.ts`, `packages/cli/src/tui/banner.ts`,
 `README.md`.
