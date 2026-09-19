@@ -29,3 +29,21 @@ describe("defineProvider", () => {
     expect(defineProvider(p).detectBlock).toBe(p.detectBlock);
   });
 });
+
+test("defineProvider keeps the optional open defaults", () => {
+  const p = defineProvider({
+    name: "x",
+    chatUrl: "http://127.0.0.1:1/",
+    async navigateToLogin() {},
+    async isLoggedIn() {
+      return true;
+    },
+    async startNewChat() {},
+    async sendMessage() {},
+    async waitForResponse() {
+      return "";
+    },
+    open: { timeoutMs: 5_000, retries: 2 },
+  });
+  expect(p.open).toEqual({ timeoutMs: 5_000, retries: 2 });
+});

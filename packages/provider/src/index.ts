@@ -1,5 +1,15 @@
 import type { Page } from "playwright-core";
 
+/** Provider defaults for the opening phase (launch → goto → isLoggedIn →
+ * startNewChat). Users override both via config.json and env vars. */
+export interface ProviderOpenDefaults {
+  /** Per-step timeout in milliseconds. Built-in default 120 000. */
+  timeoutMs?: number;
+  /** How many times the whole phase is re-run after a launch or
+   * navigation failure. Built-in default 0. */
+  retries?: number;
+}
+
 /**
  * A Provider implements all service-specific browser behaviour for one
  * web chat AI service. The framework owns the browser lifecycle and auth
@@ -29,6 +39,9 @@ export interface Provider {
    * core calls this only after `isLoggedIn` returned false. Must not throw
    * on an ordinary logged-out page. */
   detectBlock?(page: Page): Promise<string | undefined>;
+  /** Optional. A slow service may raise the opening timeout; a flaky one
+   * may ask for retries. See ProviderOpenDefaults. */
+  open?: ProviderOpenDefaults;
 }
 
 /** Identity helper: gives provider authors type inference and a future
