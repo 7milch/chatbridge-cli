@@ -5,6 +5,19 @@ import { bannerColorAt, resolveBanner, validateBanner } from "./banner.js";
 const text = (lines: ReturnType<typeof resolveBanner>) =>
   lines.map((l) => l.chunks.map((c) => c.text).join(""));
 
+/** The fg colour covering `cellIndex` code points into `line`'s chunks. */
+const fgOf = (
+  line: ReturnType<typeof resolveBanner>[number],
+  cellIndex: number,
+) => {
+  let i = 0;
+  for (const chunk of line.chunks) {
+    i += [...chunk.text].length;
+    if (cellIndex < i) return chunk.fg;
+  }
+  return undefined;
+};
+
 describe("resolveBanner", () => {
   test("default banner: bold name, muted version, muted connection line and hint", () => {
     const lines = resolveBanner({
@@ -89,6 +102,59 @@ describe("bannerColorAt", () => {
     expect(bannerColorAt(2, 0, spec)).toBe("#ffffff");
     expect(bannerColorAt(0, 0, { ...spec, rows: 1 })).toBe("#000000");
   });
+  test("horizontal gradient runs along the columns", () => {
+    const spec = {
+      rows: 2,
+      maxWidth: 3,
+      colors: ["#000000", "#ffffff"],
+      mode: "gradient" as const,
+      direction: "horizontal" as const,
+    };
+    expect(bannerColorAt(0, 0, spec)).toBe("#000000");
+    expect(bannerColorAt(1, 1, spec)).toBe("#808080");
+    expect(bannerColorAt(0, 2, spec)).toBe("#ffffff");
+  });
+  test("diagonal gradient uses row + col", () => {
+    const spec = {
+      rows: 2,
+      maxWidth: 2,
+      colors: ["#000000", "#ffffff"],
+      mode: "gradient" as const,
+      direction: "diagonal" as const,
+    };
+    expect(bannerColorAt(0, 0, spec)).toBe("#000000");
+    expect(bannerColorAt(0, 1, spec)).toBe("#808080");
+    expect(bannerColorAt(1, 0, spec)).toBe("#808080");
+    expect(bannerColorAt(1, 1, spec)).toBe("#ffffff");
+  });
+  test("a zero denominator yields the first stop", () => {
+    const spec = {
+      rows: 1,
+      maxWidth: 1,
+      colors: ["#000000", "#ffffff"],
+      mode: "gradient" as const,
+      direction: "horizontal" as const,
+    };
+    expect(bannerColorAt(0, 0, spec)).toBe("#000000");
+  });
+  test("horizontal columns are measured on the centred grid", () => {
+    const [wide, narrow] = resolveBanner({
+      name: "x",
+      providerName: "p",
+      banner: {
+        lines: ["abcde", "c"],
+        colors: ["#000000", "#ffffff"],
+        mode: "gradient",
+        direction: "horizontal",
+      },
+    });
+    // "c" sits at column 2 of a 5-wide grid: the same colour as wide[2].
+    expect(narrow).toBeDefined();
+    expect(wide).toBeDefined();
+    expect(fgOf(narrow as NonNullable<typeof narrow>, 0)).toEqual(
+      fgOf(wide as NonNullable<typeof wide>, 2),
+    );
+  });
 });
 
 describe("validateBanner", () => {
@@ -121,6 +187,18 @@ describe("validateBanner", () => {
     expect(() =>
       validateBanner({ lines: ["a"], colors: [], mode: "per-char" }),
     ).toThrow(/banner.colors/);
+  });
+  test("rejects an unknown direction", () => {
+    expect(() =>
+      validateBanner({
+        lines: ["a"],
+        colors: ["#000000", "#ffffff"],
+        mode: "gradient",
+        direction: "sideways" as never,
+      }),
+    ).toThrow(
+      'banner.direction: expected "vertical" | "horizontal" | "diagonal"',
+    );
   });
 });
 
