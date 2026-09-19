@@ -127,6 +127,21 @@ describe("bannerColorAt", () => {
     expect(bannerColorAt(1, 0, spec)).toBe("#808080");
     expect(bannerColorAt(1, 1, spec)).toBe("#ffffff");
   });
+  test("a cell landing exactly on a stop keeps the vendor's exact string", () => {
+    const single = {
+      rows: 1,
+      colors: ["#FF0000", "#0000FF"],
+      mode: "gradient" as const,
+    };
+    expect(bannerColorAt(0, 0, single)).toBe("#FF0000");
+    const three = {
+      rows: 3,
+      colors: ["#FF0000", "#0000FF"],
+      mode: "gradient" as const,
+    };
+    expect(bannerColorAt(2, 0, three)).toBe("#0000FF");
+    expect(bannerColorAt(1, 0, three)).toBe("#800080");
+  });
   test("a zero denominator yields the first stop", () => {
     const spec = {
       rows: 1,

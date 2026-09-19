@@ -72,7 +72,10 @@ export function bannerColorAt(
   const t = gradientPosition(row, col, spec);
   const pos = t * (n - 1);
   const i = Math.min(Math.floor(pos), n - 2);
-  return mixHex(colors[i] as string, colors[i + 1] as string, pos - i);
+  const frac = pos - i;
+  if (frac === 0) return colors[i] as SpinnerColor;
+  if (frac === 1) return colors[i + 1] as SpinnerColor;
+  return mixHex(colors[i] as string, colors[i + 1] as string, frac);
 }
 
 /** One StyledText per row; adjacent cells of one colour share a chunk. */
