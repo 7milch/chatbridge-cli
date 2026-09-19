@@ -67,9 +67,10 @@ Each layer overrides only the keys it sets: built-in → `provider.open` →
 
 ## 3. Retry in core (`ChatSession.open`)
 
-`ChatSessionOptions` gains a required `open: { timeoutMs: number; retries: number }`.
-The two production callers (cli one-shot and `runInteractive`) always supply
-it; tests construct it explicitly.
+`ChatSessionOptions` gains an optional `open: { timeoutMs: number; retries: number }`,
+defaulting to `{ timeoutMs, retries: 0 }` (the pre-0.8.3 behaviour). The cli
+callers (one-shot and `runInteractive`) always supply it; the VSCode extension
+and existing tests keep calling `ChatSession.open` unchanged.
 
 `open()` keeps the `authStore.has()` pre-check outside the loop, then runs
 `attempt()` up to `retries + 1` times. One attempt is today's body: launch
