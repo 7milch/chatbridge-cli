@@ -20,9 +20,8 @@ const PATTERN = /^\/([a-z]+)$/;
 export function parseSlashCommand(
   text: string,
 ): { command: SlashCommand } | { unknown: string } | undefined {
-  const m = PATTERN.exec(text.trim());
-  if (!m || m[1] === undefined) return undefined;
-  const word = m[1];
+  const word = PATTERN.exec(text.trim())?.[1];
+  if (word === undefined) return undefined;
   return NAMES.has(word)
     ? { command: word as SlashCommand }
     : { unknown: word };
