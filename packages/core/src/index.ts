@@ -20,7 +20,7 @@ export {
   BrowserRuntime,
   validateProviderName,
 } from "@chatbridge/runtime";
-export type { Provider } from "@chatbridge/provider";
+export type { Provider, ProviderOpenDefaults } from "@chatbridge/provider";
 export { defineProvider } from "@chatbridge/provider";
 export {
   type Attachment,

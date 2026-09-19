@@ -41,6 +41,10 @@ export interface ChatSessionOptions {
   open?: OpenOptions;
   /** Progress messages (stderr in the CLI). Never receives auth content. */
   onProgress?: (message: string) => void;
+  /** Progress messages for the opening phase only (attempt lines). Defaults
+   * to `onProgress`. The TUI splits the two: opening messages paint the live
+   * status row, while later ones (from `close()`) are buffered for stderr. */
+  onOpenProgress?: (message: string) => void;
   /** Test-only: replaces BrowserRuntime.launch. */
   launch?: (opts: LaunchOptions) => Promise<RuntimeLike>;
   /** Test-only: replaces the missing-browser pre-check. Defaults to the
@@ -113,7 +117,13 @@ export class ChatSession {
         `No saved auth state for provider "${provider.name}". Run \`auth login\` first.`,
       );
     }
-    const open = opts.open ?? { timeoutMs, retries: 0 };
+    // No explicit knobs: fall back to the provider's own defaults (a caller
+    // like the VSCode extension never passes `open`), then to no retries.
+    const open = opts.open ?? {
+      timeoutMs: provider.open?.timeoutMs ?? timeoutMs,
+      retries: provider.open?.retries ?? 0,
+    };
+    const reportOpen = opts.onOpenProgress ?? onProgress;
     const launch =
       opts.launch ?? ((o: LaunchOptions) => BrowserRuntime.launch(o));
     const preCheck =
@@ -121,7 +131,7 @@ export class ChatSession {
       (needsHeadedPreCheck(opts) ? undefined : () => undefined);
     const attempts = open.retries + 1;
     for (let attempt = 1; ; attempt++) {
-      onProgress?.(
+      reportOpen?.(
         attempt === 1
           ? "Opening browser..."
           : `Opening browser... (attempt ${attempt}/${attempts})`,
@@ -139,6 +149,11 @@ export class ChatSession {
         return new ChatSession(rt, provider, timeoutMs, onProgress);
       } catch (err) {
         if (attempt >= attempts || !isRetryableOpenError(err)) throw err;
+        // The error is about to be swallowed by the next attempt; leave a
+        // trace so a retried failure is not invisible.
+        reportOpen?.(
+          `Attempt ${attempt} failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
   }
@@ -161,7 +176,8 @@ export class ChatSession {
         provider.startNewChat(rt.page),
       );
     } catch (err) {
-      await rt.close();
+      // A failing close must not mask the step error that caused it.
+      await rt.close().catch(() => {});
       throw err;
     }
     return rt;

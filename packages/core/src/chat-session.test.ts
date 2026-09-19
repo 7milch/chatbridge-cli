@@ -268,6 +268,7 @@ describe("open retries", () => {
     expect(calls()).toBe(2);
     expect(progress).toEqual([
       "Opening browser...",
+      "Attempt 1 failed: boom",
       "Opening browser... (attempt 2/2)",
     ]);
     await s.kill();
@@ -363,6 +364,52 @@ describe("open retries", () => {
     const calls = flakyLaunch(h, 1, () => new Error("boom"));
     await expect(ChatSession.open(opts(h))).rejects.toThrow("boom");
     expect(calls()).toBe(1);
+  });
+
+  test("without opts.open the provider's own open defaults are used", async () => {
+    const h = harness();
+    (h.provider as { open?: unknown }).open = { retries: 1 };
+    const calls = flakyLaunch(h, 1, () => new Error("boom"));
+    const s = await ChatSession.open(opts(h));
+    expect(calls()).toBe(2);
+    await s.kill();
+  });
+
+  test("without opts.open the provider's open.timeoutMs drives the steps", async () => {
+    const h = harness();
+    (h.provider as { open?: unknown }).open = { timeoutMs: 7000 };
+    const defaults: number[] = [];
+    const real = h.launch;
+    h.launch = async (o) => {
+      const rt = await real(o);
+      rt.page.setDefaultTimeout = (ms: number) => {
+        defaults.push(ms);
+      };
+      return rt;
+    };
+    const s = await ChatSession.open({ ...opts(h), timeoutMs: 1000 });
+    expect(defaults).toEqual([7000, 1000]);
+    await s.kill();
+  });
+
+  test("a failing close does not mask the step error", async () => {
+    const h = harness();
+    const real = h.launch;
+    h.launch = async (o) => {
+      const rt = await real(o);
+      rt.page.goto = (async () => {
+        const e = new Error("t/o");
+        e.name = "TimeoutError";
+        throw e;
+      }) as unknown as typeof rt.page.goto;
+      rt.close = async () => {
+        throw new Error("close failed");
+      };
+      return rt;
+    };
+    await expect(
+      ChatSession.open({ ...opts(h), open: { timeoutMs: 1000, retries: 0 } }),
+    ).rejects.toBeInstanceOf(ResponseTimeoutError);
   });
 
   test("opening steps use open.timeoutMs, then turns go back to timeoutMs", async () => {
