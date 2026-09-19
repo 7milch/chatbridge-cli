@@ -27,6 +27,17 @@ const footer = document.getElementById("footer") as HTMLElement;
 const queue = document.getElementById("queue") as HTMLElement;
 const inlineError = document.getElementById("inline-error") as HTMLElement;
 
+/** Grows the composer with its content (wrapped lines included, via
+ * scrollHeight) and shrinks it back; CSS max-height caps it at 8 rows. The
+ * history stays pinned to its end when it was there before. */
+function fitComposer(): void {
+  const atBottom =
+    history.scrollHeight - history.scrollTop - history.clientHeight < 2;
+  input.style.height = "auto";
+  input.style.height = `${input.scrollHeight}px`;
+  if (atBottom) history.scrollTop = history.scrollHeight;
+}
+
 let config: UiConfig = {};
 let lastState: State | undefined;
 
@@ -228,12 +239,14 @@ function submit(): void {
   showInlineError(undefined);
   if (slash) {
     input.value = "";
+    fitComposer();
     const name = slash.command === "new" ? "newChat" : slash.command;
     vscode.postMessage({ type: "command", name });
     return;
   }
   vscode.postMessage({ type: "send", text });
   input.value = "";
+  fitComposer();
 }
 
 form.addEventListener("submit", (e) => {
@@ -258,7 +271,10 @@ input.addEventListener("keydown", (e) => {
     vscode.postMessage({ type: "takeBack" });
   }
 });
-input.addEventListener("input", () => showInlineError(undefined));
+input.addEventListener("input", () => {
+  showInlineError(undefined);
+  fitComposer();
+});
 
 // Observed with VSCode 1.138 (explorer item, Shift held): `text/uri-list` =
 // `file:///abs/path` one per line, plus `text/plain`, `resourceurls`,
@@ -307,7 +323,11 @@ function insertAtCaret(text: string): void {
       value.slice(0, selectionStart) + text + value.slice(selectionEnd);
     const pos = selectionStart + text.length;
     input.setSelectionRange(pos, pos);
+    // Setting `value` fires no `input` event; the listener clears the
+    // inline error and resizes the composer.
+    input.dispatchEvent(new Event("input", { bubbles: true }));
   }
+  fitComposer();
 }
 
 input.addEventListener("paste", (e) => {
@@ -355,8 +375,10 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
     input.value = m.entries.map((q) => q.text).join("\n\n");
     // Setting the value fires no `input` event, so clear the error here.
     showInlineError(undefined);
+    fitComposer();
     input.focus();
   }
 });
 
+fitComposer();
 vscode.postMessage({ type: "ready" });

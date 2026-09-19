@@ -33,7 +33,7 @@ export function buildHtml(i: HtmlInputs): string {
 <div id="attachments"></div>
 <div id="inline-error" hidden></div>
 <form id="composer">
-<textarea id="input" rows="3" placeholder="Message (Enter to send, Shift+Enter for a newline, / for commands)"></textarea>
+<textarea id="input" rows="1" placeholder="Message (Enter to send, Shift+Enter for a newline, / for commands)"></textarea>
 <button id="send" type="submit">Send</button>
 </form>
 <footer id="footer" hidden></footer>
