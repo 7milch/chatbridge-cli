@@ -1,4 +1,8 @@
-import type { Page, Provider } from "@chatbridge/provider";
+import type {
+  Page,
+  Provider,
+  ProviderCommandResult,
+} from "@chatbridge/provider";
 import {
   type AuthStore,
   BrowserRuntime,
@@ -201,6 +205,35 @@ export class ChatSession {
       this.onProgress?.("Waiting for response...");
       return await runStep("waitForResponse", this.timeoutMs, () =>
         this.provider.waitForResponse(this.rt.page),
+      );
+    } catch (err) {
+      if (err instanceof ResponseTimeoutError) await this.diagnoseTimeout();
+      throw err;
+    } finally {
+      this.pending = false;
+    }
+  }
+
+  /** Runs one provider `/command` on the chat page. Same guards as `send`:
+   * one thing at a time on the page. The result is returned untouched: a
+   * `send` result is the UI's to send (it owns the turn and its history),
+   * never core's. A timeout runs the same login diagnosis as a slow turn. */
+  async runCommand(name: string, args: string): Promise<ProviderCommandResult> {
+    if (this.closed) {
+      throw new InvalidStateError("ChatSession is closed.");
+    }
+    if (this.pending) {
+      throw new InvalidStateError("A send is already in progress.");
+    }
+    const command = this.provider.commands?.find((c) => c.name === name);
+    if (command === undefined) {
+      throw new InvalidStateError(`Unknown provider command "/${name}".`);
+    }
+    this.pending = true;
+    try {
+      this.onProgress?.(`Running /${name}...`);
+      return await runStep(`command:${name}`, this.timeoutMs, () =>
+        command.run(this.rt.page, args),
       );
     } catch (err) {
       if (err instanceof ResponseTimeoutError) await this.diagnoseTimeout();
