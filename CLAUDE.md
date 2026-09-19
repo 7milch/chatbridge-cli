@@ -21,7 +21,10 @@ Bun-workspaces monorepo. Commands:
 - Interactive mode (`chatbridge` with no `-p`) needs Bun >= 1.3 or Node >= 26.4; `@opentui/core` is loaded lazily and lives only in `packages/cli/src/tui/`
 
 Dependency direction is one-way: `cli → core → runtime → provider`. Never import in reverse.
-Spec for the current milestone: `docs/superpowers/specs/2026-09-07-interactive-tui-design.md`.
+Specs live in `docs/superpowers/specs/`, plans in `docs/superpowers/plans/`, both
+named `<date>-<topic>`. The ones for the open milestone are the newest; its
+tracking issue names them. Do not hardcode either path here, it goes stale every
+milestone.
 
 ## Purpose
 
@@ -82,17 +85,59 @@ provisional until the interactive-mode milestone.
 
 ## Development process
 
-- Work on a branch named `issue-[number]`; sync progress to the GitHub issue with `gh issue comment` (in English) after each completed task. The issue is the long-term memory across sessions.
+- One branch per milestone, named `issue-<n>` where `<n>` is the milestone's
+  **tracking issue**: the issue the branch and its PR report into. When a milestone
+  bundles several issues, pick the largest as the tracking issue and reference the
+  rest from the PR. Never open a second branch for a sibling issue in the same
+  milestone.
+- Sync progress to the tracking issue with `gh issue comment` (in English) after
+  each completed task, and always include "What's next". The issue is the
+  long-term memory across sessions.
 - Execution model: subagent-driven development (fresh implementer per task, task review after each, whole-branch review at the end).
 - Model policy for subagents:
   - **Fable** — the final whole-branch review only.
   - **Opus** — implementation tasks with integration risk or multi-file judgment (browser runtime, session flows, CLI wiring), task reviews of those diffs, and fix-loop escalation rounds 4–5.
   - **Sonnet** — mechanical/transcription implementation tasks where the plan contains the full code (scaffolding, type definitions, error classes, file stores, dummy fixtures, CI/docs), and task reviews of those small diffs.
 - TDD; `bun run check` must pass before every commit.
-- Current milestone plan: `docs/superpowers/plans/2026-09-07-interactive-tui.md`
+- The plan for the open milestone is the newest file in `docs/superpowers/plans/`.
 
-What is in flight lives on GitHub, not in a file: repository
-[milestones](https://github.com/7milch/chatbridge-cli/milestones) for the current
-milestone, issues labelled `backlog` for unscheduled ideas, and a private project
-board for priority. `docs/ROADMAP.md` records shipped milestones and the standing
-design rules only; do not track status there.
+## Tracking
+
+Status lives on GitHub, never in a file, so it is the same on every branch and
+needs no commit to change.
+
+| What | Where |
+|---|---|
+| The milestone in flight | [Milestones](https://github.com/7milch/chatbridge-cli/milestones); at most one open at a time |
+| Unscheduled ideas | Issues labelled `backlog` |
+| Priority and progress | [Project 1](https://github.com/users/7milch/projects/1) under owner `7milch`, private; `Status` is `Todo` / `In Progress` / `Done` |
+| What changed in a version | [Releases](https://github.com/7milch/chatbridge-cli/releases) |
+| Long-term memory across sessions | The tracking issue's thread |
+
+Milestone lifecycle, driven by the `starting-next-milestone` skill:
+
+1. Pick a `backlog` issue, create the milestone, move the issue into it and drop
+   the `backlog` label.
+2. Branch `issue-<n>` off main, brainstorm the spec, write the plan, implement.
+3. Ship the PR, then append one heading to the shipped history in
+   `docs/ROADMAP.md` and close the milestone.
+
+### `docs/ROADMAP.md` rules
+
+- It records **shipped** milestones and the standing design rules. Nothing else.
+- Append a heading only when a milestone ships, in the existing format:
+  `### N. <short name> — done (issue #<n>, PR #<p>, <YYYY-MM-DD>)`, followed by two
+  or three lines on what landed. Newest last.
+- Never add an "in progress" or "planned" heading, never a backlog list, and never
+  edit it to reflect a status change. That is what milestones and the board are for.
+- A new unscheduled idea becomes an issue labelled `backlog`, not a roadmap bullet.
+
+### Pull requests
+
+- `Closes` needs the keyword before **every** number: `Closes #67, #59` closes only
+  #67. Write `Closes #67, closes #59` or one line per issue, then verify after
+  merging that each issue actually closed.
+- Releases are generated from merged PR titles grouped by label, so a PR title must
+  make sense to someone who has not seen the code, and every PR carries one of
+  `enhancement`, `bug`, `accessibility` or `documentation`. See `docs/PUBLISHING.md`.
+- Squash-merge. A release commit is the one exception that lands directly on main.
