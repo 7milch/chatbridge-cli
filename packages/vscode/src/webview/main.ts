@@ -256,6 +256,17 @@ function submit(): void {
     showInlineError(unknownCommandMessage(slash.unknown));
     return;
   }
+  if (slash && "error" in slash) {
+    showInlineError(slash.error);
+    return;
+  }
+  if (slash && "custom" in slash) {
+    // No provider command dispatch is wired up yet (that lands with
+    // ChatSession.runCommand); the webview never passes a non-empty custom
+    // set to parseSlashCommand, so this branch is unreachable today.
+    showInlineError(unknownCommandMessage(slash.custom));
+    return;
+  }
   showInlineError(undefined);
   if (slash) {
     input.value = "";

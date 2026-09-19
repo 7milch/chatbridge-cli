@@ -509,6 +509,22 @@ export class ChatModel {
       this.onChange();
       return false;
     }
+    if ("error" in slash) {
+      this.messages.push({ role: "error", text: slash.error });
+      this.onChange();
+      return true;
+    }
+    if ("custom" in slash) {
+      // No provider command dispatch is wired up yet (that lands with
+      // ChatSession.runCommand); this cli never passes a non-empty custom
+      // set to parseSlashCommand, so this branch is unreachable today.
+      this.messages.push({
+        role: "error",
+        text: unknownCommandMessage(slash.custom),
+      });
+      this.onChange();
+      return false;
+    }
     switch (slash.command) {
       case "help":
         this.messages.push({ role: "help", text: helpText() });

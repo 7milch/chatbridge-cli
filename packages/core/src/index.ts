@@ -20,8 +20,15 @@ export {
   BrowserRuntime,
   validateProviderName,
 } from "@chatbridge/runtime";
-export type { Provider, ProviderOpenDefaults } from "@chatbridge/provider";
-export { defineProvider } from "@chatbridge/provider";
+export type {
+  Provider,
+  ProviderCommand,
+  ProviderCommandResult,
+  ProviderOpenDefaults,
+  UrlHook,
+  UrlHookResult,
+} from "@chatbridge/provider";
+export { BUILTIN_COMMAND_NAMES, defineProvider } from "@chatbridge/provider";
 export {
   type Attachment,
   MAX_FILE_BYTES,
@@ -37,8 +44,12 @@ export {
   closeWithTimeout,
 } from "./close-session.js";
 export {
+  type CommandInfo,
+  type ParsedSlash,
   SLASH_COMMANDS,
   type SlashCommand,
+  commandInfoOf,
+  commandNamesOf,
   helpText,
   parseSlashCommand,
   unknownCommandMessage,
