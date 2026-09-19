@@ -27,6 +27,9 @@ export interface VscodeUi {
   ): Promise<T>;
   activeEditor(): EditorSnapshot | undefined;
   /** Parses a URI string; throws when it is not a valid URI. */
+  /** True when the value is a real vscode.Uri: a command argument from an
+   * unexpected caller is not. */
+  isUri(value: unknown): boolean;
   parseUri(uri: string): unknown;
   /** Opens the document behind an explorer Uri (or any Uri) read-only. */
   openDocument(uri: unknown): Promise<{ path: string; text: string }>;
@@ -81,6 +84,7 @@ export function createVscodeUi(api: typeof vscode, id: string): VscodeUi {
       }
       return snap;
     },
+    isUri: (v) => v instanceof api.Uri,
     parseUri: (uri) => api.Uri.parse(uri, true),
     openDocument: async (uri) => {
       const doc = await api.workspace.openTextDocument(uri as vscode.Uri);

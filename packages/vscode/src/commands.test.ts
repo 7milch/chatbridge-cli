@@ -54,6 +54,7 @@ function fake(): Fake {
       );
     },
     activeEditor: () => f.editor,
+    isUri: (x) => typeof x === "string" && x.startsWith("file:"),
     parseUri: (uri) => uri,
     openDocument: async (uri) => {
       const raw = String(uri);
@@ -432,5 +433,27 @@ describe("commands", () => {
     };
     expect(commands(f).pasted("zzz")).toBe(false);
     expect(f.log).toEqual([]);
+  });
+
+  test("sendFile with a non-Uri argument warns instead of throwing", async () => {
+    const f = fake();
+    await commands(f).sendFile({ not: "a uri" });
+    expect(f.log).toEqual(["warn:Nothing to attach."]);
+  });
+
+  test("pasted: a whitespace-only selection never matches", () => {
+    const f = fake();
+    f.editor = {
+      path: "/w/a.ts",
+      text: "x",
+      selection: { text: "   \n", startLine: 1, endLine: 2 },
+    };
+    expect(commands(f).pasted("   \n")).toBe(false);
+  });
+
+  test("attachUris deduplicates repeated URIs", async () => {
+    const f = fake();
+    await commands(f).attachUris(["file:///w/a", "file:///w/a"]);
+    expect(f.log.filter((l) => l.startsWith("attach:"))).toHaveLength(1);
   });
 });
