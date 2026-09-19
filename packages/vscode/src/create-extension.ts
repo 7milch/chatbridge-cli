@@ -86,7 +86,14 @@ export function createExtension(opts: CreateExtensionOptions) {
     const bridge = new ChatViewBridge(
       () => (controller as SessionController).getState(),
       {
-        send: (text) => void handlers.send(text),
+        send: (text) =>
+          void handlers.send(text).then((r) => {
+            // The webview empties the composer as it posts `send`; a hook
+            // refusal sends nothing, so give the text back to be fixed.
+            if (!r.ok && r.code === "URL_HOOK") {
+              bridge.pushTookBack([{ text, attachments: [] }]);
+            }
+          }),
         removeAttachment: (i) => controller?.removeAttachment(i),
         takeBack: () => {
           const r = controller?.takeBack();

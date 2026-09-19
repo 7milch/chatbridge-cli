@@ -225,8 +225,21 @@ export class SessionController {
       try {
         const urls = await this.opts.expandUrls(turn.text);
         if (generation !== this.generation) {
+          // Stale: the reopen/close owns the state now. The turn is not
+          // sent, but `send` already emptied the composer, so give the
+          // attachments back and leave the text in the history.
           this.expanding = false;
-          return { ok: true }; // stale: the reopen/close owns the state now
+          this.pending = [...turn.attachments, ...this.pending];
+          this.messages.push({
+            role: "error",
+            text: `Reopened while resolving URLs; message not sent: ${turn.text}`,
+          });
+          // Nothing else will run the entries queued behind this one. Only
+          // from `idle`: a stale turn from `close()` must not open a browser
+          // after deactivate.
+          if (this.status === "idle") this.drain();
+          this.emit();
+          return { ok: true };
         }
         attachments = [
           ...attachments,
@@ -294,6 +307,10 @@ export class SessionController {
     generation: number,
   ): Promise<SendResult> {
     this.lastError = undefined;
+    // A `show` sets no prompt; leaving the previous turn's would make a
+    // retryLast after a failure resend that message instead. A `send`
+    // result sets it again below.
+    this.lastPrompt = undefined;
     this.claimTurn();
     try {
       const session = await this.ensureSession(generation);

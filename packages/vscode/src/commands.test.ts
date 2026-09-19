@@ -306,6 +306,22 @@ describe("commands", () => {
     ]);
   });
 
+  test("send returns the controller's result so the caller can refill the composer", async () => {
+    const f = fake();
+    f.sendResults.push({
+      ok: false,
+      code: "URL_HOOK",
+      message: "https://w/x: 403",
+    });
+    expect(await commands(f).send("https://w/x")).toEqual({
+      ok: false,
+      code: "URL_HOOK",
+      message: "https://w/x: 403",
+    });
+    // A hook refusal is the user's to fix: no install prompt.
+    expect(f.log).toEqual(["send:https://w/x"]);
+  });
+
   test("declining the install leaves the error in the history only", async () => {
     const f = fake();
     f.sendResults.push({

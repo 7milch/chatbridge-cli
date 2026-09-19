@@ -902,6 +902,26 @@ describe("SessionController.runCommand", () => {
     expect(h.commands).toEqual([{ name: "model", args: "" }]);
   });
 
+  test("a failed show command clears lastPrompt: retryLast sends nothing", async () => {
+    const h = harness();
+    const p1 = h.controller.send("earlier");
+    await settle();
+    h.replies[0]?.resolve("ok");
+    await p1;
+    const p2 = h.controller.runCommand("model", "", "/model");
+    await settle();
+    h.commandResults[0]?.reject(new BrowserUnavailableError("gone"));
+    expect((await p2).ok).toBe(false);
+    expect(h.controller.getState().status).toBe("dead");
+    // The previous turn's prompt must not be resent in place of the command.
+    expect(await h.controller.retryLast()).toEqual({
+      ok: false,
+      code: "EMPTY",
+      message: "Nothing to send.",
+    });
+    expect(h.sent).toEqual(["earlier"]);
+  });
+
   test("timeout → idle with an error entry; other errors → dead", async () => {
     const h = harness();
     let p = h.controller.runCommand("model", "", "/model");
@@ -986,7 +1006,7 @@ describe("URL hooks", () => {
     expect(h.sent).toEqual([]);
   });
 
-  test("a reopen during URL expansion drops the turn instead of opening a second browser", async () => {
+  test("a reopen during URL expansion recovers the turn instead of opening a second browser", async () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => {
       release = r;
@@ -997,7 +1017,10 @@ describe("URL hooks", () => {
         return [];
       },
     });
+    h.controller.addAttachment({ path: "a.txt", bytes: 1, content: "a" });
     const p = h.controller.send("a");
+    // Queued behind the turn whose expansion is still in flight.
+    expect(await h.controller.send("b")).toEqual({ ok: true, queued: true });
     await settle();
     await h.controller.reopen();
     expect(h.opens).toBe(1);
@@ -1005,11 +1028,22 @@ describe("URL hooks", () => {
     expect(await p).toEqual({ ok: true });
     await settle();
     expect(h.opens).toBe(1);
-    expect(h.sent).toEqual([]);
+    // The stale turn is not sent, but the one queued behind it is.
+    expect(h.sent).toEqual(["b"]);
     const s = h.controller.getState();
-    expect(s.status).toBe("idle");
+    expect(s.status).toBe("busy");
+    // Its attachments come back to the composer and its text stays readable
+    // in the history, so nothing the user typed is lost.
+    expect(s.pendingAttachments).toEqual([{ path: "a.txt", bytes: 1 }]);
     expect(s.messages).toEqual([
       { role: "separator", text: REOPENED_SEPARATOR },
+      {
+        role: "error",
+        text: "Reopened while resolving URLs; message not sent: a",
+      },
+      { role: "user", text: "b", attachments: [] },
     ]);
+    h.replies[0]?.resolve("ok");
+    await settle();
   });
 });

@@ -106,6 +106,16 @@ export async function run(): Promise<void> {
   assert.equal(handlers.pasted("unrelated\ntext"), false);
   controller.removeAttachment(0);
 
+  // A URL hook that refuses: nothing is sent and the result carries the
+  // code the extension uses to put the text back in the composer.
+  const badUrl = `${process.env.DUMMY_CHAT_URL ?? "http://localhost:8735"}/nope`;
+  const refused = await handlers.send(`look at ${badUrl}`);
+  assert.equal(refused.ok, false);
+  assert.equal(refused.ok === false && refused.code, "URL_HOOK");
+  s = controller.getState();
+  assert.equal(s.messages.at(-1)?.role, "error");
+  assert.match(s.messages.at(-1)?.text ?? "", /404 from dummy chat/);
+
   await controller.close();
   assert.equal(controller.getState().status, "closed");
 }
