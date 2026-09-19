@@ -338,3 +338,41 @@ describe("--version", () => {
     expect(out).toContain('"shell"');
   });
 });
+
+describe("opening knobs", () => {
+  function withEnv(name: string, value: string, fn: () => Promise<void>) {
+    const previous = process.env[name];
+    process.env[name] = value;
+    return fn().finally(() => {
+      if (previous === undefined) delete process.env[name];
+      else process.env[name] = previous;
+    });
+  }
+
+  test("a bad CHATBRIDGE_OPEN_RETRIES exits 1 before any launch", async () => {
+    captureStderr();
+    const cli = createCli({
+      name: "test-cli",
+      provider: stubProvider(),
+      baseDir: setup(),
+    });
+    await withEnv("CHATBRIDGE_OPEN_RETRIES", "x", async () => {
+      expect(await cli.run(["bun", "cli", "-p", "hi"])).toBe(1);
+      expect(stderrChunks.join("")).toContain("CHATBRIDGE_OPEN_RETRIES");
+    });
+  });
+
+  test("one-shot reads config.json: a broken file exits 1", async () => {
+    captureStderr();
+    const baseDir = setup();
+    mkdirSync(join(baseDir, "test-cli"), { recursive: true });
+    writeFileSync(join(baseDir, "test-cli", "config.json"), "{not json");
+    const cli = createCli({
+      name: "test-cli",
+      provider: stubProvider(),
+      baseDir,
+    });
+    expect(await cli.run(["bun", "cli", "-p", "hi"])).toBe(1);
+    expect(stderrChunks.join("")).toContain("config.json");
+  });
+});

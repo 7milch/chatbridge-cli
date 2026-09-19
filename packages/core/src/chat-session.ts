@@ -133,6 +133,9 @@ export class ChatSession {
           provider,
           open.timeoutMs,
         );
+        // The opening phase set the page default to open.timeoutMs; turns
+        // run under --timeout, so hand the page back to that budget.
+        rt.page.setDefaultTimeout(timeoutMs);
         return new ChatSession(rt, provider, timeoutMs, onProgress);
       } catch (err) {
         if (attempt >= attempts || !isRetryableOpenError(err)) throw err;

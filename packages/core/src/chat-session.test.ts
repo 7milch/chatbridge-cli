@@ -365,14 +365,14 @@ describe("open retries", () => {
     expect(calls()).toBe(1);
   });
 
-  test("opening steps use open.timeoutMs, not timeoutMs", async () => {
+  test("opening steps use open.timeoutMs, then turns go back to timeoutMs", async () => {
     const h = harness();
-    let defaultTimeout: number | undefined;
+    const defaults: number[] = [];
     const real = h.launch;
     h.launch = async (o) => {
       const rt = await real(o);
       rt.page.setDefaultTimeout = (ms: number) => {
-        defaultTimeout = ms;
+        defaults.push(ms);
       };
       return rt;
     };
@@ -381,7 +381,7 @@ describe("open retries", () => {
       timeoutMs: 1000,
       open: { timeoutMs: 7000, retries: 0 },
     });
-    expect(defaultTimeout).toBe(7000);
+    expect(defaults).toEqual([7000, 1000]);
     await s.kill();
   });
 });
