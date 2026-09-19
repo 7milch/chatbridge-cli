@@ -6,7 +6,9 @@ import {
   BrowserUnavailableError,
   MAX_FILE_BYTES,
   MAX_TOTAL_BYTES,
+  type ProviderCommandResult,
   ResponseTimeoutError,
+  UrlHookError,
 } from "@chatbridge/core";
 import {
   type ChatSessionLike,
@@ -34,6 +36,8 @@ interface Harness {
   openError?: Error;
   closeHangs: boolean;
   states: string[];
+  commands: Array<{ name: string; args: string }>;
+  commandResults: Array<ReturnType<typeof deferred<ProviderCommandResult>>>;
 }
 
 /** The fake ChatSession every harness hands out, wired to the counters.
@@ -45,6 +49,12 @@ function sessionOf(h: Harness): ChatSessionLike {
       h.sent.push(prompt);
       const d = deferred<string>();
       h.replies.push(d);
+      return d.promise;
+    },
+    async runCommand(name, args) {
+      h.commands.push({ name, args });
+      const d = deferred<ProviderCommandResult>();
+      h.commandResults.push(d);
       return d.promise;
     },
     close: () =>
@@ -72,6 +82,8 @@ function harness(opts: Partial<SessionControllerOptions> = {}): Harness {
     killed: 0,
     closeHangs: false,
     states: [],
+    commands: [],
+    commandResults: [],
   } as unknown as Harness;
   const session = sessionOf(h);
   h.controller = new SessionController({
@@ -835,5 +847,139 @@ describe("reopen", () => {
     const b = h.controller.reopen();
     await Promise.all([a, b]);
     expect(h.opens).toBe(1);
+  });
+});
+
+describe("SessionController.runCommand", () => {
+  test("opens lazily, pushes the typed line, show → help entry, idle", async () => {
+    const h = harness();
+    const p = h.controller.runCommand("model", "", "/model");
+    await settle();
+    expect(h.opens).toBe(1);
+    expect(h.controller.getState().status).toBe("busy");
+    expect(h.commands).toEqual([{ name: "model", args: "" }]);
+    h.commandResults[0]?.resolve({ kind: "show", text: "gpt-x" });
+    expect(await p).toEqual({ ok: true });
+    const s = h.controller.getState();
+    expect(s.status).toBe("idle");
+    expect(s.messages).toEqual([
+      { role: "user", text: "/model", attachments: [] },
+      { role: "help", text: "gpt-x" },
+    ]);
+    expect(h.sent).toEqual([]);
+  });
+
+  test("send → the prompt is sent, the typed line stays, the reply lands", async () => {
+    const h = harness();
+    const p = h.controller.runCommand("summarize", "x", "/summarize x");
+    await settle();
+    h.commandResults[0]?.resolve({ kind: "send", prompt: "Summarize: x" });
+    await settle();
+    expect(h.sent).toEqual(["Summarize: x"]);
+    h.replies[0]?.resolve("ok");
+    expect(await p).toEqual({ ok: true });
+    expect(h.controller.getState().messages).toEqual([
+      { role: "user", text: "/summarize x", attachments: [] },
+      { role: "assistant", text: "ok" },
+    ]);
+  });
+
+  test("queued behind a turn and dispatched on drain", async () => {
+    const h = harness();
+    const first = h.controller.send("hello");
+    await settle();
+    expect(await h.controller.runCommand("model", "", "/model")).toEqual({
+      ok: true,
+      queued: true,
+    });
+    expect(h.controller.getState().queue).toEqual([
+      { text: "/model", attachments: [] },
+    ]);
+    h.replies[0]?.resolve("hi");
+    await first;
+    await settle();
+    expect(h.commands).toEqual([{ name: "model", args: "" }]);
+  });
+
+  test("timeout → idle with an error entry; other errors → dead", async () => {
+    const h = harness();
+    let p = h.controller.runCommand("model", "", "/model");
+    await settle();
+    h.commandResults[0]?.reject(new ResponseTimeoutError("slow"));
+    expect((await p).ok).toBe(false);
+    expect(h.controller.getState().status).toBe("idle");
+    p = h.controller.runCommand("model", "", "/model");
+    await settle();
+    h.commandResults[1]?.reject(new Error("gone"));
+    expect((await p).ok).toBe(false);
+    expect(h.controller.getState().status).toBe("dead");
+  });
+});
+
+describe("URL hooks", () => {
+  test("resolved URLs join the turn after the pending attachments", async () => {
+    const h = harness({
+      expandUrls: async (text) =>
+        text.includes("https://w/x")
+          ? [{ label: "Wiki: X", bytes: 4, content: "body" }]
+          : [],
+    });
+    h.controller.addAttachment({ path: "a.txt", bytes: 1, content: "a" });
+    const p = h.controller.send("see https://w/x");
+    await settle();
+    expect(h.sent[0]).toBe(
+      "see https://w/x\n\n### a.txt\n```\na\n```\n\n### Wiki: X\n```\nbody\n```",
+    );
+    expect(h.controller.getState().messages[0]).toEqual({
+      role: "user",
+      text: "see https://w/x",
+      attachments: [
+        { path: "a.txt", bytes: 1 },
+        { path: "Wiki: X", bytes: 4 },
+      ],
+    });
+    h.replies[0]?.resolve("ok");
+    await p;
+  });
+
+  test("a send during URL expansion queues instead of racing the turn", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const h = harness({
+      expandUrls: async () => {
+        await gate;
+        return [];
+      },
+    });
+    const first = h.controller.send("a");
+    expect(await h.controller.send("b")).toEqual({ ok: true, queued: true });
+    release();
+    await settle();
+    expect(h.sent).toEqual(["a"]);
+    h.replies[0]?.resolve("1");
+    await first;
+    await settle();
+    expect(h.sent).toEqual(["a", "b"]);
+  });
+
+  test("a UrlHookError refuses the send: error entry, nothing sent, not dead", async () => {
+    const h = harness({
+      expandUrls: async () => {
+        throw new UrlHookError(["https://w/x: 403"]);
+      },
+    });
+    const r = await h.controller.send("https://w/x");
+    expect(r).toEqual({
+      ok: false,
+      code: "URL_HOOK",
+      message: "https://w/x: 403",
+    });
+    const s = h.controller.getState();
+    expect(s.messages).toEqual([{ role: "error", text: "https://w/x: 403" }]);
+    expect(s.status).toBe("closed");
+    expect(h.opens).toBe(0);
+    expect(h.sent).toEqual([]);
   });
 });

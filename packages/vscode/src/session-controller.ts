@@ -3,6 +3,9 @@ import {
   ChatBridgeError,
   MAX_FILE_BYTES,
   MAX_TOTAL_BYTES,
+  type ProviderCommandResult,
+  type ResolvedUrl,
+  UrlHookError,
   closeOrKill,
   formatAttachment,
   formatSize,
@@ -12,6 +15,7 @@ import type { Message, QueueEntry, State, Status } from "./protocol.js";
 /** What the controller needs from a ChatSession; lets tests inject a fake. */
 export interface ChatSessionLike {
   send(prompt: string): Promise<string>;
+  runCommand?(name: string, args: string): Promise<ProviderCommandResult>;
   close(): Promise<void>;
   kill(): Promise<void>;
 }
@@ -32,6 +36,8 @@ export const REOPENED_SEPARATOR = "reopened";
 interface QueuedTurn {
   text: string;
   attachments: PendingAttachment[];
+  /** Set for a provider `/command`; `text` is then the typed line. */
+  command?: { name: string; args: string };
 }
 
 export type AddResult = { ok: true } | { ok: false; reason: string };
@@ -64,6 +70,9 @@ export interface SessionControllerOptions {
    * `ChatBridgeError.code`. Core's messages carry no UI-specific remedy;
    * the extension adds the VSCode-side one. */
   hints?: Partial<Record<HintCode, string>>;
+  /** URL hook expansion for the text of a turn; the extension builds it from
+   * the provider's hooks and the timeout setting. Default: none. */
+  expandUrls?: (text: string) => Promise<ResolvedUrl[]>;
 }
 
 export const CLOSE_TIMEOUT_MS = 5_000;
@@ -93,6 +102,10 @@ export class SessionController {
   /** The openSession in flight (first send or reopen), so close() can wait
    * for it instead of orphaning the browser it is about to produce. */
   private opening: Promise<ChatSessionLike> | undefined;
+  /** True while a turn's URL hooks are being resolved: the turn is claimed
+   * but no status change shows it yet, so a send arriving meanwhile must
+   * queue rather than start a second turn. */
+  private expanding = false;
   private readonly closeTimeoutMs: number;
 
   constructor(private readonly opts: SessionControllerOptions) {
@@ -167,6 +180,7 @@ export class SessionController {
    * send is the user retrying, and only automatic draining must stop
    * while the controller is dead. */
   private get canStartTurn(): boolean {
+    if (this.expanding) return false;
     return (
       this.status === "idle" ||
       this.status === "closed" ||
@@ -195,9 +209,40 @@ export class SessionController {
     return this.startTurn({ text: body, attachments });
   }
 
-  /** Pushes the user entry and runs the turn. Shared by send and drain. */
-  private startTurn(turn: QueuedTurn): Promise<SendResult> {
-    const sections = turn.attachments.map((a) =>
+  /** Pushes the user entry and runs the turn (or the command). Shared by
+   * send, runCommand and drain. */
+  private async startTurn(turn: QueuedTurn): Promise<SendResult> {
+    if (turn.command) {
+      this.push({ role: "user", text: turn.text, attachments: [] });
+      return this.runProviderCommand(turn.command);
+    }
+    let attachments = turn.attachments;
+    if (this.opts.expandUrls) {
+      this.expanding = true;
+      try {
+        const urls = await this.opts.expandUrls(turn.text);
+        attachments = [
+          ...attachments,
+          ...urls.map((u) => ({
+            path: u.label,
+            bytes: u.bytes,
+            content: u.content,
+          })),
+        ];
+      } catch (err) {
+        if (!(err instanceof UrlHookError)) throw err;
+        // The user's to fix: report, send nothing, leave the status alone.
+        const message = err.message;
+        this.expanding = false;
+        this.push({ role: "error", text: message });
+        // Nothing else will run the entries that queued behind this one.
+        this.drain();
+        return { ok: false, code: "URL_HOOK", message };
+      } finally {
+        this.expanding = false;
+      }
+    }
+    const sections = attachments.map((a) =>
       formatAttachment(a.path, a.content),
     );
     const prompt = [turn.text, ...sections]
@@ -206,10 +251,86 @@ export class SessionController {
     this.push({
       role: "user",
       text: turn.text,
-      attachments: turn.attachments.map(({ path, bytes }) => ({ path, bytes })),
+      attachments: attachments.map(({ path, bytes }) => ({ path, bytes })),
     });
     this.lastPrompt = prompt;
     return this.runTurn(prompt);
+  }
+
+  /** A provider `/command` from the webview. Queued like a message when a
+   * turn is running; `text` is the line as typed, which is what the
+   * history shows. */
+  async runCommand(
+    name: string,
+    args: string,
+    text: string,
+  ): Promise<SendResult> {
+    const turn: QueuedTurn = { text, attachments: [], command: { name, args } };
+    if (!this.canStartTurn || this.queue.length > 0) {
+      this.queue.push(turn);
+      this.drain();
+      this.emit();
+      return { ok: true, queued: true };
+    }
+    return this.startTurn(turn);
+  }
+
+  /** Runs the command on the session (opening one lazily, like a turn).
+   * `show` prints; `send` continues as an ordinary turn with the prompt. */
+  private async runProviderCommand(command: {
+    name: string;
+    args: string;
+  }): Promise<SendResult> {
+    this.lastError = undefined;
+    const generation = this.generation;
+    this.claimTurn();
+    try {
+      const session = await this.ensureSession(generation);
+      if (session === undefined) return { ok: true }; // stale
+      if (session.runCommand === undefined) {
+        throw new Error(`/${command.name} is not available in this session.`);
+      }
+      if (this.status !== "busy") this.setStatus("busy");
+      const result = await session.runCommand(command.name, command.args);
+      if (generation !== this.generation) return { ok: true }; // stale
+      if (result.kind === "show") {
+        this.messages.push({ role: "help", text: result.text });
+        // Claim the next turn before emitting, so no idle frame is shown.
+        this.status = "idle";
+        this.drain();
+        this.emit();
+        return { ok: true };
+      }
+      this.lastPrompt = result.prompt;
+      return this.runTurn(result.prompt);
+    } catch (err) {
+      if (generation !== this.generation) return { ok: true }; // stale
+      return this.fail(err);
+    }
+  }
+
+  /** Leaves a ready status synchronously, before the first await, so a
+   * send arriving in the same tick queues instead of starting a second
+   * turn on the session. */
+  private claimTurn(): void {
+    this.setStatus(this.session === undefined ? "opening" : "busy");
+  }
+
+  /** The open session, opening one when there is none. Undefined when a
+   * reopen ran meanwhile (the caller's generation is stale). */
+  private async ensureSession(
+    generation: number,
+  ): Promise<ChatSessionLike | undefined> {
+    if (this.session !== undefined) return this.session;
+    const session = await this.trackOpen(this.opts.openSession());
+    // A reopen ran while we were opening: this browser is an orphan.
+    // dropSession may have closed it already; close/kill are idempotent.
+    if (generation !== this.generation) {
+      await closeOrKill(session, this.closeTimeoutMs);
+      return undefined;
+    }
+    this.session = session;
+    return session;
   }
 
   /** Starts the oldest queued entry, if any, when the controller is ready
@@ -222,6 +343,9 @@ export class SessionController {
     if (!this.canStartTurn) return;
     const next = this.queue.shift();
     if (next === undefined) return;
+    // A URL_HOOK failure here pushes its error entry and drops the entry:
+    // the queue is not a composer, so there is nowhere to hand the text
+    // back to — the user reads the error and re-types.
     void this.startTurn(next);
   }
 
@@ -283,20 +407,12 @@ export class SessionController {
     // successful send from `dead`.
     this.lastError = undefined;
     const generation = this.generation;
+    this.claimTurn();
     try {
-      if (this.session === undefined) {
-        this.setStatus("opening");
-        const session = await this.trackOpen(this.opts.openSession());
-        // A reopen ran while we were opening: this browser is an orphan.
-        // dropSession may have closed it already; close/kill are idempotent.
-        if (generation !== this.generation) {
-          await closeOrKill(session, this.closeTimeoutMs);
-          return { ok: true };
-        }
-        this.session = session;
-      }
-      this.setStatus("busy");
-      const reply = await this.session.send(prompt);
+      const session = await this.ensureSession(generation);
+      if (session === undefined) return { ok: true }; // stale
+      if (this.status !== "busy") this.setStatus("busy");
+      const reply = await session.send(prompt);
       if (generation !== this.generation) return { ok: true }; // stale
       this.messages.push({ role: "assistant", text: reply });
       // Claim the next turn before emitting, so no idle frame is shown.
