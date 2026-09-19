@@ -144,8 +144,9 @@ chat.
   (the CLI name and version by default; a derived CLI can pass its own
   `banner` lines to `createCli`; plain lines are dim, while an object form
   `{ lines, colors, mode }` colours rows (`per-line`), cells diagonally
-  (`per-char`) or a vertical `gradient` between hex stops). While a turn is in flight the status row
-  shows a spinner and the elapsed time against the budget; `spinner` on
+  (`per-char`) or a vertical `gradient` between hex stops — the object form
+  needs `@chatbridge/cli` >= 0.8.2). While a turn is in flight the status
+  row shows a spinner and the elapsed time against the budget; `spinner` on
   `createCli` replaces its frames, interval, label (a list of labels picks
   one at random per turn) and the colours of frame and label (`"#rrggbb"` or an ANSI palette index).
 - Type **`@`** to attach a file from the directory you started `chatbridge`

@@ -13,7 +13,8 @@ export interface BannerOptions {
   /** per-line: row r takes colors[r % n]. per-char: cell (r, c) takes
    * colors[(r + c) % n], a diagonal flow. gradient: row r takes the
    * linear mix of the (hex-only) colours at r / (rows - 1). Default
-   * "per-line". */
+   * "per-line". per-char colours by code point, so combining marks and
+   * wide characters skew the diagonal: it is meant for ASCII art. */
   mode?: BannerMode;
 }
 
@@ -38,14 +39,21 @@ export function validateBanner(
     if (n < 2) {
       throw new Error("banner.colors: gradient needs at least two colours");
     }
-    for (const c of banner.colors) {
-      if (typeof c !== "string" || !HEX.test(c)) {
-        throw new Error(
-          `banner.colors: gradient takes hex colours only, got ${JSON.stringify(c)}`,
-        );
-      }
-    }
   } else if (n < 1) {
     throw new Error(`banner.colors: ${mode} needs at least one colour`);
+  }
+  for (const c of banner.colors) {
+    if (typeof c === "string") {
+      // Caught here rather than in RGBA.fromHex at render time.
+      if (!HEX.test(c)) {
+        throw new Error(
+          `banner.colors: not a "#rrggbb" colour: ${JSON.stringify(c)}`,
+        );
+      }
+    } else if (mode === "gradient") {
+      throw new Error(
+        `banner.colors: gradient takes hex colours only, got ${JSON.stringify(c)}`,
+      );
+    }
   }
 }

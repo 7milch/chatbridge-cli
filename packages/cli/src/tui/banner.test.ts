@@ -109,6 +109,14 @@ describe("validateBanner", () => {
       }),
     ).toThrow(/hex/);
   });
+  test("per-line rejects a malformed hex colour", () => {
+    expect(() => validateBanner({ lines: ["a"], colors: ["#a"] })).toThrow(
+      /banner.colors/,
+    );
+    expect(() =>
+      validateBanner({ lines: ["a"], colors: [1, "#ff0000"] }),
+    ).not.toThrow();
+  });
   test("per-line and per-char need at least one colour", () => {
     expect(() =>
       validateBanner({ lines: ["a"], colors: [], mode: "per-char" }),
