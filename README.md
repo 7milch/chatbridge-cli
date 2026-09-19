@@ -267,8 +267,8 @@ optional `detectBlock` method (see `@chatbridge/provider`) so the CLI exits
 6 and suggests `--headful` instead of reporting an expired login. A provider
 that is slow to open, or flaky enough to be worth a second try, can also ship
 its own defaults through the optional `open` field
-(`{ timeoutMs?, retries? }`), which the CLI, config file and
-`CHATBRIDGE_OPEN_*` environment variables override in turn. Evading
+(`{ timeoutMs?, retries? }`), which the `open` block in `config.json` and
+then the `CHATBRIDGE_OPEN_*` environment variables override in turn. Evading
 bot protection — stealth plugins,
 user-agent spoofing, attaching to a personal browser profile — is out of
 scope and will not be added. Public services are used here only as spike
