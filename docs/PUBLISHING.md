@@ -32,6 +32,18 @@ Packages: `@chatbridge/provider`, `@chatbridge/runtime`, `@chatbridge/core`,
 3. The `Publish` workflow runs `bun run check`, verifies the tag matches
    every package version, packs with `bun pm pack` (rewrites `workspace:*`),
    and runs `npm publish --provenance` in dependency order.
+4. Once the publish job succeeds, a second job creates the GitHub release for
+   the tag. Its notes are generated from the pull requests merged since the
+   previous tag and grouped by label per `.github/release.yml`, so the release
+   page is the release notes; there is no `CHANGELOG.md` to maintain. A tag
+   carrying a suffix such as `v0.9.0-rc.1` is marked as a prerelease. Re-running
+   a tag skips a release that already exists, so a partial failure can be
+   resumed.
+
+Because the notes come from merged pull requests, a release reads only as well as
+the PR titles in it. Give each PR a title that makes sense to a reader who has
+not seen the code, and label it `enhancement`, `bug`, `accessibility` or
+`documentation` so it lands in the right section.
 
 ## Scope fallback
 

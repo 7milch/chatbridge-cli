@@ -1,13 +1,19 @@
 ---
 name: starting-next-milestone
-description: Use when starting a fresh session on this repo to pick up the next roadmap milestone — after a context clear, after a milestone PR merged, or when the user asks what to work on next.
+description: Use when starting a fresh session on this repo to pick up the next milestone — after a context clear, after a milestone PR merged, or when the user asks what to work on next.
 ---
 
 # Starting the Next Milestone
 
-Bring a fresh session up to date, prepare the issue and branch for the next
-roadmap milestone, then hand off to brainstorming. Preparation only — no
+Bring a fresh session up to date, prepare the milestone, issue and branch for
+the next piece of work, then hand off to brainstorming. Preparation only — no
 spec, plan, or code is written here.
+
+Status lives on GitHub, not in `docs/ROADMAP.md`. Milestones carry what is in
+flight, issues labelled `backlog` carry unscheduled ideas, and project 1 under
+owner `7milch` carries priority with a `Status` field of `Todo` / `In Progress` /
+`Done`. The roadmap file only records shipped history and the standing design
+rules.
 
 ## Procedure
 
@@ -16,32 +22,42 @@ spec, plan, or code is written here.
 2. **Health.** `gh run list --branch main --limit 1`: `in_progress` → wait for
    it (`gh run watch`); anything other than `success` → report and stop. Run
    `bun run check`; if it fails, that failure is the next task — report it and stop.
-3. **Locate.** Read `docs/ROADMAP.md` and `gh issue list --state all --limit 20`.
-   The next milestone is the first one in the roadmap whose heading is not
-   marked `done`. If its issue exists but is **closed**, the roadmap is stale:
-   mark that heading `— done (issue #<n>)`, commit on main, and re-evaluate.
-   Then branch:
-   - An **open** issue titled `Milestone N: …` exists → resume: read the whole
-     thread (`gh issue view <n> --comments`), check out `issue-<n>` (create it
-     from main if missing), skip step 4.
-   - No issue → step 4.
+3. **Locate.** `gh api repos/{owner}/{repo}/milestones?state=open` and
+   `gh issue list --state open --limit 30`.
+   - An **open milestone** exists → that is the work in flight. Resume it: read
+     the thread of its tracking issue (`gh issue view <n> --comments`), check out
+     `issue-<n>` (create it from main if missing), skip step 4. If every issue in
+     it is closed, the milestone is finished: close it, add a heading for it to
+     the shipped history in `docs/ROADMAP.md`, commit on main, and re-evaluate.
+   - **No open milestone** → pick the next item with the user from
+     `gh issue list --label backlog`, then step 4.
 4. **Prepare.**
-   - `gh issue create` (English) titled `Milestone N: <roadmap heading>`, body =
-     the milestone's bullet list from the roadmap as `- [ ]` items plus one
-     line: "Spec and plan will be produced by brainstorming before implementation."
+   - Create the milestone: `gh api repos/{owner}/{repo}/milestones -f title="Milestone N: <short name>" -f description="<one or two lines>"`.
+     N is one past the highest heading in the roadmap's shipped history.
+   - Put the chosen backlog issue in it (`gh issue edit <n> --milestone "..."`)
+     and drop the label (`--remove-label backlog`). That issue is the tracking
+     issue. If the milestone bundles several issues, add them all and pick the
+     largest as the tracking issue.
    - `git checkout -b issue-<n> && git push -u origin issue-<n>`.
-   - In `docs/ROADMAP.md` change that milestone's heading suffix to
-     `— in progress (issue #<n>)`; commit on the branch with the standard trailer
-     and `gh issue comment <n>` (English) saying the branch is ready and
-     brainstorming is next.
-5. **Hand off.** Report in Japanese: what finished, what is next and why, issue
-   and branch, deferred items carried in. End with exactly: 「準備完了です。
-   `brainstorm` と言ってください。」 Then STOP and wait.
+   - `gh issue comment <n>` (English) saying the milestone and branch are ready
+     and brainstorming is next.
+   - Add the issues to the [project board](https://github.com/users/7milch/projects/1)
+     and set their Status to `In Progress`:
+     `gh project item-add 1 --owner 7milch --url <issue url>`, then
+     `gh project item-edit --id <item id> --project-id <project id> --field-id <status field id> --single-select-option-id <option id>`
+     with ids from `gh project item-list 1 --owner 7milch --format json` and
+     `gh project field-list 1 --owner 7milch --format json`. The token needs the
+     `project` scope; if it is missing, tell the user to run
+     `gh auth refresh -s project` and carry on without the board.
+5. **Hand off.** Report in Japanese: what finished, what is next and why, the
+   milestone, issue and branch, deferred items carried in. End with exactly:
+   「準備完了です。`brainstorm` と言ってください。」 Then STOP and wait.
 6. When the user says `brainstorm`, invoke `superpowers:brainstorming` with the
-   issue URL and the milestone bullets as the argument.
+   issue URL and the milestone description as the argument.
 
 ## Do not
 
 - Create spec or plan files here — `superpowers:brainstorming` owns them.
 - Start implementation, dispatch implementers, or pick a stack.
-- Open a second issue for a milestone that already has an open one.
+- Open a second milestone while one is still open.
+- Track status in `docs/ROADMAP.md`; it records shipped milestones only.
