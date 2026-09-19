@@ -68,7 +68,9 @@ Each layer overrides only the keys it sets: built-in → `provider.open` →
 ## 3. Retry in core (`ChatSession.open`)
 
 `ChatSessionOptions` gains an optional `open: { timeoutMs: number; retries: number }`,
-defaulting to `{ timeoutMs, retries: 0 }` (the pre-0.8.3 behaviour). The cli
+defaulting to `{ timeoutMs: provider.open?.timeoutMs ?? timeoutMs, retries:
+provider.open?.retries ?? 0 }`, so a caller that passes no `open` (the VSCode
+extension) still gets the provider's own defaults. The cli
 callers (one-shot and `runInteractive`) always supply it; the VSCode extension
 and existing tests keep calling `ChatSession.open` unchanged.
 
@@ -90,8 +92,15 @@ closing and relaunching a browser already takes seconds.
 
 Progress: the first attempt reports `"Opening browser..."` as today; attempt
 `k` of `n` (k ≥ 2) reports `"Opening browser... (attempt k/n)"` where
-`n = retries + 1`. The TUI status row and Ctrl+R reopen pick this up through
-the existing `onProgress` wiring; nothing else in the TUI changes.
+`n = retries + 1`, and a swallowed retryable failure reports
+`"Attempt k failed: <message>"`. These opening messages go to
+`onOpenProgress` (falling back to `onProgress`); the TUI passes a reporter
+that stores the line in the model's `openProgress` field, which the status
+row paints in place of the static "Opening browser..." /
+"Reopening browser..." text for the `opening` and `resetting` states.
+
+After a successful attempt the page default timeout is reset to `timeoutMs`,
+so turns run under `--timeout` rather than the opening budget.
 
 `timeoutMs` (the per-turn `--timeout`) is no longer used by the opening
 steps. It still governs `send`, `diagnoseTimeout` and `close`.
