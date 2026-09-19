@@ -37,6 +37,20 @@ export interface ChatSessionOptions {
   missingBrowserExecutable?: () => string | undefined;
 }
 
+/** The default missing-browser pre-check looks for the *headed*
+ * `chromium-<rev>` binary, but a headless session launches
+ * `chromium_headless_shell-<rev>`: on a `playwright install chromium
+ * --only-shell` machine the pre-check would reject a launch that works.
+ * So it runs for headed launches only; a genuinely missing headless shell
+ * is still caught by launchRuntime's `isMissingExecutableError` fallback.
+ * An injected `launch` (tests) never needs one. */
+export function needsHeadedPreCheck(opts: {
+  launch?: unknown;
+  headless: boolean;
+}): boolean {
+  return opts.launch === undefined && !opts.headless;
+}
+
 /** A conversation that keeps the browser open across turns. Turns are
  * sequential: `send` rejects while a previous send is pending. */
 export class ChatSession {
@@ -91,17 +105,9 @@ export class ChatSession {
     onProgress?.("Opening browser...");
     const launch =
       opts.launch ?? ((o: LaunchOptions) => BrowserRuntime.launch(o));
-    // The default pre-check looks for the *headed* `chromium-<rev>` binary,
-    // but a headless session launches `chromium_headless_shell-<rev>`: on a
-    // `playwright install chromium --only-shell` machine the pre-check would
-    // reject a launch that works. So it runs for headed launches only; a
-    // genuinely missing headless shell is still caught by launchRuntime's
-    // `isMissingExecutableError` fallback. An injected check always wins
-    // (tests), and an injected `launch` never needs one.
-    const skipPreCheck = opts.launch !== undefined || opts.headless;
     const preCheck =
       opts.missingBrowserExecutable ??
-      (skipPreCheck ? () => undefined : undefined);
+      (needsHeadedPreCheck(opts) ? undefined : () => undefined);
     const rt = await launchRuntime(
       () => launch({ headless: opts.headless, provider, authStore }),
       preCheck,

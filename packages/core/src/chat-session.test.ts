@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { Page, Provider } from "@chatbridge/provider";
 import type { AuthStore } from "@chatbridge/runtime";
-import { ChatSession, type RuntimeLike } from "./chat-session.js";
+import {
+  ChatSession,
+  type RuntimeLike,
+  needsHeadedPreCheck,
+} from "./chat-session.js";
 import {
   AuthExpiredError,
   AuthRequiredError,
@@ -143,16 +147,12 @@ describe("ChatSession.open", () => {
     expect(h.closed).toBe(0);
   });
 
-  test("a headless open needs no headed-binary pre-check", async () => {
-    const h = harness();
-    const session = await ChatSession.open({
-      provider: h.provider,
-      authStore: store(true),
-      headless: true,
-      timeoutMs: 1000,
-      launch: h.launch,
-    });
-    expect(session).toBeInstanceOf(ChatSession);
+  test("needsHeadedPreCheck: only a headed launch without an injected launcher", () => {
+    expect(needsHeadedPreCheck({ headless: false })).toBe(true);
+    expect(needsHeadedPreCheck({ headless: true })).toBe(false);
+    expect(needsHeadedPreCheck({ headless: false, launch: () => {} })).toBe(
+      false,
+    );
   });
 
   test("a headful open fails the pre-check before launching", async () => {
