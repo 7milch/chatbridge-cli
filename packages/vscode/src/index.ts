@@ -2,10 +2,12 @@ export * from "./protocol.js";
 export {
   type AddResult,
   type ChatSessionLike,
+  type HintCode,
   type PendingAttachment,
   type SendResult,
   SessionController,
   type SessionControllerOptions,
+  type TakeBackResult,
 } from "./session-controller.js";
 export {
   type ChildLike,

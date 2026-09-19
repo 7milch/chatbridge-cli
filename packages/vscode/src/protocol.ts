@@ -1,6 +1,6 @@
 import type { Attachment } from "@chatbridge/core";
 
-export type Role = "user" | "assistant" | "error" | "separator";
+export type Role = "user" | "assistant" | "error" | "separator" | "help";
 
 export interface Message {
   role: Role;
@@ -41,7 +41,9 @@ export type WebviewCommand =
   | "logout"
   | "newChat"
   | "installBrowser"
-  | "reopen";
+  | "reopen"
+  /** Webview only: the host answers with a `help` history entry. */
+  | "help";
 
 /** webview → host */
 export type ToHost =
@@ -72,4 +74,6 @@ export type ToWebview =
   | { type: "progress"; text: string }
   | ({ type: "config" } & UiConfig)
   /** Answer to `pasted`: when attached, the webview drops the pasted text. */
-  | { type: "pasteResult"; id: number; attached: boolean };
+  | { type: "pasteResult"; id: number; attached: boolean }
+  /** Answer to `takeBack`: the entries removed from the queue. */
+  | { type: "tookBack"; entries: QueueEntry[] };

@@ -4,11 +4,14 @@ import {
   AuthRequiredError,
   BlockedError,
   BrowserUnavailableError,
+  MAX_FILE_BYTES,
+  MAX_TOTAL_BYTES,
   ResponseTimeoutError,
 } from "@chatbridge/core";
 import {
   type ChatSessionLike,
   SessionController,
+  type SessionControllerOptions,
 } from "./session-controller.js";
 
 function deferred<T>() {
@@ -33,17 +36,11 @@ interface Harness {
   states: string[];
 }
 
-function harness(): Harness {
-  const h = {
-    sent: [],
-    replies: [],
-    opens: 0,
-    closed: 0,
-    killed: 0,
-    closeHangs: false,
-    states: [],
-  } as unknown as Harness;
-  const session: ChatSessionLike = {
+/** The fake ChatSession every harness hands out, wired to the counters.
+ * close/kill are idempotent, like the real ChatSession's. */
+function sessionOf(h: Harness): ChatSessionLike {
+  let done = false;
+  return {
     async send(prompt) {
       h.sent.push(prompt);
       const d = deferred<string>();
@@ -54,12 +51,29 @@ function harness(): Harness {
       h.closeHangs
         ? new Promise<void>(() => {})
         : Promise.resolve().then(() => {
+            if (done) return;
+            done = true;
             h.closed++;
           }),
     async kill() {
+      if (done) return;
+      done = true;
       h.killed++;
     },
   };
+}
+
+function harness(opts: Partial<SessionControllerOptions> = {}): Harness {
+  const h = {
+    sent: [],
+    replies: [],
+    opens: 0,
+    closed: 0,
+    killed: 0,
+    closeHangs: false,
+    states: [],
+  } as unknown as Harness;
+  const session = sessionOf(h);
   h.controller = new SessionController({
     openSession: async () => {
       h.opens++;
@@ -68,17 +82,13 @@ function harness(): Harness {
     },
     closeTimeoutMs: 20,
     onChange: (s) => h.states.push(s.status),
+    ...opts,
   });
   return h;
 }
 
 async function settle() {
   await new Promise((r) => setTimeout(r, 0));
-}
-
-/** Same as settle(), under the name the queue/reopen tests use. */
-function tick() {
-  return new Promise<void>((r) => setTimeout(r, 0));
 }
 
 describe("SessionController", () => {
@@ -415,13 +425,11 @@ describe("SessionController", () => {
       closeTimeoutMs: 20,
       hints: { BLOCKED: 'Set the "acme.headless" setting to false.' },
     });
-    h.openError = new BlockedError(
-      'Blocked by "acme": challenge. Try --headful.',
-    );
+    h.openError = new BlockedError('Blocked by "acme": challenge.');
     await controller.send("x");
     expect(controller.getState().messages.at(-1)).toEqual({
       role: "error",
-      text: 'Blocked by "acme": challenge. Try --headful.\nSet the "acme.headless" setting to false.',
+      text: 'Blocked by "acme": challenge.\nSet the "acme.headless" setting to false.',
     });
     h.openError = new AuthRequiredError("no auth");
     await controller.retryLast();
@@ -493,12 +501,19 @@ describe("SessionController", () => {
   test("close during a reopen closes the browser the reopen opens", async () => {
     const open = deferred<ChatSessionLike>();
     let closedLate = 0;
+    let lateDone = false;
+    // Idempotent, like the real ChatSession: dropSession and the reopen's
+    // own generation check may both close it.
     const late: ChatSessionLike = {
       send: async () => "x",
       close: async () => {
+        if (lateDone) return;
+        lateDone = true;
         closedLate++;
       },
       kill: async () => {
+        if (lateDone) return;
+        lateDone = true;
         closedLate++;
       },
     };
@@ -508,10 +523,12 @@ describe("SessionController", () => {
     });
     const reopen = controller.reopen();
     await settle();
-    await controller.close();
-    expect(controller.getState().status).toBe("closed");
+    // close() waits for the open in flight rather than orphaning it.
+    const close = controller.close();
+    await settle();
     open.resolve(late);
-    await reopen;
+    await Promise.all([reopen, close]);
+    expect(controller.getState().status).toBe("closed");
     expect(closedLate).toBe(1);
     const state = controller.getState();
     expect(state.status).toBe("closed");
@@ -523,7 +540,7 @@ describe("queue", () => {
   test("send while busy queues and drains in order after the reply", async () => {
     const h = harness();
     const first = h.controller.send("one");
-    await tick();
+    await settle();
     expect(h.controller.getState().status).toBe("busy");
     expect(await h.controller.send("two")).toEqual({ ok: true, queued: true });
     expect(await h.controller.send("three")).toEqual({
@@ -536,15 +553,15 @@ describe("queue", () => {
     ]);
     h.replies[0]?.resolve("r1");
     expect(await first).toEqual({ ok: true });
-    await tick();
+    await settle();
     // The next turn was claimed before the idle frame.
     expect(h.controller.getState().status).toBe("busy");
     expect(h.controller.getState().queue.map((e) => e.text)).toEqual(["three"]);
     expect(h.sent).toEqual(["one", "two"]);
     h.replies[1]?.resolve("r2");
-    await tick();
+    await settle();
     h.replies[2]?.resolve("r3");
-    await tick();
+    await settle();
     expect(h.sent).toEqual(["one", "two", "three"]);
     expect(h.controller.getState().status).toBe("idle");
     expect(h.controller.getState().queue).toEqual([]);
@@ -553,7 +570,7 @@ describe("queue", () => {
   test("a queued entry carries the pending attachments", async () => {
     const h = harness();
     const first = h.controller.send("one");
-    await tick();
+    await settle();
     h.controller.addAttachment({ path: "a.ts", bytes: 3, content: "abc" });
     await h.controller.send("two");
     const s = h.controller.getState();
@@ -561,7 +578,7 @@ describe("queue", () => {
     expect(s.queue[0]?.attachments).toEqual([{ path: "a.ts", bytes: 3 }]);
     h.replies[0]?.resolve("r1");
     await first;
-    await tick();
+    await settle();
     expect(h.sent[1]).toContain("abc");
     const user = h.controller.getState().messages.find((m) => m.text === "two");
     expect(user?.attachments).toEqual([{ path: "a.ts", bytes: 3 }]);
@@ -570,7 +587,7 @@ describe("queue", () => {
   test("blank text with no attachments is EMPTY even while busy", async () => {
     const h = harness();
     void h.controller.send("one");
-    await tick();
+    await settle();
     expect((await h.controller.send("  ")).ok).toBe(false);
     expect(h.controller.getState().queue).toEqual([]);
   });
@@ -578,7 +595,7 @@ describe("queue", () => {
   test("a fatal error stops draining; the queue survives newChat and drains after it", async () => {
     const h = harness();
     const first = h.controller.send("one");
-    await tick();
+    await settle();
     await h.controller.send("two");
     h.replies[0]?.reject(new Error("page closed"));
     await first;
@@ -586,45 +603,157 @@ describe("queue", () => {
     expect(h.controller.getState().queue.map((e) => e.text)).toEqual(["two"]);
     expect(h.sent).toEqual(["one"]);
     await h.controller.newChat();
-    await tick();
+    await settle();
     expect(h.sent).toEqual(["one", "two"]);
   });
 
   test("takeBack returns the entries with attachments restored as pending", async () => {
     const h = harness();
     void h.controller.send("one");
-    await tick();
+    await settle();
     h.controller.addAttachment({ path: "a.ts", bytes: 3, content: "abc" });
     await h.controller.send("two");
     await h.controller.send("three");
-    const entries = h.controller.takeBack();
+    const { entries } = h.controller.takeBack();
     expect(entries.map((e) => e.text)).toEqual(["two", "three"]);
     const s = h.controller.getState();
     expect(s.queue).toEqual([]);
     expect(s.pendingAttachments).toEqual([{ path: "a.ts", bytes: 3 }]);
-    expect(h.controller.takeBack()).toEqual([]);
+    expect(h.controller.takeBack()).toEqual({
+      entries: [],
+      droppedAttachments: 0,
+    });
+  });
+
+  test("close() during opening waits for the open and closes that session", async () => {
+    const h = harness();
+    const gate = deferred<void>();
+    h.controller = new SessionController({
+      openSession: async () => {
+        await gate.promise;
+        h.opens++;
+        return sessionOf(h);
+      },
+      closeTimeoutMs: 20,
+    });
+    const send = h.controller.send("hi");
+    await settle();
+    const close = h.controller.close();
+    gate.resolve();
+    // close() alone must not resolve before the browser it waited for is
+    // shut down, or deactivate would leave one running.
+    await close;
+    expect(h.opens).toBe(1);
+    expect(h.closed).toBe(1);
+    expect(h.controller.getState().status).toBe("closed");
+    await send;
+    expect(h.closed + h.killed).toBe(1);
+  });
+
+  test("a drained send that hits a missing browser shows the install hint", async () => {
+    const h = harness({
+      hints: { BROWSER_UNAVAILABLE: "Run Install Browser." },
+    });
+    h.openError = new BrowserUnavailableError("no chromium");
+    await h.controller.send("hi");
+    await settle();
+    const last = h.controller.getState().messages.at(-1);
+    expect(last?.role).toBe("error");
+    expect(last?.text).toBe("no chromium\nRun Install Browser.");
+  });
+
+  test("takeBack drops attachments that would exceed the total cap", async () => {
+    const h = harness();
+    void h.controller.send("first"); // busy; never settles
+    await settle();
+    // Five max-size files fit under the total cap on their own...
+    for (let i = 0; i < 5; i++) {
+      expect(
+        h.controller.addAttachment({
+          path: `a${i}`,
+          bytes: MAX_FILE_BYTES,
+          content: "x",
+        }).ok,
+      ).toBe(true);
+    }
+    await h.controller.send("queued-with-big"); // queued, takes all five
+    // ...but not on top of a sixth already in the composer.
+    expect(
+      h.controller.addAttachment({
+        path: "b",
+        bytes: MAX_FILE_BYTES,
+        content: "y",
+      }).ok,
+    ).toBe(true);
+    const r = h.controller.takeBack();
+    expect(r.entries.map((e) => e.text)).toEqual(["queued-with-big"]);
+    expect(r.droppedAttachments).toBe(1);
+    expect(
+      h.controller.getState().pendingAttachments.map((a) => a.path),
+    ).toEqual(["b", "a0", "a1", "a2", "a3"]);
+    expect(MAX_FILE_BYTES * 6).toBeGreaterThan(MAX_TOTAL_BYTES);
+  });
+
+  test("removeQueued(-1) is ignored", async () => {
+    const h = harness();
+    void h.controller.send("first"); // busy; never settles
+    await settle();
+    await h.controller.send("second");
+    h.controller.removeQueued(-1);
+    expect(h.controller.getState().queue).toHaveLength(1);
+  });
+
+  test("takeBack while dead returns the queue and stays dead", async () => {
+    const h = harness();
+    h.openError = new AuthRequiredError("login");
+    await h.controller.send("a");
+    await settle();
+    expect(h.controller.getState().status).toBe("dead");
+    // A dead controller can still start a turn, so this send runs (and
+    // fails) rather than queueing.
+    await h.controller.send("b");
+    await settle();
+    // Both failed; the queue is empty; takeBack is a no-op that keeps `dead`.
+    expect(h.controller.takeBack()).toEqual({
+      entries: [],
+      droppedAttachments: 0,
+    });
+    expect(h.controller.getState().status).toBe("dead");
+  });
+
+  test("reopen with an empty queue while idle just marks the break", async () => {
+    const h = harness();
+    const first = h.controller.send("hi");
+    await settle();
+    h.replies[0]?.resolve("ok");
+    await first;
+    await h.controller.reopen();
+    const roles = h.controller.getState().messages.map((m) => m.role);
+    expect(roles).toEqual(["user", "assistant", "separator"]);
+    expect(h.controller.getState().status).toBe("idle");
+    expect(h.opens).toBe(2);
   });
 
   test("markLoggedIn while busy does not start a second turn", async () => {
     const h = harness();
     const first = h.controller.send("one");
-    await tick();
+    await settle();
     await h.controller.send("two");
     h.controller.markLoggedIn();
-    await tick();
+    await settle();
     expect(h.controller.getState().status).toBe("busy");
     expect(h.sent).toEqual(["one"]);
     expect(h.controller.getState().queue.map((e) => e.text)).toEqual(["two"]);
     h.replies[0]?.resolve("r1");
     await first;
-    await tick();
+    await settle();
     expect(h.sent).toEqual(["one", "two"]);
   });
 
   test("a direct send while dead queues behind the entries already waiting", async () => {
     const h = harness();
     const first = h.controller.send("one");
-    await tick();
+    await settle();
     await h.controller.send("two");
     h.replies[0]?.reject(new Error("page closed"));
     await first;
@@ -633,7 +762,7 @@ describe("queue", () => {
       ok: true,
       queued: true,
     });
-    await tick();
+    await settle();
     expect(h.sent).toEqual(["one", "two"]);
     expect(h.controller.getState().queue.map((e) => e.text)).toEqual(["three"]);
   });
@@ -641,7 +770,7 @@ describe("queue", () => {
   test("removeQueued drops one entry and ignores bad indexes", async () => {
     const h = harness();
     void h.controller.send("one");
-    await tick();
+    await settle();
     await h.controller.send("two");
     await h.controller.send("three");
     h.controller.removeQueued(5);
@@ -654,7 +783,7 @@ describe("reopen", () => {
   test("mid-turn: the old result is dropped, history marked, queue drained", async () => {
     const h = harness();
     const first = h.controller.send("one");
-    await tick();
+    await settle();
     await h.controller.send("two");
     const reopen = h.controller.reopen();
     expect(h.controller.getState().status).toBe("reopening");
@@ -662,7 +791,7 @@ describe("reopen", () => {
     // The abandoned send settles late; nothing from it is recorded.
     h.replies[0]?.resolve("stale");
     expect(await first).toEqual({ ok: true });
-    await tick();
+    await settle();
     const s = h.controller.getState();
     expect(s.messages.some((m) => m.text === "stale")).toBe(false);
     expect(
@@ -677,7 +806,7 @@ describe("reopen", () => {
   test("from dead: clears lastError and drops the error banner state", async () => {
     const h = harness();
     const first = h.controller.send("one");
-    await tick();
+    await settle();
     h.replies[0]?.reject(new Error("page closed"));
     await first;
     expect(h.controller.getState().lastError).toBe("UNKNOWN");
@@ -690,7 +819,7 @@ describe("reopen", () => {
   test("failure: error entry, dead, queue kept", async () => {
     const h = harness();
     void h.controller.send("one");
-    await tick();
+    await settle();
     await h.controller.send("two");
     h.openError = new Error("launch failed");
     await h.controller.reopen();

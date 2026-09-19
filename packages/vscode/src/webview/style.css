@@ -85,6 +85,7 @@ body {
 }
 #composer {
   display: flex;
+  align-items: flex-end;
   gap: 6px;
   padding: 8px;
   border-top: 1px solid var(--vscode-panel-border);
@@ -92,6 +93,13 @@ body {
 #input {
   flex: 1;
   resize: none;
+  /* `height = scrollHeight` and the row-based max-height are only exact
+     when padding and border are inside the box. */
+  box-sizing: border-box;
+  overflow-y: auto;
+  line-height: 1.4;
+  /* 8 rows + padding: beyond this the textarea scrolls internally. */
+  max-height: calc(1.4em * 8 + 8px);
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border, transparent);

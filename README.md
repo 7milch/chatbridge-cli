@@ -86,7 +86,11 @@ A derived CLI passes its own identity to `createCli`:
 createCli({
   name: "acme-ai",
   version: "2.4.0",            // shown by --version and in the startup banner
-  banner: ["Acme internal assistant", "Conversations are not stored."], // optional
+  banner: {
+    lines: ["Acme internal assistant", "Conversations are not stored."],
+    colors: ["#ff5f87", "#ffaf00"],
+    mode: "gradient",
+  }, // or plain string[]
   spinner: {                   // optional; unset fields keep the default
     frames: ["⠋", "⠙", "⠹", "⠸"],          // same display width each
     intervalMs: 80,
@@ -141,8 +145,11 @@ chat.
   a `>` input between two rules that grows to five rows as you add
   newlines. Until the first message the history shows a startup banner
   (the CLI name and version by default; a derived CLI can pass its own
-  `banner` lines to `createCli`). While a turn is in flight the status row
-  shows a spinner and the elapsed time against the budget; `spinner` on
+  `banner` lines to `createCli`; plain lines are dim, while an object form
+  `{ lines, colors, mode }` colours rows (`per-line`), cells diagonally
+  (`per-char`) or a vertical `gradient` between hex stops — the object form
+  needs `@chatbridge/cli` >= 0.8.2). While a turn is in flight the status
+  row shows a spinner and the elapsed time against the budget; `spinner` on
   `createCli` replaces its frames, interval, label (a list of labels picks
   one at random per turn) and the colours of frame and label (`"#rrggbb"` or an ANSI palette index).
 - Type **`@`** to attach a file from the directory you started `chatbridge`

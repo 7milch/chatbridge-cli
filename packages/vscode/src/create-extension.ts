@@ -13,6 +13,7 @@ import { type CommandHandlers, createCommands } from "./commands.js";
 import { installBrowser } from "./install-browser.js";
 import { COMMAND_NAMES, missingContributions } from "./manifest.js";
 import { SessionController } from "./session-controller.js";
+import { parseTimeoutSec } from "./timeout-setting.js";
 import { type ExtensionUiOptions, resolveUiConfig } from "./ui-config.js";
 import { createVscodeUi } from "./vscode-ui.js";
 
@@ -83,7 +84,19 @@ export function createExtension(opts: CreateExtensionOptions) {
       {
         send: (text) => void handlers.send(text),
         removeAttachment: (i) => controller?.removeAttachment(i),
-        takeBack: () => controller?.takeBack(),
+        takeBack: () => {
+          const r = controller?.takeBack();
+          if (!r) return;
+          // `takeBack()` has already emitted a `state` with the queue
+          // empty; the webview fills the composer from `tookBack` alone,
+          // so this arriving second does not matter.
+          bridge.pushTookBack(r.entries);
+          if (r.droppedAttachments > 0) {
+            void vscode.window.showWarningMessage(
+              `${r.droppedAttachments} attachment(s) left out: total size limit.`,
+            );
+          }
+        },
         removeQueued: (i) => controller?.removeQueued(i),
         command: (name) => void handlers[name](),
         attachUris: (uris) => void handlers.attachUris(uris),
@@ -91,15 +104,23 @@ export function createExtension(opts: CreateExtensionOptions) {
       },
     );
 
+    let warnedTimeout = false;
     function settings() {
       const cfg = vscode.workspace.getConfiguration(opts.id);
+      const fallbackMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+      const { timeoutMs, invalid } = parseTimeoutSec(
+        cfg.get<unknown>("timeoutSec"),
+        fallbackMs,
+      );
+      if (invalid && !warnedTimeout) {
+        warnedTimeout = true;
+        void vscode.window.showWarningMessage(
+          `${opts.displayName}: "${opts.id}.timeoutSec" must be a positive number; using ${fallbackMs / 1000} s.`,
+        );
+      }
       return {
         headless: cfg.get<boolean>("headless", opts.headless ?? true),
-        timeoutMs:
-          cfg.get<number>(
-            "timeoutSec",
-            (opts.timeoutMs ?? DEFAULT_TIMEOUT_MS) / 1000,
-          ) * 1000,
+        timeoutMs,
       };
     }
 
@@ -119,6 +140,7 @@ export function createExtension(opts: CreateExtensionOptions) {
         }),
       hints: {
         BLOCKED: `Set the "${opts.id}.headless" setting to false and try again.`,
+        BROWSER_UNAVAILABLE: `Run "${opts.displayName}: Install Browser" and send again.`,
       },
       onChange: (state) => {
         bridge.pushState(state);

@@ -1,5 +1,4 @@
 import {
-  helpText,
   parseSlashCommand,
   unknownCommandMessage,
 } from "@chatbridge/core/slash-commands";
@@ -28,8 +27,25 @@ const footer = document.getElementById("footer") as HTMLElement;
 const queue = document.getElementById("queue") as HTMLElement;
 const inlineError = document.getElementById("inline-error") as HTMLElement;
 
+/** Grows the composer with its content (wrapped lines included, via
+ * scrollHeight) and shrinks it back; CSS max-height caps it at 8 rows. The
+ * history stays pinned to its end when it was there before. */
+function fitComposer(): void {
+  const atBottom =
+    history.scrollHeight - history.scrollTop - history.clientHeight < 2;
+  input.style.height = "auto";
+  // #input is box-sizing: border-box with a 1px border, so scrollHeight alone
+  // is 2px short of the border-inclusive height and leaves a scrollbar.
+  input.style.height = `${input.scrollHeight + input.offsetHeight - input.clientHeight}px`;
+  if (atBottom) history.scrollTop = history.scrollHeight;
+}
+
 let config: UiConfig = {};
 let lastState: State | undefined;
+/** The last `progress` line, so a re-render keeps it instead of falling
+ * back to the generic waiting text. Cleared when the status leaves the
+ * active set. */
+let lastProgress: string | undefined;
 
 function applyConfig(c: UiConfig): void {
   config = c;
@@ -64,8 +80,12 @@ function el(tag: string, className: string, text?: string): HTMLElement {
   return e;
 }
 
-function button(label: string, onClick: () => void): HTMLElement {
-  const b = el("button", "action", label);
+function button(
+  label: string,
+  onClick: () => void,
+  className = "action",
+): HTMLElement {
+  const b = el("button", className, label);
   b.setAttribute("type", "button");
   b.addEventListener("click", onClick);
   return b;
@@ -83,6 +103,10 @@ function renderMessage(m: Message): HTMLElement {
   const box = el("div", `message ${m.role}`);
   if (m.role === "separator") {
     box.textContent = `— ${m.text} —`;
+    return box;
+  }
+  if (m.role === "help") {
+    box.textContent = m.text;
     return box;
   }
   box.appendChild(el("div", "text", m.text));
@@ -111,7 +135,11 @@ function renderStatus(s: State): void {
     status.appendChild(el("span", "spinner"));
     const queued = s.queue.length > 0 ? ` \u00b7 ${s.queue.length} queued` : "";
     status.appendChild(
-      el("span", "progress-text", `${waitingText(s.status)}${queued}`),
+      el(
+        "span",
+        "progress-text",
+        `${lastProgress ?? waitingText(s.status)}${queued}`,
+      ),
     );
     return;
   }
@@ -158,10 +186,11 @@ function renderQueue(s: State): void {
         ? `${firstLine} \u{1f4ce} ${entry.attachments.length}`
         : firstLine;
     li.appendChild(el("span", "queue-text", `\u25b9 ${label}`));
-    const x = button("\u00d7", () =>
-      vscode.postMessage({ type: "removeQueued", index }),
+    const x = button(
+      "\u00d7",
+      () => vscode.postMessage({ type: "removeQueued", index }),
+      "chip-remove",
     );
-    x.className = "chip-remove";
     li.appendChild(x);
     queue.appendChild(li);
   });
@@ -171,16 +200,20 @@ function renderAttachments(s: State): void {
   attachments.replaceChildren();
   s.pendingAttachments.forEach((a, index) => {
     const chip = el("span", "chip", `📎 ${a.path} (${formatSize(a.bytes)})`);
-    const x = button("×", () =>
-      vscode.postMessage({ type: "removeAttachment", index }),
+    const x = button(
+      "×",
+      () => vscode.postMessage({ type: "removeAttachment", index }),
+      "chip-remove",
     );
-    x.className = "chip-remove";
     chip.appendChild(x);
     attachments.appendChild(chip);
   });
 }
 
 function render(s: State): void {
+  const active =
+    s.status === "busy" || s.status === "opening" || s.status === "reopening";
+  if (!active) lastProgress = undefined;
   history.replaceChildren(...s.messages.map(renderMessage));
   history.scrollTop = history.scrollHeight;
   renderStatus(s);
@@ -193,18 +226,19 @@ function render(s: State): void {
   history.hidden = !welcome.hidden;
   // The composer stays usable while a turn is in flight: what is typed then
   // is queued instead of sent.
-  const active =
-    s.status === "busy" || s.status === "opening" || s.status === "reopening";
   input.disabled = false;
   sendButton.disabled = false;
   sendButton.textContent = active ? "Queue" : "Send";
-  // Only when nothing else holds focus: a render must not steal it from a
-  // selection in the history or from the status and queue buttons.
-  if (
-    document.activeElement === null ||
-    document.activeElement === document.body
-  ) {
-    input.focus();
+  // Only when the status changed, and only when nothing else holds focus:
+  // a render must not steal it from a selection in the history or from the
+  // status and queue buttons.
+  if (!lastState || lastState.status !== s.status) {
+    if (
+      document.activeElement === null ||
+      document.activeElement === document.body
+    ) {
+      input.focus();
+    }
   }
   lastState = s;
 }
@@ -225,20 +259,14 @@ function submit(): void {
   showInlineError(undefined);
   if (slash) {
     input.value = "";
-    if (slash.command === "help") {
-      // The welcome block hides the history; the help block must be seen.
-      welcome.hidden = true;
-      history.hidden = false;
-      history.appendChild(el("div", "message help", helpText()));
-      history.scrollTop = history.scrollHeight;
-      return;
-    }
+    fitComposer();
     const name = slash.command === "new" ? "newChat" : slash.command;
     vscode.postMessage({ type: "command", name });
     return;
   }
   vscode.postMessage({ type: "send", text });
   input.value = "";
+  fitComposer();
 }
 
 form.addEventListener("submit", (e) => {
@@ -257,15 +285,16 @@ input.addEventListener("keydown", (e) => {
     input.value === "" &&
     (lastState?.queue.length ?? 0) > 0
   ) {
+    // The composer is filled from the host's `tookBack` answer, not from
+    // `lastState`: an entry drained in between must never be re-sent.
     e.preventDefault();
-    const entries = lastState?.queue ?? [];
-    input.value = entries.map((q) => q.text).join("\n\n");
-    // Setting the value fires no `input` event, so clear the error here.
-    showInlineError(undefined);
     vscode.postMessage({ type: "takeBack" });
   }
 });
-input.addEventListener("input", () => showInlineError(undefined));
+input.addEventListener("input", () => {
+  showInlineError(undefined);
+  fitComposer();
+});
 
 // Observed with VSCode 1.138 (explorer item, Shift held): `text/uri-list` =
 // `file:///abs/path` one per line, plus `text/plain`, `resourceurls`,
@@ -282,15 +311,32 @@ function urisFromDrop(dt: DataTransfer | null): string[] {
     .filter((l) => l !== "" && !l.startsWith("#"));
 }
 
-document.addEventListener("dragover", (e) => {
-  e.preventDefault();
+function carriesFiles(dt: DataTransfer | null): boolean {
+  return dt?.types.includes("text/uri-list") ?? false;
+}
+let dragDepth = 0;
+document.addEventListener("dragenter", (e) => {
+  if (!carriesFiles(e.dataTransfer)) return;
+  dragDepth++;
   document.body.classList.add("drop-target");
 });
-document.addEventListener("dragleave", () =>
-  document.body.classList.remove("drop-target"),
-);
+document.addEventListener("dragover", (e) => {
+  // Only a file drag is ours; an in-view text drag keeps the default.
+  if (carriesFiles(e.dataTransfer)) e.preventDefault();
+});
+document.addEventListener("dragleave", (e) => {
+  if (!carriesFiles(e.dataTransfer)) return;
+  // Fires for every child the pointer crosses; the class goes when the
+  // drag leaves the document, i.e. the depth returns to zero.
+  if (--dragDepth <= 0) {
+    dragDepth = 0;
+    document.body.classList.remove("drop-target");
+  }
+});
 document.addEventListener("drop", (e) => {
+  if (!carriesFiles(e.dataTransfer)) return;
   e.preventDefault();
+  dragDepth = 0;
   document.body.classList.remove("drop-target");
   const uris = urisFromDrop(e.dataTransfer);
   if (uris.length > 0) vscode.postMessage({ type: "attachUris", uris });
@@ -314,7 +360,11 @@ function insertAtCaret(text: string): void {
       value.slice(0, selectionStart) + text + value.slice(selectionEnd);
     const pos = selectionStart + text.length;
     input.setSelectionRange(pos, pos);
+    // Setting `value` fires no `input` event; the listener clears the
+    // inline error and resizes the composer.
+    input.dispatchEvent(new Event("input", { bubbles: true }));
   }
+  fitComposer();
 }
 
 input.addEventListener("paste", (e) => {
@@ -324,11 +374,15 @@ input.addEventListener("paste", (e) => {
   const id = ++pasteSeq;
   const timer = setTimeout(() => {
     pendingPastes.delete(id);
-    insertAtCaret(text);
+    if (!input.disabled) insertAtCaret(text);
   }, PASTE_TIMEOUT_MS);
   pendingPastes.set(id, { text, timer });
   vscode.postMessage({ type: "pasted", id, text });
 });
+// Document-wide so it works with focus anywhere in the view; VSCode's own
+// reload is a different chord (Ctrl+Shift+R / Cmd+R with focus outside the
+// webview), so preventDefault only stops the browser's page reload inside
+// the iframe.
 document.addEventListener("keydown", (e) => {
   if (
     e.key.toLowerCase() === "r" &&
@@ -343,6 +397,7 @@ document.addEventListener("keydown", (e) => {
 
 window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
   const m = event.data;
+  if (!m || typeof m !== "object" || typeof m.type !== "string") return;
   if (m.type === "state") {
     const { type: _type, ...state } = m;
     render(state);
@@ -350,6 +405,7 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
     const { type: _type, ...rest } = m;
     applyConfig(rest);
   } else if (m.type === "progress") {
+    lastProgress = m.text;
     const t = status.querySelector(".progress-text");
     if (t) t.textContent = m.text;
   } else if (m.type === "pasteResult") {
@@ -358,7 +414,14 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
     clearTimeout(p.timer);
     pendingPastes.delete(m.id);
     if (!m.attached) insertAtCaret(p.text);
+  } else if (m.type === "tookBack") {
+    input.value = m.entries.map((q) => q.text).join("\n\n");
+    // Setting the value fires no `input` event, so clear the error here.
+    showInlineError(undefined);
+    fitComposer();
+    input.focus();
   }
 });
 
+fitComposer();
 vscode.postMessage({ type: "ready" });

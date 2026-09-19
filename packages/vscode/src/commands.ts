@@ -1,5 +1,6 @@
 import type { LoginOptions } from "@chatbridge/core";
 import { LoginAbortedError } from "@chatbridge/core";
+import { helpText } from "@chatbridge/core/slash-commands";
 import type { InstallBrowserOptions } from "./install-browser.js";
 import type { SessionController } from "./session-controller.js";
 import type { EditorSnapshot, VscodeUi } from "./vscode-ui.js";
@@ -22,6 +23,8 @@ export interface CommandHandlers {
   newChat(): Promise<void>;
   reopen(): Promise<void>;
   installBrowser(): Promise<void>;
+  /** From the webview's `/help`: the listing joins the history. */
+  help(): void;
   sendSelection(): Promise<void>;
   sendFile(uri: unknown): Promise<void>;
   focus(): void;
@@ -36,6 +39,10 @@ export interface CommandHandlers {
 function utf8Bytes(text: string): number {
   return new TextEncoder().encode(text).byteLength;
 }
+
+/** Pasted text arrives with the platform's line endings; the editor's
+ * selection text does not. Compare them on the same footing. */
+const normalise = (s: string) => s.replace(/\r\n/g, "\n");
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -143,6 +150,8 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
 
     reopen: () => controller.reopen(),
 
+    help: () => controller.pushHelp(helpText()),
+
     async installBrowser() {
       if (await runInstall()) ui.showInformationMessage("Chromium installed.");
     },
@@ -158,6 +167,10 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
 
     async sendFile(uri) {
       if (uri !== undefined && uri !== null) {
+        if (!ui.isUri(uri)) {
+          ui.showWarningMessage("Nothing to attach.");
+          return;
+        }
         const doc = await ui.openDocument(uri);
         attach(doc.path, doc.text);
         return;
@@ -174,7 +187,7 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
 
     async attachUris(uris) {
       const skipped: string[] = [];
-      for (const raw of uris) {
+      for (const raw of new Set(uris)) {
         try {
           const doc = await ui.openDocument(ui.parseUri(raw));
           attach(doc.path, doc.text);
@@ -190,8 +203,7 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
     pasted(text) {
       const editor = ui.activeEditor();
       const selection = editor?.selection;
-      if (!editor || !selection) return false;
-      const normalise = (s: string) => s.replace(/\r\n/g, "\n");
+      if (!editor || !selection || selection.text.trim() === "") return false;
       if (normalise(text) !== normalise(selection.text)) return false;
       attachEditor(editor, true);
       return true;

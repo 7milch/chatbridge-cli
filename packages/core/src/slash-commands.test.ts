@@ -39,3 +39,7 @@ test("helpText lists every command with its description", () => {
 test("unknownCommandMessage", () => {
   expect(unknownCommandMessage("x")).toBe("Unknown command: /x. Type /help.");
 });
+
+test("a capitalised /Login is plain text", () => {
+  expect(parseSlashCommand("/Login")).toBeUndefined();
+});

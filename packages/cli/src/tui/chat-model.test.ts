@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   AuthRequiredError,
+  BlockedError,
   BrowserUnavailableError,
   LoginAbortedError,
   ResponseTimeoutError,
@@ -11,11 +12,8 @@ import type {
   RunningCommand,
   ShellResult,
 } from "../shell/run-command.js";
-import {
-  ChatModel,
-  type ChatModelOptions,
-  type ChatSessionLike,
-} from "./chat-model.js";
+import { ChatModel, type ChatSessionLike } from "./chat-model.js";
+import { modelWith } from "./test-helpers.js";
 
 function deferred<T>() {
   let resolve!: (v: T) => void;
@@ -64,32 +62,6 @@ const noReopen = {
     throw new Error("not expected");
   },
 };
-
-/** Builds a model whose first open resolves to `session` and whose reopens
- * go to `opts.openSession` (a reset without one is a test bug), then waits
- * for the eager open so the model starts idle. */
-async function modelWith(
-  session: ChatSessionLike,
-  opts: Partial<ChatModelOptions> = {},
-): Promise<ChatModel> {
-  const reopen = opts.openSession;
-  let opened = false;
-  const model = new ChatModel({
-    login: async () => {},
-    clearAuth: async () => {},
-    ...opts,
-    openSession: async () => {
-      if (!opened) {
-        opened = true;
-        return session;
-      }
-      if (!reopen) throw new Error("not expected");
-      return reopen();
-    },
-  });
-  await model.ready;
-  return model;
-}
 
 /** A model over a first session plus a queue of sessions for reopens. */
 async function harness(opts: { closeTimeoutMs?: number } = {}) {
@@ -1325,6 +1297,20 @@ describe("startup", () => {
     });
   });
 
+  test("BLOCKED gets the --headful hint", async () => {
+    const model = new ChatModel({
+      openSession: async () => {
+        throw new BlockedError('Blocked by "x": challenge page.');
+      },
+      login: async () => {},
+      clearAuth: async () => {},
+    });
+    await model.ready;
+    expect(model.messages.at(-1)?.text).toBe(
+      'Blocked by "x": challenge page. Try --headful.',
+    );
+  });
+
   test("BROWSER_UNAVAILABLE gets the install hint", async () => {
     const model = new ChatModel({
       openSession: async () => {
@@ -1554,6 +1540,32 @@ describe("/login", () => {
     await p;
     expect(model.status).toBe("idle");
     expect(model.messages.at(-1)).toEqual({ role: "error", text: "idp down" });
+  });
+
+  test("a second /login leaves pendingLogin tracking the first one", async () => {
+    const gate = deferred<void>();
+    const model = await modelWith(fakeSession().session, {
+      login: () => gate.promise,
+      openSession: async () => fakeSession().session,
+      closeTimeoutMs: 20,
+    });
+    const first = model.submit("/login");
+    const tracked = model.pendingLogin;
+    expect(tracked).toBeDefined();
+    // The no-op second /login resolves at once; it must not take the slot.
+    await model.submit("/login");
+    expect(model.pendingLogin).toBe(tracked);
+    let settled = false;
+    void tracked?.then(() => {
+      settled = true;
+    });
+    await tick();
+    expect(settled).toBe(false);
+    gate.resolve();
+    await first;
+    await tracked;
+    expect(settled).toBe(true);
+    expect(model.pendingLogin).toBeUndefined();
   });
 
   test("progress is exposed while the login runs and cleared after", async () => {

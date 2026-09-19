@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BrowserUnavailableError, LoginAbortedError } from "@chatbridge/core";
+import { SLASH_COMMANDS } from "@chatbridge/core/slash-commands";
 import { type CommandDeps, createCommands } from "./commands.js";
 import {
   type ChatSessionLike,
@@ -20,6 +21,7 @@ interface Fake {
     | "reopen"
     | "discard"
     | "markLoggedIn"
+    | "pushHelp"
     | "addAttachment"
     | "removeAttachment"
     | "getState"
@@ -54,6 +56,7 @@ function fake(): Fake {
       );
     },
     activeEditor: () => f.editor,
+    isUri: (x) => typeof x === "string" && x.startsWith("file:"),
     parseUri: (uri) => uri,
     openDocument: async (uri) => {
       const raw = String(uri);
@@ -85,6 +88,7 @@ function fake(): Fake {
       return !f.busy;
     },
     markLoggedIn: () => f.log.push("markLoggedIn"),
+    pushHelp: (t: string) => f.log.push(`help:${t}`),
     addAttachment: (a) => {
       f.log.push(`attach:${a.path}:${a.bytes}`);
       return a.path.includes("toobig")
@@ -135,6 +139,18 @@ describe("commands", () => {
       "report:Opening browser...",
       "markLoggedIn",
     ]);
+  });
+
+  test("help pushes the slash-command listing into the history", () => {
+    const f = fake();
+    commands(f).help();
+    expect(f.log).toHaveLength(1);
+    const listing = f.log[0] ?? "";
+    expect(listing.startsWith("help:")).toBe(true);
+    for (const c of SLASH_COMMANDS) {
+      expect(listing).toContain(`/${c.name}`);
+      expect(listing).toContain(c.description);
+    }
   });
 
   test("a cancelled login is silent; another failure is shown", async () => {
@@ -432,5 +448,27 @@ describe("commands", () => {
     };
     expect(commands(f).pasted("zzz")).toBe(false);
     expect(f.log).toEqual([]);
+  });
+
+  test("sendFile with a non-Uri argument warns instead of throwing", async () => {
+    const f = fake();
+    await commands(f).sendFile({ not: "a uri" });
+    expect(f.log).toEqual(["warn:Nothing to attach."]);
+  });
+
+  test("pasted: a whitespace-only selection never matches", () => {
+    const f = fake();
+    f.editor = {
+      path: "/w/a.ts",
+      text: "x",
+      selection: { text: "   \n", startLine: 1, endLine: 2 },
+    };
+    expect(commands(f).pasted("   \n")).toBe(false);
+  });
+
+  test("attachUris deduplicates repeated URIs", async () => {
+    const f = fake();
+    await commands(f).attachUris(["file:///w/a", "file:///w/a"]);
+    expect(f.log.filter((l) => l.startsWith("attach:"))).toHaveLength(1);
   });
 });

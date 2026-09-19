@@ -11,6 +11,7 @@ import {
 } from "@opentui/core";
 import { FileIndex } from "../mentions/file-index.js";
 import type { ShellConfig } from "../shell/shell-config.js";
+import type { BannerOptions } from "./banner-options.js";
 import { resolveBanner } from "./banner.js";
 import {
   ChatModel,
@@ -26,7 +27,7 @@ export interface InteractiveOptions extends ChatSessionOptions {
   /** Shown in the default startup banner. */
   version?: string;
   /** Vendor startup banner; replaces the default when set. */
-  banner?: string[];
+  banner?: string[] | BannerOptions;
   /** Vendor busy spinner; unset fields keep the default. */
   spinner?: SpinnerOptions;
   /** Resolved `!` shell mode settings. Default: DEFAULT_SHELL_CONFIG. */
@@ -197,6 +198,11 @@ export async function runInteractive(
     model?.stopShell();
     model?.cancelLogin();
     view?.setStatus(CLOSING_STATUS);
+    // The cancelled login kills its browser asynchronously; let it finish so
+    // the process does not exit with a Playwright connection open. Under the
+    // same cap as the rest of teardown, and a timeout just falls through: the
+    // cancel already killed the browser, so there is nothing left to own.
+    await settleReset(model?.pendingLogin);
     // A reset in flight has already closed the old session and is about to
     // assign a new one; closing model.session now would leak that new browser
     // and its Playwright connection would keep the process alive. The same

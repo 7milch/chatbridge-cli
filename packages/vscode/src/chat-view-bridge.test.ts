@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { ChatViewBridge, type WebviewLike } from "./chat-view-bridge.js";
-import type { State, ToHost, ToWebview } from "./protocol.js";
+import {
+  COMMAND_LIST,
+  ChatViewBridge,
+  type WebviewLike,
+} from "./chat-view-bridge.js";
+import type { State, ToHost, ToWebview, WebviewCommand } from "./protocol.js";
 
 function fakeWebview() {
   const posted: ToWebview[] = [];
@@ -184,5 +188,55 @@ describe("ChatViewBridge", () => {
     bridge.attach(w.webview);
     bridge.pushPasteResult(3, true);
     expect(w.posted).toEqual([{ type: "pasteResult", id: 3, attached: true }]);
+  });
+  test("pushTookBack posts the entries", () => {
+    const bridge = new ChatViewBridge(() => state, {
+      send() {},
+      removeAttachment() {},
+      takeBack() {},
+      removeQueued() {},
+      command() {},
+      attachUris() {},
+      pasted() {},
+    });
+    const w = fakeWebview();
+    bridge.attach(w.webview);
+    bridge.pushTookBack([{ text: "a", attachments: [] }]);
+    expect(w.posted.at(-1)).toEqual({
+      type: "tookBack",
+      entries: [{ text: "a", attachments: [] }],
+    });
+  });
+
+  test("every WebviewCommand name is accepted", () => {
+    // Compile-time guard: a new WebviewCommand must be listed here, and
+    // COMMAND_LIST is what the loop below exercises.
+    const _all: Record<WebviewCommand, true> = {
+      login: true,
+      logout: true,
+      newChat: true,
+      installBrowser: true,
+      reopen: true,
+      help: true,
+    };
+    expect(new Set(COMMAND_LIST)).toEqual(
+      new Set(Object.keys(_all) as WebviewCommand[]),
+    );
+    for (const name of COMMAND_LIST) {
+      const calls: string[] = [];
+      const bridge = new ChatViewBridge(() => state, {
+        send() {},
+        removeAttachment() {},
+        takeBack() {},
+        removeQueued() {},
+        command: (n) => calls.push(n),
+        attachUris() {},
+        pasted() {},
+      });
+      const w = fakeWebview();
+      bridge.attach(w.webview);
+      w.receive({ type: "command", name });
+      expect(calls.at(-1)).toEqual(name);
+    }
   });
 });

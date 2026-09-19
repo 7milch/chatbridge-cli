@@ -36,6 +36,23 @@ interface QueuedTurn {
 
 export type AddResult = { ok: true } | { ok: false; reason: string };
 
+/** Error codes the extension can attach a remedy to. */
+export type HintCode =
+  | "BLOCKED"
+  | "BROWSER_UNAVAILABLE"
+  | "AUTH_REQUIRED"
+  | "AUTH_EXPIRED"
+  | "RESPONSE_TIMEOUT";
+
+export interface TakeBackResult {
+  /** Every entry that was queued. `entries[i].attachments` lists everything
+   * that entry carried, including attachments that were *not* restored to
+   * pending: only their number is reported, in `droppedAttachments`. */
+  entries: QueueEntry[];
+  /** Attachments left out because restoring them would exceed MAX_TOTAL_BYTES. */
+  droppedAttachments: number;
+}
+
 export interface SessionControllerOptions {
   /** Opens a ChatSession; called lazily on the first send after `closed`. */
   openSession: () => Promise<ChatSessionLike>;
@@ -44,9 +61,9 @@ export interface SessionControllerOptions {
   /** Called with the full state after every change. */
   onChange?: (state: State) => void;
   /** Extra line appended to the history entry of a failed turn, keyed by
-   * `ChatBridgeError.code`. Core's messages are CLI-flavoured (`Try
-   * --headful.`); the extension adds the VSCode-side remedy. */
-  hints?: Partial<Record<string, string>>;
+   * `ChatBridgeError.code`. Core's messages carry no UI-specific remedy;
+   * the extension adds the VSCode-side one. */
+  hints?: Partial<Record<HintCode, string>>;
 }
 
 export const CLOSE_TIMEOUT_MS = 5_000;
@@ -73,6 +90,9 @@ export class SessionController {
   private generation = 0;
   /** The reopen in flight, so a second Ctrl+R joins it instead of racing. */
   private reopening: Promise<void> | undefined;
+  /** The openSession in flight (first send or reopen), so close() can wait
+   * for it instead of orphaning the browser it is about to produce. */
+  private opening: Promise<ChatSessionLike> | undefined;
   private readonly closeTimeoutMs: number;
 
   constructor(private readonly opts: SessionControllerOptions) {
@@ -102,6 +122,11 @@ export class SessionController {
   private setStatus(status: Status): void {
     this.status = status;
     this.emit();
+  }
+
+  /** A `/help` listing, as a history entry. */
+  pushHelp(text: string): void {
+    this.push({ role: "help", text });
   }
 
   private push(message: Message): void {
@@ -157,9 +182,10 @@ export class SessionController {
     if (body === "" && this.pending.length === 0) return EMPTY;
     const attachments = this.pending;
     this.pending = [];
-    // A non-empty queue means earlier entries are waiting (the controller
-    // is `dead`, where draining stops): keep FIFO by queueing behind them
-    // and letting drain start the oldest, which reopens the browser.
+    // A non-empty queue means the controller was not ready when the last
+    // entry arrived and has not become ready since — every ready transition
+    // drains first; `closed` after deactivate can still hold a queue, which
+    // the next send queues behind. Either way, keep FIFO by queueing.
     if (!this.canStartTurn || this.queue.length > 0) {
       this.queue.push({ text: body, attachments });
       this.drain();
@@ -201,15 +227,29 @@ export class SessionController {
 
   /** Empties the queue back into the composer: the entries are returned
    * and their attachments become pending again. */
-  takeBack(): QueueEntry[] {
-    if (this.queue.length === 0) return [];
+  takeBack(): TakeBackResult {
+    if (this.queue.length === 0) return { entries: [], droppedAttachments: 0 };
     const entries = this.queue.splice(0);
-    for (const e of entries) this.pending.push(...e.attachments);
+    let total = this.pending.reduce((n, p) => n + p.bytes, 0);
+    let dropped = 0;
+    for (const e of entries) {
+      for (const a of e.attachments) {
+        if (total + a.bytes > MAX_TOTAL_BYTES) {
+          dropped++;
+          continue;
+        }
+        total += a.bytes;
+        this.pending.push(a);
+      }
+    }
     this.emit();
-    return entries.map((e) => ({
-      text: e.text,
-      attachments: e.attachments.map(({ path, bytes }) => ({ path, bytes })),
-    }));
+    return {
+      entries: entries.map((e) => ({
+        text: e.text,
+        attachments: e.attachments.map(({ path, bytes }) => ({ path, bytes })),
+      })),
+      droppedAttachments: dropped,
+    };
   }
 
   removeQueued(index: number): void {
@@ -246,8 +286,9 @@ export class SessionController {
     try {
       if (this.session === undefined) {
         this.setStatus("opening");
-        const session = await this.opts.openSession();
+        const session = await this.trackOpen(this.opts.openSession());
         // A reopen ran while we were opening: this browser is an orphan.
+        // dropSession may have closed it already; close/kill are idempotent.
         if (generation !== this.generation) {
           await closeOrKill(session, this.closeTimeoutMs);
           return { ok: true };
@@ -269,14 +310,21 @@ export class SessionController {
     }
   }
 
-  private async fail(err: unknown): Promise<SendResult> {
+  /** Pushes the error entry (message plus the extension's remedy, if any)
+   * and reports the code back to the caller. */
+  private pushError(err: unknown): { code: string; message: string } {
     const code = err instanceof ChatBridgeError ? err.code : "UNKNOWN";
     const message = err instanceof Error ? err.message : String(err);
-    const hint = this.opts.hints?.[code];
+    const hint = this.opts.hints?.[code as HintCode];
     this.messages.push({
       role: "error",
       text: hint === undefined ? message : `${message}\n${hint}`,
     });
+    return { code, message };
+  }
+
+  private async fail(err: unknown): Promise<SendResult> {
+    const { code, message } = this.pushError(err);
     // Show the error before `dropSession` (up to `closeTimeoutMs`) runs.
     this.emit();
     if (code === "RESPONSE_TIMEOUT") {
@@ -291,10 +339,31 @@ export class SessionController {
     return { ok: false, code, message };
   }
 
+  /** Tracks an openSession so close()/dropSession can wait for it. */
+  private async trackOpen(
+    p: Promise<ChatSessionLike>,
+  ): Promise<ChatSessionLike> {
+    this.opening = p;
+    try {
+      return await p;
+    } finally {
+      if (this.opening === p) this.opening = undefined;
+    }
+  }
+
   private async dropSession(): Promise<void> {
+    // An open still in flight would assign `this.session` after we return,
+    // so wait for it and close the browser it produced here: the caller
+    // (close(), discard()) must not return with one still running.
+    const opened = await this.opening?.catch(() => undefined);
     const old = this.session;
     this.session = undefined;
     if (old !== undefined) await closeOrKill(old, this.closeTimeoutMs);
+    // The opener's own generation check will close this one too; close()
+    // and kill() are idempotent, so closing it twice is harmless.
+    else if (opened !== undefined) {
+      await closeOrKill(opened, this.closeTimeoutMs);
+    }
   }
 
   /** Ctrl+R of the TUI: drop the browser, mark the break, reopen lazily.
@@ -320,9 +389,10 @@ export class SessionController {
     this.setStatus("reopening");
     await this.dropSession();
     try {
-      const session = await this.opts.openSession();
+      const session = await this.trackOpen(this.opts.openSession());
       // `close()` (deactivate) ran while the browser was opening: this one
-      // is an orphan nobody would ever close, and the controller is closed.
+      // is an orphan, and the controller is closed. dropSession may have
+      // closed it already; close/kill are idempotent.
       if (generation !== this.generation) {
         await closeOrKill(session, this.closeTimeoutMs);
         return;
@@ -334,13 +404,7 @@ export class SessionController {
       this.drain();
       this.emit();
     } catch (err) {
-      const code = err instanceof ChatBridgeError ? err.code : "UNKNOWN";
-      const message = err instanceof Error ? err.message : String(err);
-      const hint = this.opts.hints?.[code];
-      this.messages.push({
-        role: "error",
-        text: hint === undefined ? message : `${message}\n${hint}`,
-      });
+      const { code } = this.pushError(err);
       this.lastError = code;
       this.setStatus("dead");
     }

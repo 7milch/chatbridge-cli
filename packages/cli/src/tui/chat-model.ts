@@ -1,6 +1,7 @@
 import {
   AuthExpiredError,
   AuthRequiredError,
+  BlockedError,
   BrowserUnavailableError,
   InvalidStateError,
   LoginAbortedError,
@@ -138,6 +139,9 @@ export class ChatModel {
   private current: ChatSessionLike | undefined;
   /** The AbortController of the running login, or undefined when none. */
   private loginAbort: AbortController | undefined;
+  /** The `/login` in flight, settled when runLogin has unwound, so teardown
+   * can wait for a cancelled login to let go of its browser. */
+  pendingLogin: Promise<void> | undefined;
   /** Bumped by every reset; a send from an older generation is stale and
    * its outcome is dropped. */
   private generation = 0;
@@ -217,6 +221,9 @@ export class ChatModel {
     if (err instanceof BrowserUnavailableError) {
       return `${message}\n${INSTALL_HINT}`;
     }
+    // Core leaves the --headful hint to the UI; in the TUI it is a restart
+    // flag, so it belongs on the message rather than in core.
+    if (err instanceof BlockedError) return `${message} Try --headful.`;
     return message;
   }
 
@@ -519,9 +526,23 @@ export class ChatModel {
         await this.reset();
         return true;
       }
-      case "login":
-        await this.runLogin();
+      case "login": {
+        const login = this.runLogin();
+        // A second `/login` while one runs is a no-op that resolves at once;
+        // it must not clear the tracking of the login still in flight.
+        if (!this.pendingLogin) {
+          // The derived promise is only awaited by teardown, which may never
+          // run; swallowing here keeps a failed login from surfacing as an
+          // unhandled rejection. The dispatch still awaits `login` itself.
+          this.pendingLogin = login
+            .finally(() => {
+              this.pendingLogin = undefined;
+            })
+            .catch(() => undefined);
+        }
+        await login;
         return true;
+      }
     }
   }
 
@@ -595,6 +616,12 @@ export class ChatModel {
       this.loginProgress = undefined;
       this.settledDuringLogin = undefined;
     }
+  }
+
+  /** Whether a turn settled while `/login` is running, so its outcome is
+   * waiting for the login to finish before it reaches the status row. */
+  get turnHeldByLogin(): boolean {
+    return this.settledDuringLogin !== undefined;
   }
 
   /** Ctrl+C during `/login`; the login rejects with LoginAbortedError. No-op

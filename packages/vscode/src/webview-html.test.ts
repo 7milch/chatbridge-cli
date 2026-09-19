@@ -54,6 +54,7 @@ describe("buildHtml", () => {
     });
     expect(html).toContain('<ul id="queue" hidden></ul>');
     expect(html).toContain('<div id="inline-error" hidden></div>');
+    expect(html).toContain('<textarea id="input" rows="1"');
     expect(html.indexOf('id="queue"')).toBeLessThan(
       html.indexOf('id="composer"'),
     );
