@@ -609,6 +609,12 @@ export class ChatModel {
     }
   }
 
+  /** Whether a turn settled while `/login` is running, so its outcome is
+   * waiting for the login to finish before it reaches the status row. */
+  get turnHeldByLogin(): boolean {
+    return this.settledDuringLogin !== undefined;
+  }
+
   /** Ctrl+C during `/login`; the login rejects with LoginAbortedError. No-op
    * in every other state. */
   cancelLogin(): void {

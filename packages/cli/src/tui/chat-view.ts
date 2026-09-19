@@ -371,14 +371,20 @@ export class ChatView {
         this.stopSpinner();
         this.status.content = styled(theme.muted(OPENING_STATUS));
         break;
-      case "logging-in":
+      case "logging-in": {
         this.stopSpinner();
         // The progress line replaces the hint once the login reports one;
         // it says what the login is waiting for.
+        const base = this.model.loginProgress ?? LOGIN_STATUS;
         this.status.content = styled(
-          theme.muted(this.model.loginProgress ?? LOGIN_STATUS),
+          theme.muted(
+            this.model.turnHeldByLogin
+              ? `${base} · reply held until login finishes`
+              : base,
+          ),
         );
         break;
+      }
       case "dead":
         this.stopSpinner();
         this.status.content = styled(

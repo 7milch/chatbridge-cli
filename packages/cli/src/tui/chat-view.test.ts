@@ -387,6 +387,32 @@ describe("ChatView", () => {
     await login;
   });
 
+  test("the status row says a reply is held while /login runs", async () => {
+    const reply = deferred<string>();
+    const done = deferred<void>();
+    const t = await setup({
+      session: {
+        send: () => reply.promise,
+        async close() {},
+        async kill() {},
+      },
+      login: async () => {
+        await done.promise;
+      },
+    });
+    const turn = t.model.submit("hello");
+    const login = t.model.submit("/login");
+    expect(await t.frameWith(LOGIN_STATUS)).toContain(LOGIN_STATUS);
+    // The reply lands while the login owns the status row.
+    reply.resolve("Echo: hello");
+    await turn;
+    expect(await t.frameWith("reply held until login finishes")).toContain(
+      `${LOGIN_STATUS} · reply held until login finishes`,
+    );
+    done.resolve();
+    await login;
+  });
+
   test("a help entry renders verbatim with no role label", async () => {
     const t = await setup();
     await t.model.submit("/help");
