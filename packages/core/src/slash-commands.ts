@@ -67,7 +67,7 @@ export function unknownCommandMessage(word: string): string {
  * provider's order. */
 export function helpText(custom: readonly CommandInfo[] = []): string {
   const all: readonly CommandInfo[] = [...SLASH_COMMANDS, ...custom];
-  const width = Math.max(...all.map((c) => c.name.length));
+  const width = Math.max(...all.map((c) => c.name.length)) + 1;
   return all.map((c) => `/${c.name.padEnd(width)} ${c.description}`).join("\n");
 }
 

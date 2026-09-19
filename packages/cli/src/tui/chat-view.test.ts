@@ -431,8 +431,8 @@ describe("ChatView", () => {
     const t = await setup();
     await t.model.submit("/help");
     const frame = await t.frameWith("/login");
-    expect(frame).toContain("/login  Log in in a browser window");
-    expect(frame).toContain("/help   List these commands");
+    expect(frame).toContain("/login   Log in in a browser window");
+    expect(frame).toContain("/help    List these commands");
     // No "help" label row above it; the text is the whole entry.
     expect(frame).not.toMatch(/^help\s*$/m);
   });

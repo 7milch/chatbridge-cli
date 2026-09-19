@@ -75,9 +75,9 @@ describe("helpText", () => {
     ]);
     const lines = text.split("\n");
     expect(lines).toHaveLength(SLASH_COMMANDS.length + 2);
-    expect(lines.at(-2)).toBe("/model     Show the model");
-    expect(lines.at(-1)).toBe("/summarize Summarize");
-    expect(lines[0]).toMatch(/^\/login {5}/);
+    expect(lines.at(-2)).toBe("/model      Show the model");
+    expect(lines.at(-1)).toBe("/summarize  Summarize");
+    expect(lines[0]).toMatch(/^\/login {6}/);
   });
 });
 
