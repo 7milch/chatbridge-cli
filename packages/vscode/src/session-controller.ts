@@ -36,6 +36,20 @@ interface QueuedTurn {
 
 export type AddResult = { ok: true } | { ok: false; reason: string };
 
+/** Error codes the extension can attach a remedy to. */
+export type HintCode =
+  | "BLOCKED"
+  | "BROWSER_UNAVAILABLE"
+  | "AUTH_REQUIRED"
+  | "AUTH_EXPIRED"
+  | "RESPONSE_TIMEOUT";
+
+export interface TakeBackResult {
+  entries: QueueEntry[];
+  /** Attachments left out because restoring them would exceed MAX_TOTAL_BYTES. */
+  droppedAttachments: number;
+}
+
 export interface SessionControllerOptions {
   /** Opens a ChatSession; called lazily on the first send after `closed`. */
   openSession: () => Promise<ChatSessionLike>;
@@ -44,9 +58,9 @@ export interface SessionControllerOptions {
   /** Called with the full state after every change. */
   onChange?: (state: State) => void;
   /** Extra line appended to the history entry of a failed turn, keyed by
-   * `ChatBridgeError.code`. Core's messages are CLI-flavoured (`Try
-   * --headful.`); the extension adds the VSCode-side remedy. */
-  hints?: Partial<Record<string, string>>;
+   * `ChatBridgeError.code`. Core's messages carry no UI-specific remedy;
+   * the extension adds the VSCode-side one. */
+  hints?: Partial<Record<HintCode, string>>;
 }
 
 export const CLOSE_TIMEOUT_MS = 5_000;
@@ -73,6 +87,9 @@ export class SessionController {
   private generation = 0;
   /** The reopen in flight, so a second Ctrl+R joins it instead of racing. */
   private reopening: Promise<void> | undefined;
+  /** The openSession in flight (first send or reopen), so close() can wait
+   * for it instead of orphaning the browser it is about to produce. */
+  private opening: Promise<ChatSessionLike> | undefined;
   private readonly closeTimeoutMs: number;
 
   constructor(private readonly opts: SessionControllerOptions) {
@@ -157,9 +174,12 @@ export class SessionController {
     if (body === "" && this.pending.length === 0) return EMPTY;
     const attachments = this.pending;
     this.pending = [];
-    // A non-empty queue means earlier entries are waiting (the controller
-    // is `dead`, where draining stops): keep FIFO by queueing behind them
-    // and letting drain start the oldest, which reopens the browser.
+    // Invariant: a non-empty queue means the controller could not start a
+    // turn when the last entry arrived and has not become ready since
+    // (every ready transition drains first). Keep FIFO by queueing.
+    if (this.queue.length > 0 && this.canStartTurn && this.status !== "dead") {
+      throw new Error("queue not drained on a ready controller");
+    }
     if (!this.canStartTurn || this.queue.length > 0) {
       this.queue.push({ text: body, attachments });
       this.drain();
@@ -201,15 +221,29 @@ export class SessionController {
 
   /** Empties the queue back into the composer: the entries are returned
    * and their attachments become pending again. */
-  takeBack(): QueueEntry[] {
-    if (this.queue.length === 0) return [];
+  takeBack(): TakeBackResult {
+    if (this.queue.length === 0) return { entries: [], droppedAttachments: 0 };
     const entries = this.queue.splice(0);
-    for (const e of entries) this.pending.push(...e.attachments);
+    let total = this.pending.reduce((n, p) => n + p.bytes, 0);
+    let dropped = 0;
+    for (const e of entries) {
+      for (const a of e.attachments) {
+        if (total + a.bytes > MAX_TOTAL_BYTES) {
+          dropped++;
+          continue;
+        }
+        total += a.bytes;
+        this.pending.push(a);
+      }
+    }
     this.emit();
-    return entries.map((e) => ({
-      text: e.text,
-      attachments: e.attachments.map(({ path, bytes }) => ({ path, bytes })),
-    }));
+    return {
+      entries: entries.map((e) => ({
+        text: e.text,
+        attachments: e.attachments.map(({ path, bytes }) => ({ path, bytes })),
+      })),
+      droppedAttachments: dropped,
+    };
   }
 
   removeQueued(index: number): void {
@@ -246,7 +280,7 @@ export class SessionController {
     try {
       if (this.session === undefined) {
         this.setStatus("opening");
-        const session = await this.opts.openSession();
+        const session = await this.trackOpen(this.opts.openSession());
         // A reopen ran while we were opening: this browser is an orphan.
         if (generation !== this.generation) {
           await closeOrKill(session, this.closeTimeoutMs);
@@ -269,14 +303,21 @@ export class SessionController {
     }
   }
 
-  private async fail(err: unknown): Promise<SendResult> {
+  /** Pushes the error entry (message plus the extension's remedy, if any)
+   * and reports the code back to the caller. */
+  private pushError(err: unknown): { code: string; message: string } {
     const code = err instanceof ChatBridgeError ? err.code : "UNKNOWN";
     const message = err instanceof Error ? err.message : String(err);
-    const hint = this.opts.hints?.[code];
+    const hint = this.opts.hints?.[code as HintCode];
     this.messages.push({
       role: "error",
       text: hint === undefined ? message : `${message}\n${hint}`,
     });
+    return { code, message };
+  }
+
+  private async fail(err: unknown): Promise<SendResult> {
+    const { code, message } = this.pushError(err);
     // Show the error before `dropSession` (up to `closeTimeoutMs`) runs.
     this.emit();
     if (code === "RESPONSE_TIMEOUT") {
@@ -291,7 +332,22 @@ export class SessionController {
     return { ok: false, code, message };
   }
 
+  /** Tracks an openSession so close()/dropSession can wait for it. */
+  private async trackOpen(
+    p: Promise<ChatSessionLike>,
+  ): Promise<ChatSessionLike> {
+    this.opening = p;
+    try {
+      return await p;
+    } finally {
+      if (this.opening === p) this.opening = undefined;
+    }
+  }
+
   private async dropSession(): Promise<void> {
+    // An open still in flight would assign `this.session` after we return;
+    // its generation check then closes it, but only if we let it finish.
+    await this.opening?.catch(() => undefined);
     const old = this.session;
     this.session = undefined;
     if (old !== undefined) await closeOrKill(old, this.closeTimeoutMs);
@@ -320,7 +376,7 @@ export class SessionController {
     this.setStatus("reopening");
     await this.dropSession();
     try {
-      const session = await this.opts.openSession();
+      const session = await this.trackOpen(this.opts.openSession());
       // `close()` (deactivate) ran while the browser was opening: this one
       // is an orphan nobody would ever close, and the controller is closed.
       if (generation !== this.generation) {
@@ -334,13 +390,7 @@ export class SessionController {
       this.drain();
       this.emit();
     } catch (err) {
-      const code = err instanceof ChatBridgeError ? err.code : "UNKNOWN";
-      const message = err instanceof Error ? err.message : String(err);
-      const hint = this.opts.hints?.[code];
-      this.messages.push({
-        role: "error",
-        text: hint === undefined ? message : `${message}\n${hint}`,
-      });
+      const { code } = this.pushError(err);
       this.lastError = code;
       this.setStatus("dead");
     }

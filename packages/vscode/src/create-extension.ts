@@ -84,7 +84,7 @@ export function createExtension(opts: CreateExtensionOptions) {
       {
         send: (text) => void handlers.send(text),
         removeAttachment: (i) => controller?.removeAttachment(i),
-        takeBack: () => controller?.takeBack(),
+        takeBack: () => void controller?.takeBack(),
         removeQueued: (i) => controller?.removeQueued(i),
         command: (name) => void handlers[name](),
         attachUris: (uris) => void handlers.attachUris(uris),
@@ -128,6 +128,7 @@ export function createExtension(opts: CreateExtensionOptions) {
         }),
       hints: {
         BLOCKED: `Set the "${opts.id}.headless" setting to false and try again.`,
+        BROWSER_UNAVAILABLE: `Run "${opts.displayName}: Install Browser" and send again.`,
       },
       onChange: (state) => {
         bridge.pushState(state);
