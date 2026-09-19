@@ -25,6 +25,7 @@ every branch and needs no commit to change.
 | Unscheduled ideas | Issues labelled [`backlog`](https://github.com/7milch/chatbridge-cli/issues?q=is%3Aissue+is%3Aopen+label%3Abacklog) |
 | Priority and progress | The project board (private for now) |
 | Long-term memory across sessions | The issue thread, via `gh issue comment` |
+| What shipped in each version | [Releases](https://github.com/7milch/chatbridge-cli/releases), generated at publish time from the merged pull requests |
 
 This file keeps the shipped history below, plus the standing design rules at the
 end. When a milestone ships, add a heading for it here and close its milestone.
