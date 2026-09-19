@@ -139,6 +139,9 @@ export class ChatModel {
   private current: ChatSessionLike | undefined;
   /** The AbortController of the running login, or undefined when none. */
   private loginAbort: AbortController | undefined;
+  /** The `/login` in flight, settled when runLogin has unwound, so teardown
+   * can wait for a cancelled login to let go of its browser. */
+  pendingLogin: Promise<void> | undefined;
   /** Bumped by every reset; a send from an older generation is stale and
    * its outcome is dropped. */
   private generation = 0;
@@ -523,9 +526,14 @@ export class ChatModel {
         await this.reset();
         return true;
       }
-      case "login":
-        await this.runLogin();
+      case "login": {
+        const login = this.runLogin().finally(() => {
+          this.pendingLogin = undefined;
+        });
+        this.pendingLogin = login;
+        await login;
         return true;
+      }
     }
   }
 

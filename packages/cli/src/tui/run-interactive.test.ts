@@ -5,7 +5,7 @@ import type { AuthStore } from "@chatbridge/runtime";
 import { createTestRenderer } from "@opentui/core/testing";
 import { FileIndex } from "../mentions/file-index.js";
 import type { ShellResult } from "../shell/run-command.js";
-import { ChatView } from "./chat-view.js";
+import { ChatView, LOGIN_STATUS } from "./chat-view.js";
 import {
   runInteractive,
   teardownExitMessage,
@@ -13,6 +13,23 @@ import {
 } from "./run-interactive.js";
 import { resolveSpinner } from "./spinner.js";
 import { modelWith } from "./test-helpers.js";
+
+/** Polls the frame until `needle` shows; fails naming what it waited for. */
+async function waitFor(
+  t: Awaited<ReturnType<typeof createTestRenderer>>,
+  needle: string,
+): Promise<string> {
+  let frame = "";
+  for (let i = 0; i < 50 && !frame.includes(needle); i++) {
+    await new Promise((r) => setTimeout(r, 20));
+    await t.renderOnce();
+    frame = t.captureCharFrame();
+  }
+  if (!frame.includes(needle)) {
+    throw new Error(`frame never showed ${JSON.stringify(needle)}:\n${frame}`);
+  }
+  return frame;
+}
 
 describe("waitForQuit", () => {
   test("resolves when the renderer is destroyed from outside", async () => {
@@ -349,11 +366,7 @@ describe("runInteractive", () => {
       createRenderer: async () => t.renderer,
       index: FileIndex.fromPaths([]),
     });
-    for (let i = 0; i < 50 && !frame.includes("test-cli v1.2.3"); i++) {
-      await new Promise((r) => setTimeout(r, 20));
-      await t.renderOnce();
-      frame = t.captureCharFrame();
-    }
+    frame = await waitFor(t, "test-cli v1.2.3");
     try {
       expect(frame).toContain("test-cli v1.2.3");
       expect(frame).toContain("Connected to fake.");
@@ -374,11 +387,7 @@ describe("runInteractive", () => {
       createRenderer: async () => t.renderer,
       index: FileIndex.fromPaths([]),
     });
-    for (let i = 0; i < 50 && !frame.includes("ACME BANNER"); i++) {
-      await new Promise((r) => setTimeout(r, 20));
-      await t.renderOnce();
-      frame = t.captureCharFrame();
-    }
+    frame = await waitFor(t, "ACME BANNER");
     try {
       expect(frame).toContain("ACME BANNER");
       expect(frame).not.toContain("Connected to");
@@ -407,18 +416,10 @@ describe("runInteractive", () => {
       index: FileIndex.fromPaths([]),
     });
     try {
-      for (let i = 0; i < 50 && !frame.includes("Type a message"); i++) {
-        await new Promise((r) => setTimeout(r, 20));
-        await t.renderOnce();
-        frame = t.captureCharFrame();
-      }
+      frame = await waitFor(t, "Type a message");
       await t.mockInput.typeText("hi");
       t.mockInput.pressEnter();
-      for (let i = 0; i < 50 && !frame.includes("Crunching\u2026"); i++) {
-        await new Promise((r) => setTimeout(r, 20));
-        await t.renderOnce();
-        frame = t.captureCharFrame();
-      }
+      frame = await waitFor(t, "Crunching\u2026");
       expect(frame).toContain("@@ Crunching\u2026");
       expect(frame).not.toContain("Thinking\u2026");
     } finally {
@@ -436,17 +437,9 @@ describe("runInteractive", () => {
       index: FileIndex.fromPaths([]),
     });
     let frame = "";
-    for (let i = 0; i < 50 && !frame.includes("Ctrl+R reopen"); i++) {
-      await new Promise((r) => setTimeout(r, 20));
-      await t.renderOnce();
-      frame = t.captureCharFrame();
-    }
+    frame = await waitFor(t, "Ctrl+R reopen");
     t.mockInput.pressKey("r", { ctrl: true });
-    for (let i = 0; i < 50 && !frame.includes("── reopened ──"); i++) {
-      await new Promise((r) => setTimeout(r, 20));
-      await t.renderOnce();
-      frame = t.captureCharFrame();
-    }
+    frame = await waitFor(t, "── reopened ──");
     try {
       expect(frame).toContain("── reopened ──");
       expect(s.launches).toHaveLength(2);
@@ -472,11 +465,7 @@ describe("runInteractive", () => {
       index: FileIndex.fromPaths([]),
     });
     let frame = "";
-    for (let i = 0; i < 50 && !frame.includes("Ctrl+R reopen"); i++) {
-      await new Promise((r) => setTimeout(r, 20));
-      await t.renderOnce();
-      frame = t.captureCharFrame();
-    }
+    frame = await waitFor(t, "Ctrl+R reopen");
     t.mockInput.pressKey("r", { ctrl: true });
     // The second launch has started and is parked on the gate.
     for (let i = 0; i < 50 && s.launches.length < 2; i++) {
@@ -512,11 +501,7 @@ describe("runInteractive", () => {
       return r;
     });
     let frame = "";
-    for (let i = 0; i < 50 && !frame.includes("Ctrl+R reopen"); i++) {
-      await new Promise((r) => setTimeout(r, 20));
-      await t.renderOnce();
-      frame = t.captureCharFrame();
-    }
+    frame = await waitFor(t, "Ctrl+R reopen");
     // Nothing from close() yet, and nothing may be printed over the live TUI.
     expect(progress.some((m) => m.includes("Could not save auth state"))).toBe(
       false,
@@ -541,17 +526,9 @@ describe("runInteractive", () => {
     });
     let frame = "";
 
-    for (let i = 0; i < 50 && !frame.includes("Ctrl+R reopen"); i++) {
-      await new Promise((r) => setTimeout(r, 20));
-      await t.renderOnce();
-      frame = t.captureCharFrame();
-    }
+    frame = await waitFor(t, "Ctrl+R reopen");
     t.mockInput.pressKey("r", { ctrl: true });
-    for (let i = 0; i < 50 && !frame.includes("── reopened ──"); i++) {
-      await new Promise((r) => setTimeout(r, 20));
-      await t.renderOnce();
-      frame = t.captureCharFrame();
-    }
+    frame = await waitFor(t, "── reopened ──");
     try {
       expect(frame).toContain("── reopened ──");
       // Only the pre-UI open reported; the reopen's would land on the TUI.
@@ -574,11 +551,7 @@ describe("runInteractive", () => {
       index: FileIndex.fromPaths([]),
     });
     let frame = "";
-    for (let i = 0; i < 50 && !frame.includes("not logged in"); i++) {
-      await new Promise((r) => setTimeout(r, 20));
-      await t.renderOnce();
-      frame = t.captureCharFrame();
-    }
+    frame = await waitFor(t, "not logged in");
     try {
       // The UI came up despite the failure, and says how to fix it.
       expect(frame).toContain("not logged in");
@@ -588,5 +561,34 @@ describe("runInteractive", () => {
       t.mockInput.pressKey("c", { ctrl: true });
     }
     expect(await run).toEqual({ fatal: boom });
+  });
+
+  test("quit during /login waits for the login to unwind before destroying the renderer", async () => {
+    const t = await createTestRenderer({ width: 80, height: 20 });
+    let unwound = false;
+    const base = sessionOpts().opts;
+    const run = runInteractive({
+      ...base,
+      login: async ({ signal }) => {
+        await new Promise<void>((_, reject) =>
+          signal.addEventListener("abort", () => {
+            setTimeout(() => {
+              unwound = true;
+              reject(new LoginAbortedError());
+            }, 30);
+          }),
+        );
+      },
+      createRenderer: async () => t.renderer,
+      index: FileIndex.fromPaths([]),
+    });
+    await waitFor(t, "Type a message");
+    await t.mockInput.typeText("/login");
+    t.mockInput.pressEnter();
+    await waitFor(t, LOGIN_STATUS);
+    // An external destroy is the only quit path that skips Ctrl+C's cancel.
+    t.renderer.destroy();
+    await run;
+    expect(unwound).toBe(true);
   });
 });

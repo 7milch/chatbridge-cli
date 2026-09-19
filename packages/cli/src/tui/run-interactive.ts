@@ -196,6 +196,9 @@ export async function runInteractive(
     // Neither a shell command nor a login browser may outlive the TUI.
     model?.stopShell();
     model?.cancelLogin();
+    // The cancelled login kills its browser asynchronously; let it finish
+    // so the process does not exit with a Playwright connection open.
+    await model?.pendingLogin?.catch(() => undefined);
     view?.setStatus(CLOSING_STATUS);
     // A reset in flight has already closed the old session and is about to
     // assign a new one; closing model.session now would leak that new browser
