@@ -8,7 +8,9 @@ export {
 export {
   ChatSession,
   type ChatSessionOptions,
+  type OpenOptions,
   type RuntimeLike,
+  isRetryableOpenError,
 } from "./chat-session.js";
 export { launchRuntime } from "./launch-runtime.js";
 export { createAuthStore } from "./create-auth-store.js";
@@ -18,7 +20,7 @@ export {
   BrowserRuntime,
   validateProviderName,
 } from "@chatbridge/runtime";
-export type { Provider } from "@chatbridge/provider";
+export type { Provider, ProviderOpenDefaults } from "@chatbridge/provider";
 export { defineProvider } from "@chatbridge/provider";
 export {
   type Attachment,

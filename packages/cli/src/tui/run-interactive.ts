@@ -161,7 +161,13 @@ export async function runInteractive(
   let model: ChatModel | undefined;
   try {
     model = new ChatModel({
-      openSession: opts.createSession ?? (() => ChatSession.open(sessionOpts)),
+      openSession:
+        opts.createSession ??
+        ((report) =>
+          // Opening messages paint the live status row; everything the
+          // session reports later (from close()) keeps going to the
+          // buffering onProgress above.
+          ChatSession.open({ ...sessionOpts, onOpenProgress: report })),
       login:
         opts.login ??
         (({ signal, onProgress: report }) =>

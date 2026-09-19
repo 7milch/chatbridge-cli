@@ -4,7 +4,11 @@ import {
   BrowserRuntime,
   type LaunchOptions,
 } from "@chatbridge/runtime";
-import { ChatSession, type RuntimeLike } from "./chat-session.js";
+import {
+  ChatSession,
+  type OpenOptions,
+  type RuntimeLike,
+} from "./chat-session.js";
 import { LoginAbortedError } from "./errors.js";
 import { launchRuntime } from "./launch-runtime.js";
 import { runStep } from "./run-step.js";
@@ -15,6 +19,8 @@ export interface OneShotOptions {
   prompt: string;
   headless: boolean;
   timeoutMs: number;
+  /** Opening-phase knobs; see ChatSessionOptions.open. */
+  open?: OpenOptions;
   /** Progress messages (stderr in the CLI). Never receives auth content. */
   onProgress?: (message: string) => void;
 }

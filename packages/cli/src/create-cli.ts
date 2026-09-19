@@ -9,6 +9,7 @@ import {
 } from "@chatbridge/core";
 import { type CliConfig, configPath, loadConfig } from "./config.js";
 import { describeError, exitCodeFor } from "./exit-codes.js";
+import { resolveOpenOptions } from "./open-options.js";
 import { resolveProvider } from "./resolve-provider.js";
 import { type ShellConfig, resolveShellConfig } from "./shell/shell-config.js";
 import { type BannerOptions, validateBanner } from "./tui/banner-options.js";
@@ -21,8 +22,10 @@ export interface CreateCliOptions {
   /** Shown by --version and in the interactive startup banner. */
   version?: string;
   /** Interactive startup banner: plain lines (all dim), or `{ lines,
-   * colors?, mode? }` to colour rows, cells or a vertical gradient.
-   * Replaces the default (name, version and a one-line hint). */
+   * colors?, mode?, direction? }` to colour rows, cells or a gradient
+   * (vertical by default; `direction` can run it horizontal or
+   * diagonal instead). Replaces the default (name, version and a
+   * one-line hint). */
   banner?: string[] | BannerOptions;
   /** Busy-status spinner shown while a turn is in flight, in the style of
    * `banner`; fields not set keep their default. Frames must share a
@@ -252,6 +255,7 @@ export function createCli(opts: CreateCliOptions) {
           providerPinned: opts.provider !== undefined,
         });
         const provider = await getProvider(values.provider, config);
+        const open = resolveOpenOptions({ provider, config, env: process.env });
         const authStore = createAuthStore({
           configDir,
           providerName: provider.name,
@@ -269,6 +273,7 @@ export function createCli(opts: CreateCliOptions) {
           authStore,
           headless: !values.headful,
           timeoutMs,
+          open,
           onProgress: progress,
         });
         return result.fatal === undefined ? 0 : reportError(result.fatal);
@@ -276,7 +281,13 @@ export function createCli(opts: CreateCliOptions) {
 
       if (typeof values.prompt === "string") {
         const timeoutMs = parseTimeoutMs(values.timeout);
-        const provider = await getProvider(values.provider);
+        // Read even with a pinned provider: the "open" section is the
+        // user's to override regardless of who ships the CLI.
+        const config = await loadConfig(location, {
+          providerPinned: opts.provider !== undefined,
+        });
+        const provider = await getProvider(values.provider, config);
+        const open = resolveOpenOptions({ provider, config, env: process.env });
         const authStore = createAuthStore({
           configDir,
           providerName: provider.name,
@@ -288,6 +299,7 @@ export function createCli(opts: CreateCliOptions) {
           prompt: values.prompt,
           headless: !values.headful,
           timeoutMs,
+          open,
           onProgress: progress,
         });
         // stdout: response body only.

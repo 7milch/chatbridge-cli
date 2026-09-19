@@ -11,6 +11,9 @@ export interface CliConfig {
   /** `!` shell mode overrides; each key is optional and wins over the
    * vendor default from createCli. */
   shell?: Partial<ShellConfig>;
+  /** Opening-phase overrides; each key is optional and wins over the
+   * provider's `open` defaults. Seconds, like --timeout. */
+  open?: { timeoutSec?: number; retries?: number };
 }
 
 export interface ConfigLocation {
@@ -65,7 +68,7 @@ export async function loadConfig(
   if (typeof doc !== "object" || doc === null || Array.isArray(doc)) {
     throw invalid(file, "top level must be a JSON object");
   }
-  const { defaultProvider, shell } = doc as Record<string, unknown>;
+  const { defaultProvider, shell, open } = doc as Record<string, unknown>;
   const cfg: CliConfig = {};
   if (defaultProvider !== undefined && !opts.providerPinned) {
     if (typeof defaultProvider !== "string") {
@@ -96,6 +99,30 @@ export async function loadConfig(
       out.autoSend = autoSend;
     }
     cfg.shell = out;
+  }
+  if (open !== undefined) {
+    if (typeof open !== "object" || open === null || Array.isArray(open)) {
+      throw invalid(file, '"open" must be an object');
+    }
+    const { timeoutSec, retries } = open as Record<string, unknown>;
+    const out: NonNullable<CliConfig["open"]> = {};
+    if (timeoutSec !== undefined) {
+      if (
+        typeof timeoutSec !== "number" ||
+        !Number.isFinite(timeoutSec) ||
+        !(timeoutSec > 0)
+      ) {
+        throw invalid(file, '"open.timeoutSec" must be a positive number');
+      }
+      out.timeoutSec = timeoutSec;
+    }
+    if (retries !== undefined) {
+      if (!Number.isInteger(retries) || (retries as number) < 0) {
+        throw invalid(file, '"open.retries" must be a non-negative integer');
+      }
+      out.retries = retries as number;
+    }
+    cfg.open = out;
   }
   return cfg;
 }

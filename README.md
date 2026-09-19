@@ -62,7 +62,8 @@ Providers are loaded with `--provider <npm-package|./path>` or from
 ```json
 {
   "defaultProvider": "@your-scope/your-provider",
-  "shell": { "leadIn": "Please check the execution result.", "autoSend": true }
+  "shell": { "leadIn": "Please check the execution result.", "autoSend": true },
+  "open": { "timeoutSec": 180, "retries": 2 }
 }
 ```
 
@@ -74,11 +75,22 @@ that provider is installed globally as well.
 command's output, `autoSend: false` holds the output back until your next
 message. Both override the defaults a derived CLI ships.
 
+`open` is optional and tunes the "Opening browser..." phase: `timeoutSec`
+is the per-step timeout for navigating to the chat page, checking the
+login and starting a new chat (default 120, or what the provider
+declares), `retries` how many times the whole phase is re-run after a
+launch or navigation failure, closing the browser in between (default 0).
+Failures that opening again would not fix (auth expired, blocked by the
+service, Chromium missing) are never retried. `CHATBRIDGE_OPEN_TIMEOUT`
+(seconds) and `CHATBRIDGE_OPEN_RETRIES` override the file for one run. A
+provider sets its own defaults with `open: { timeoutMs, retries }`.
+
 Interactive mode reads `config.json` even when the CLI ships its own
 provider (the `shell` section still applies), so a file that is not valid
 JSON stops it at startup with exit 1. A derived CLI ignores
-`defaultProvider` entirely; one-shot mode (`-p`) and `auth` never read the
-file when the provider is pinned.
+`defaultProvider` entirely; `auth` never reads the file; one-shot mode
+(`-p`) reads it for the `shell`-independent `open` section, so a broken
+file stops it at startup too.
 
 A derived CLI passes its own identity to `createCli`:
 
@@ -90,6 +102,7 @@ createCli({
     lines: ["Acme internal assistant", "Conversations are not stored."],
     colors: ["#ff5f87", "#ffaf00"],
     mode: "gradient",
+    direction: "horizontal", // gradient only: vertical (default), horizontal, diagonal
   }, // or plain string[]
   spinner: {                   // optional; unset fields keep the default
     frames: ["⠋", "⠙", "⠹", "⠸"],          // same display width each
@@ -147,7 +160,9 @@ chat.
   (the CLI name and version by default; a derived CLI can pass its own
   `banner` lines to `createCli`; plain lines are dim, while an object form
   `{ lines, colors, mode }` colours rows (`per-line`), cells diagonally
-  (`per-char`) or a vertical `gradient` between hex stops — the object form
+  (`per-char`) or a `gradient` between hex stops running down (`vertical`,
+  default), across (`horizontal`) or diagonally (`diagonal`) over the
+  centred banner grid — the object form
   needs `@chatbridge/cli` >= 0.8.2). While a turn is in flight the status
   row shows a spinner and the elapsed time against the budget; `spinner` on
   `createCli` replaces its frames, interval, label (a list of labels picks
@@ -249,7 +264,11 @@ challenges, browser fingerprinting at the identity provider) may block
 Playwright, especially headless; `--headful` sometimes helps, and that is
 as far as this project goes. A provider can recognise such a page with the
 optional `detectBlock` method (see `@chatbridge/provider`) so the CLI exits
-6 and suggests `--headful` instead of reporting an expired login. Evading
+6 and suggests `--headful` instead of reporting an expired login. A provider
+that is slow to open, or flaky enough to be worth a second try, can also ship
+its own defaults through the optional `open` field
+(`{ timeoutMs?, retries? }`), which the `open` block in `config.json` and
+then the `CHATBRIDGE_OPEN_*` environment variables override in turn. Evading
 bot protection — stealth plugins,
 user-agent spoofing, attaching to a personal browser profile — is out of
 scope and will not be added. Public services are used here only as spike

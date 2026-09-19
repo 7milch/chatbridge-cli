@@ -1,9 +1,17 @@
 import type { StyledText, TextChunk } from "@opentui/core";
-import type { BannerMode, BannerOptions } from "./banner-options.js";
+import type {
+  BannerDirection,
+  BannerMode,
+  BannerOptions,
+} from "./banner-options.js";
 import type { SpinnerColor } from "./spinner.js";
 import { colored, mixHex, styled, theme } from "./theme.js";
 
-export type { BannerMode, BannerOptions } from "./banner-options.js";
+export type {
+  BannerDirection,
+  BannerMode,
+  BannerOptions,
+} from "./banner-options.js";
 export { validateBanner } from "./banner-options.js";
 
 export interface BannerInput {
@@ -18,6 +26,36 @@ export interface BannerColorSpec {
   rows: number;
   colors: SpinnerColor[];
   mode: BannerMode;
+  /** gradient only; default "vertical". */
+  direction?: BannerDirection;
+  /** Widest line in code points; needed by horizontal and diagonal. */
+  maxWidth?: number;
+}
+
+/** Position 0..1 of cell (row, col) along the gradient axis. A degenerate
+ * grid (one row, one column) is position 0. */
+export function gradientPosition(
+  row: number,
+  col: number,
+  spec: BannerColorSpec,
+): number {
+  const rows = spec.rows;
+  const width = spec.maxWidth ?? 0;
+  const direction = spec.direction ?? "vertical";
+  let num: number;
+  let den: number;
+  if (direction === "horizontal") {
+    num = col;
+    den = width - 1;
+  } else if (direction === "diagonal") {
+    num = row + col;
+    den = rows + width - 2;
+  } else {
+    num = row;
+    den = rows - 1;
+  }
+  if (den <= 0) return 0;
+  return Math.min(1, Math.max(0, num / den));
 }
 
 /** The colour of cell (row, col). Pure; `spec.colors` is already validated. */
@@ -26,15 +64,18 @@ export function bannerColorAt(
   col: number,
   spec: BannerColorSpec,
 ): SpinnerColor {
-  const { colors, mode, rows } = spec;
+  const { colors, mode } = spec;
   const n = colors.length;
   if (mode === "per-line") return colors[row % n] as SpinnerColor;
   if (mode === "per-char") return colors[(row + col) % n] as SpinnerColor;
   // gradient: position along the whole stop list.
-  if (rows <= 1) return colors[0] as SpinnerColor;
-  const pos = (row / (rows - 1)) * (n - 1);
+  const t = gradientPosition(row, col, spec);
+  const pos = t * (n - 1);
   const i = Math.min(Math.floor(pos), n - 2);
-  return mixHex(colors[i] as string, colors[i + 1] as string, pos - i);
+  const frac = pos - i;
+  if (frac === 0) return colors[i] as SpinnerColor;
+  if (frac === 1) return colors[i + 1] as SpinnerColor;
+  return mixHex(colors[i] as string, colors[i + 1] as string, frac);
 }
 
 /** One StyledText per row; adjacent cells of one colour share a chunk. */
@@ -43,13 +84,17 @@ function colourLine(
   row: number,
   spec: BannerColorSpec,
 ): StyledText {
-  if (line === "") return styled(colored(bannerColorAt(row, 0, spec))(""));
+  const cells = [...line];
+  const offset = Math.floor(
+    ((spec.maxWidth ?? cells.length) - cells.length) / 2,
+  );
+  if (line === "") return styled(colored(bannerColorAt(row, offset, spec))(""));
   const chunks: TextChunk[] = [];
   let start = 0;
-  let current = bannerColorAt(row, 0, spec);
-  const cells = [...line];
+  let current = bannerColorAt(row, offset, spec);
   for (let col = 1; col <= cells.length; col++) {
-    const next = col < cells.length ? bannerColorAt(row, col, spec) : undefined;
+    const next =
+      col < cells.length ? bannerColorAt(row, col + offset, spec) : undefined;
     if (next === current) continue;
     chunks.push(colored(current)(cells.slice(start, col).join("")));
     start = col;
@@ -77,8 +122,10 @@ export function resolveBanner(input: BannerInput): StyledText[] {
     }
     const spec: BannerColorSpec = {
       rows: b.lines.length,
+      maxWidth: Math.max(0, ...b.lines.map((l) => [...l].length)),
       colors: b.colors,
       mode: b.mode ?? "per-line",
+      direction: b.direction,
     };
     return b.lines.map((line, row) => colourLine(line, row, spec));
   }

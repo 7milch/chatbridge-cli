@@ -88,8 +88,9 @@ export const INSTALL_HINT = "Run: npx playwright install chromium";
 export interface ChatModelOptions {
   /** Opens a session: called once by the constructor and by every reset.
    * The UI is up before it resolves, so an opening failure is an error
-   * entry in the history rather than a crash before the first frame. */
-  openSession: () => Promise<ChatSessionLike>;
+   * entry in the history rather than a crash before the first frame.
+   * `report` paints the status row while the open runs (retry attempts). */
+  openSession: (report: (message: string) => void) => Promise<ChatSessionLike>;
   /** `/login`: the headful login; resolves when the auth state is saved. */
   login: (opts: {
     signal: AbortSignal;
@@ -130,6 +131,9 @@ export class ChatModel {
   readonly ready: Promise<void>;
   /** The last progress line from the running login, for the status row. */
   loginProgress: string | undefined;
+  /** The last progress line from the running open (or reopen), for the
+   * status row. Undefined once the open settles, either way. */
+  openProgress: string | undefined;
   /** Where a turn that ended while `/login` was running left the model.
    * The login owns the status meanwhile, so the turn records its outcome
    * here and runLogin restores it instead of the status it captured. */
@@ -150,7 +154,9 @@ export class ChatModel {
   private pending: Promise<void> | undefined;
   /** The shell command in flight, so stopShell() and reset() can end it. */
   private running: RunningCommand | undefined;
-  private readonly openSession: () => Promise<ChatSessionLike>;
+  private readonly openSession: (
+    report: (message: string) => void,
+  ) => Promise<ChatSessionLike>;
   private readonly login: ChatModelOptions["login"];
   private readonly clearAuth: () => Promise<void>;
   private readonly expand: (text: string) => Promise<Expansion>;
@@ -192,8 +198,13 @@ export class ChatModel {
     const generation = this.generation;
     let session: ChatSessionLike;
     try {
-      session = await this.openSession();
+      session = await this.openSession((message) => {
+        this.openProgress = message;
+        this.onChange();
+      });
+      this.openProgress = undefined;
     } catch (err) {
+      this.openProgress = undefined;
       if (generation !== this.generation) return; // stale: reset ran
       this.messages.push({ role: "error", text: this.describe(err) });
       this.fatal = err;
@@ -665,12 +676,17 @@ export class ChatModel {
     if (old !== undefined) await closeOrKill(old, this.closeTimeoutMs);
     this.current = undefined;
     try {
-      this.current = await this.openSession();
+      this.current = await this.openSession((message) => {
+        this.openProgress = message;
+        this.onChange();
+      });
+      this.openProgress = undefined;
       this.messages.push({ role: "separator", text: separator });
       this.fatal = undefined;
       this.status = "idle";
       this.drain();
     } catch (err) {
+      this.openProgress = undefined;
       this.messages.push({ role: "error", text: this.describe(err) });
       this.fatal = err;
       this.status = "dead";
