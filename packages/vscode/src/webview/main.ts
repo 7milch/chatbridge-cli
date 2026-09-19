@@ -34,7 +34,9 @@ function fitComposer(): void {
   const atBottom =
     history.scrollHeight - history.scrollTop - history.clientHeight < 2;
   input.style.height = "auto";
-  input.style.height = `${input.scrollHeight}px`;
+  // #input is box-sizing: border-box with a 1px border, so scrollHeight alone
+  // is 2px short of the border-inclusive height and leaves a scrollbar.
+  input.style.height = `${input.scrollHeight + input.offsetHeight - input.clientHeight}px`;
   if (atBottom) history.scrollTop = history.scrollHeight;
 }
 

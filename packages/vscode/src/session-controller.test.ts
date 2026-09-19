@@ -425,13 +425,11 @@ describe("SessionController", () => {
       closeTimeoutMs: 20,
       hints: { BLOCKED: 'Set the "acme.headless" setting to false.' },
     });
-    h.openError = new BlockedError(
-      'Blocked by "acme": challenge. Try --headful.',
-    );
+    h.openError = new BlockedError('Blocked by "acme": challenge.');
     await controller.send("x");
     expect(controller.getState().messages.at(-1)).toEqual({
       role: "error",
-      text: 'Blocked by "acme": challenge. Try --headful.\nSet the "acme.headless" setting to false.',
+      text: 'Blocked by "acme": challenge.\nSet the "acme.headless" setting to false.',
     });
     h.openError = new AuthRequiredError("no auth");
     await controller.retryLast();

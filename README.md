@@ -86,8 +86,11 @@ A derived CLI passes its own identity to `createCli`:
 createCli({
   name: "acme-ai",
   version: "2.4.0",            // shown by --version and in the startup banner
-  banner: { lines: ["Acme internal assistant", "Conversations are not stored."],
-            colors: ["#ff5f87", "#ffaf00"], mode: "gradient" }, // or plain string[]
+  banner: {
+    lines: ["Acme internal assistant", "Conversations are not stored."],
+    colors: ["#ff5f87", "#ffaf00"],
+    mode: "gradient",
+  }, // or plain string[]
   spinner: {                   // optional; unset fields keep the default
     frames: ["⠋", "⠙", "⠹", "⠸"],          // same display width each
     intervalMs: 80,

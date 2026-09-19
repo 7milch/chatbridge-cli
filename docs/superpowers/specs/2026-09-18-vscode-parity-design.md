@@ -206,8 +206,8 @@ available inside the TUI that ordering inverts, like the VSCode sidebar:
   `idle` — the same path as after a reset.
 - A failed open lands as it does after a failed reset: error entry, status
   `dead`, `fatal` set. For `AUTH_REQUIRED` / `AUTH_EXPIRED` the error entry
-  gets a second line `Type /login to log in.`; `BLOCKED` keeps core's
-  `--headful` hint; `BROWSER_UNAVAILABLE` says to run `npx playwright
+  gets a second line `Type /login to log in.`; for `BLOCKED`, `chat-model.ts`
+  appends the `--headful` hint itself; `BROWSER_UNAVAILABLE` says to run `npx playwright
   install chromium` (no in-TUI install in this milestone).
 - Quitting from `dead` still reports `fatal` and exits with its code, so
   scripts that start the TUI unauthenticated and quit still see 2.
