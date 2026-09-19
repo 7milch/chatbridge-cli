@@ -100,6 +100,22 @@ describe("runLogin", () => {
     expect(f.rt.saved).toBe(0);
   }, 1000);
 
+  test("an abort that lands while isLoggedIn returns true still rejects, nothing saved", async () => {
+    const f = fake();
+    const ac = new AbortController();
+    f.provider.isLoggedIn = async () => {
+      await new Promise((r) => setTimeout(r, 10));
+      ac.abort(); // lands before the call resolves
+      return true;
+    };
+    await expect(
+      runLogin(opts(f, { signal: ac.signal })),
+    ).rejects.toBeInstanceOf(LoginAbortedError);
+    expect(f.rt.saved).toBe(0);
+    expect(f.rt.killed).toBe(1);
+    expect(f.rt.closed).toBe(0);
+  }, 1000);
+
   test("an already-aborted signal rejects before launching", async () => {
     const f = fake();
     const ac = new AbortController();

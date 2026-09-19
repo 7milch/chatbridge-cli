@@ -97,6 +97,9 @@ export async function runLogin(opts: LoginOptions): Promise<void> {
         signal,
       );
     }
+    // A cancel that landed while the last isLoggedIn was in flight must
+    // win: the user asked to stop, so nothing is saved.
+    if (signal?.aborted) throw new LoginAbortedError();
     onProgress?.("✓ Login detected");
     await rt.saveAuthState();
     onProgress?.("✓ Session saved");
