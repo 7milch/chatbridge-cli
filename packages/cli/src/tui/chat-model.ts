@@ -531,9 +531,14 @@ export class ChatModel {
         // A second `/login` while one runs is a no-op that resolves at once;
         // it must not clear the tracking of the login still in flight.
         if (!this.pendingLogin) {
-          this.pendingLogin = login.finally(() => {
-            this.pendingLogin = undefined;
-          });
+          // The derived promise is only awaited by teardown, which may never
+          // run; swallowing here keeps a failed login from surfacing as an
+          // unhandled rejection. The dispatch still awaits `login` itself.
+          this.pendingLogin = login
+            .finally(() => {
+              this.pendingLogin = undefined;
+            })
+            .catch(() => undefined);
         }
         await login;
         return true;

@@ -1542,6 +1542,32 @@ describe("/login", () => {
     expect(model.messages.at(-1)).toEqual({ role: "error", text: "idp down" });
   });
 
+  test("a second /login leaves pendingLogin tracking the first one", async () => {
+    const gate = deferred<void>();
+    const model = await modelWith(fakeSession().session, {
+      login: () => gate.promise,
+      openSession: async () => fakeSession().session,
+      closeTimeoutMs: 20,
+    });
+    const first = model.submit("/login");
+    const tracked = model.pendingLogin;
+    expect(tracked).toBeDefined();
+    // The no-op second /login resolves at once; it must not take the slot.
+    await model.submit("/login");
+    expect(model.pendingLogin).toBe(tracked);
+    let settled = false;
+    void tracked?.then(() => {
+      settled = true;
+    });
+    await tick();
+    expect(settled).toBe(false);
+    gate.resolve();
+    await first;
+    await tracked;
+    expect(settled).toBe(true);
+    expect(model.pendingLogin).toBeUndefined();
+  });
+
   test("progress is exposed while the login runs and cleared after", async () => {
     const login = deferred<void>();
     const model = await modelWith(fakeSession().session, {

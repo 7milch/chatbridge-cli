@@ -196,10 +196,12 @@ export async function runInteractive(
     // Neither a shell command nor a login browser may outlive the TUI.
     model?.stopShell();
     model?.cancelLogin();
-    // The cancelled login kills its browser asynchronously; let it finish
-    // so the process does not exit with a Playwright connection open.
-    await model?.pendingLogin?.catch(() => undefined);
     view?.setStatus(CLOSING_STATUS);
+    // The cancelled login kills its browser asynchronously; let it finish so
+    // the process does not exit with a Playwright connection open. Under the
+    // same cap as the rest of teardown, and a timeout just falls through: the
+    // cancel already killed the browser, so there is nothing left to own.
+    await settleReset(model?.pendingLogin);
     // A reset in flight has already closed the old session and is about to
     // assign a new one; closing model.session now would leak that new browser
     // and its Playwright connection would keep the process alive. The same
