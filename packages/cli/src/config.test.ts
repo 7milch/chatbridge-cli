@@ -122,4 +122,44 @@ describe("loadConfig", () => {
     );
     expect(cfg).toEqual({ shell: { autoSend: false } });
   });
+
+  test("reads the open section", async () => {
+    writeFileSync(
+      setup(),
+      JSON.stringify({ open: { timeoutSec: 30, retries: 2 } }),
+    );
+    const cfg = await loadConfig({ configDir: "test-cli", baseDir });
+    expect(cfg.open).toEqual({ timeoutSec: 30, retries: 2 });
+  });
+
+  test("a partial open section keeps only the given keys", async () => {
+    writeFileSync(setup(), JSON.stringify({ open: { retries: 1 } }));
+    const cfg = await loadConfig({ configDir: "test-cli", baseDir });
+    expect(cfg.open).toEqual({ retries: 1 });
+  });
+
+  test.each([
+    [{ open: 5 }, '"open" must be an object'],
+    [
+      { open: { timeoutSec: "30" } },
+      '"open.timeoutSec" must be a positive number',
+    ],
+    [
+      { open: { timeoutSec: 0 } },
+      '"open.timeoutSec" must be a positive number',
+    ],
+    [
+      { open: { retries: -1 } },
+      '"open.retries" must be a non-negative integer',
+    ],
+    [
+      { open: { retries: 1.5 } },
+      '"open.retries" must be a non-negative integer',
+    ],
+  ])("rejects %j", async (doc, message) => {
+    writeFileSync(setup(), JSON.stringify(doc));
+    const p = loadConfig({ configDir: "test-cli", baseDir });
+    await expect(p).rejects.toBeInstanceOf(ChatBridgeError);
+    await expect(p).rejects.toThrow(message);
+  });
 });
