@@ -3,10 +3,15 @@ import {
   AuthRequiredError,
   BlockedError,
   BrowserUnavailableError,
+  type CommandInfo,
   InvalidStateError,
   LoginAbortedError,
+  type ParsedSlash,
+  type ProviderCommandResult,
   ResponseTimeoutError,
+  UrlHookError,
   closeOrKill,
+  commandNamesOf,
   helpText,
   parseSlashCommand,
   unknownCommandMessage,
@@ -35,6 +40,8 @@ import {
 /** What the model needs from a ChatSession; lets tests inject a fake. */
 export interface ChatSessionLike {
   send(prompt: string): Promise<string>;
+  /** Optional so older fakes keep working; the real ChatSession has it. */
+  runCommand?(name: string, args: string): Promise<ProviderCommandResult>;
   close(): Promise<void>;
   kill(): Promise<void>;
 }
@@ -109,6 +116,9 @@ export interface ChatModelOptions {
   runCommand?: (command: string, opts: RunOptions) => RunningCommand;
   /** Directory shell commands start in. Default: process.cwd(). */
   cwd?: string;
+  /** The provider's `/commands` (name and description); `/help` lists them
+   * and submit() recognises them. Default: none. */
+  commands?: readonly CommandInfo[];
 }
 
 /** Conversation state for the interactive UI. No OpenTUI dependency. */
@@ -167,6 +177,8 @@ export class ChatModel {
     opts: RunOptions,
   ) => RunningCommand;
   private readonly cwd: string;
+  private readonly commands: readonly CommandInfo[];
+  private readonly commandNames: ReadonlySet<string>;
 
   constructor(opts: ChatModelOptions) {
     this.openSession = opts.openSession;
@@ -178,6 +190,8 @@ export class ChatModel {
     this.shell = opts.shell ?? DEFAULT_SHELL_CONFIG;
     this.runCommand = opts.runCommand ?? runCommandDefault;
     this.cwd = opts.cwd ?? process.cwd();
+    this.commands = opts.commands ?? [];
+    this.commandNames = commandNamesOf({ commands: this.commands });
     // Last: openInitial may settle synchronously enough to touch the
     // fields above.
     this.ready = this.openInitial();
@@ -258,16 +272,19 @@ export class ChatModel {
     if (!prompt) {
       return false;
     }
-    // A command is never queued: it acts on the model itself, so it runs in
-    // whatever state the model is in.
-    const slash = parseSlashCommand(prompt);
-    if (slash) return this.runSlash(slash);
+    const slash = parseSlashCommand(prompt, this.commandNames);
+    // A built-in acts on the model itself, so it runs in whatever state the
+    // model is in. A provider command needs the page, so it waits its turn
+    // like a message.
+    if (slash && !("custom" in slash)) return this.runSlash(slash);
     if (this.status !== "idle") {
       this.queue.push(prompt);
       this.onChange();
       return true;
     }
-    return this.runTurn(prompt, false);
+    return slash
+      ? this.runCustom(slash.custom, slash.args, prompt)
+      : this.runTurn(prompt, false);
   }
 
   /** Whether a `/login` owns the model right now. A getter, not an inline
@@ -298,7 +315,14 @@ export class ChatModel {
   private drain(): void {
     const next = this.queue.shift();
     if (next === undefined) return;
-    void this.runTurn(next, true);
+    // A queued entry is always a message or a provider command: built-ins
+    // never queue.
+    const slash = parseSlashCommand(next, this.commandNames);
+    if (slash && "custom" in slash) {
+      void this.runCustom(slash.custom, slash.args, next);
+    } else {
+      void this.runTurn(next, true);
+    }
   }
 
   /** One turn. `fromQueue` selects what a MentionError does with the text:
@@ -317,7 +341,7 @@ export class ChatModel {
       const message = err instanceof Error ? err.message : String(err);
       this.messages.push({ role: "error", text: message });
       // A mention problem is the user's to fix; anything else is a bug.
-      if (err instanceof MentionError) {
+      if (err instanceof MentionError || err instanceof UrlHookError) {
         if (fromQueue) this.queue.unshift(prompt);
         this.settle("idle", false);
       } else {
@@ -499,7 +523,7 @@ export class ChatModel {
    * taken, false for an unknown command, which the view refills so the
    * user can fix the typo. */
   private async runSlash(
-    slash: NonNullable<ReturnType<typeof parseSlashCommand>>,
+    slash: Exclude<ParsedSlash, { custom: string }>,
   ): Promise<boolean> {
     if ("unknown" in slash) {
       this.messages.push({
@@ -512,22 +536,11 @@ export class ChatModel {
     if ("error" in slash) {
       this.messages.push({ role: "error", text: slash.error });
       this.onChange();
-      return true;
-    }
-    if ("custom" in slash) {
-      // No provider command dispatch is wired up yet (that lands with
-      // ChatSession.runCommand); this cli never passes a non-empty custom
-      // set to parseSlashCommand, so this branch is unreachable today.
-      this.messages.push({
-        role: "error",
-        text: unknownCommandMessage(slash.custom),
-      });
-      this.onChange();
       return false;
     }
     switch (slash.command) {
       case "help":
-        this.messages.push({ role: "help", text: helpText() });
+        this.messages.push({ role: "help", text: helpText(this.commands) });
         this.onChange();
         return true;
       case "new":
@@ -571,6 +584,62 @@ export class ChatModel {
         return true;
       }
     }
+  }
+
+  /** One provider `/command`, from `idle`. `typed` is the line as the user
+   * wrote it: it is what the history shows, whatever the command sends. */
+  private async runCustom(
+    name: string,
+    args: string,
+    typed: string,
+  ): Promise<boolean> {
+    const session = this.requireSession();
+    if (session.runCommand === undefined) {
+      this.messages.push({
+        role: "error",
+        text: `/${name} is not available in this session.`,
+      });
+      this.onChange();
+      return false;
+    }
+    this.status = "busy";
+    this.messages.push({ role: "user", text: typed });
+    this.onChange();
+    const generation = this.generation;
+    let result: ProviderCommandResult;
+    try {
+      result = await session.runCommand(name, args);
+    } catch (err) {
+      if (generation !== this.generation) return true; // stale: reset ran
+      this.messages.push({ role: "error", text: this.describe(err) });
+      // A timeout leaves the browser usable; anything else ends the session.
+      if (err instanceof ResponseTimeoutError) {
+        this.settle("idle");
+      } else {
+        this.fatal = err;
+        this.settle("dead");
+      }
+      this.onChange();
+      return true;
+    }
+    if (generation !== this.generation) return true; // stale: reset ran
+    if (result.kind === "show") {
+      this.messages.push({ role: "help", text: result.text });
+      this.settle("idle");
+      this.onChange();
+      return true;
+    }
+    // `send`: the rest of an ordinary turn. Held shell results ride along
+    // exactly as they do for a typed message.
+    let outgoing = result.prompt;
+    const carriesHeld = this.heldResults.length > 0;
+    if (carriesHeld) {
+      outgoing = [outgoing, ...this.heldResults.map(formatShellSection)].join(
+        "\n\n",
+      );
+    }
+    await this.sendPrompt(outgoing, carriesHeld);
+    return true;
   }
 
   /** `/login`. Ignored while one is already running: there is a single
