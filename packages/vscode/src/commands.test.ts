@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BrowserUnavailableError, LoginAbortedError } from "@chatbridge/core";
+import { SLASH_COMMANDS } from "@chatbridge/core/slash-commands";
 import { type CommandDeps, createCommands } from "./commands.js";
 import {
   type ChatSessionLike,
@@ -87,7 +88,7 @@ function fake(): Fake {
       return !f.busy;
     },
     markLoggedIn: () => f.log.push("markLoggedIn"),
-    pushHelp: (t: string) => f.log.push(`help:${t.split("\n")[0]}`),
+    pushHelp: (t: string) => f.log.push(`help:${t}`),
     addAttachment: (a) => {
       f.log.push(`attach:${a.path}:${a.bytes}`);
       return a.path.includes("toobig")
@@ -138,6 +139,18 @@ describe("commands", () => {
       "report:Opening browser...",
       "markLoggedIn",
     ]);
+  });
+
+  test("help pushes the slash-command listing into the history", () => {
+    const f = fake();
+    commands(f).help();
+    expect(f.log).toHaveLength(1);
+    const listing = f.log[0] ?? "";
+    expect(listing.startsWith("help:")).toBe(true);
+    for (const c of SLASH_COMMANDS) {
+      expect(listing).toContain(`/${c.name}`);
+      expect(listing).toContain(c.description);
+    }
   });
 
   test("a cancelled login is silent; another failure is shown", async () => {

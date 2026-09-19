@@ -23,7 +23,8 @@ export interface ChatViewHandlers {
   pasted(id: number, text: string): void;
 }
 
-const COMMAND_LIST = [
+/** Every command the webview may post; the bridge rejects the rest. */
+export const COMMAND_LIST = [
   "login",
   "logout",
   "newChat",

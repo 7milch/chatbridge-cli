@@ -87,6 +87,9 @@ export function createExtension(opts: CreateExtensionOptions) {
         takeBack: () => {
           const r = controller?.takeBack();
           if (!r) return;
+          // `takeBack()` has already emitted a `state` with the queue
+          // empty; the webview fills the composer from `tookBack` alone,
+          // so this arriving second does not matter.
           bridge.pushTookBack(r.entries);
           if (r.droppedAttachments > 0) {
             void vscode.window.showWarningMessage(

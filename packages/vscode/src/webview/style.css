@@ -93,6 +93,9 @@ body {
 #input {
   flex: 1;
   resize: none;
+  /* `height = scrollHeight` and the row-based max-height are only exact
+     when padding and border are inside the box. */
+  box-sizing: border-box;
   overflow-y: auto;
   line-height: 1.4;
   /* 8 rows + padding: beyond this the textarea scrolls internally. */

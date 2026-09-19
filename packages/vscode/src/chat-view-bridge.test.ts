@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { ChatViewBridge, type WebviewLike } from "./chat-view-bridge.js";
+import {
+  COMMAND_LIST,
+  ChatViewBridge,
+  type WebviewLike,
+} from "./chat-view-bridge.js";
 import type { State, ToHost, ToWebview, WebviewCommand } from "./protocol.js";
 
 function fakeWebview() {
@@ -205,15 +209,20 @@ describe("ChatViewBridge", () => {
   });
 
   test("every WebviewCommand name is accepted", () => {
-    const names: WebviewCommand[] = [
-      "login",
-      "logout",
-      "newChat",
-      "installBrowser",
-      "reopen",
-      "help",
-    ];
-    for (const name of names) {
+    // Compile-time guard: a new WebviewCommand must be listed here, and
+    // COMMAND_LIST is what the loop below exercises.
+    const _all: Record<WebviewCommand, true> = {
+      login: true,
+      logout: true,
+      newChat: true,
+      installBrowser: true,
+      reopen: true,
+      help: true,
+    };
+    expect(new Set(COMMAND_LIST)).toEqual(
+      new Set(Object.keys(_all) as WebviewCommand[]),
+    );
+    for (const name of COMMAND_LIST) {
       const calls: string[] = [];
       const bridge = new ChatViewBridge(() => state, {
         send() {},
