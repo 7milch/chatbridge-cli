@@ -46,6 +46,40 @@ export function createDummyProvider(baseUrl: string): Provider {
         ? "challenge page"
         : undefined;
     },
+
+    commands: [
+      {
+        name: "title",
+        description: "Show the chat page title",
+        async run(page) {
+          return { kind: "show", text: await page.title() };
+        },
+      },
+      {
+        name: "shout",
+        description: "Send the arguments in upper case",
+        async run(_page, args) {
+          return { kind: "send", prompt: args.toUpperCase() };
+        },
+      },
+    ],
+
+    urlHooks: [
+      {
+        // Pages of the dummy chat itself, e.g. `${baseUrl}/login`.
+        match: (url) => url.startsWith(baseUrl),
+        async resolve(url) {
+          // A real provider would run a script or call an API here; the
+          // framework never fetches anything itself.
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`${res.status} from dummy chat`);
+          return {
+            label: `Dummy: ${new URL(url).pathname}`,
+            content: await res.text(),
+          };
+        },
+      },
+    ],
   });
 }
 
