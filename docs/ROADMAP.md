@@ -185,7 +185,7 @@ inside it. Dropped files and pasted editor selections become attachment
 chips in the webview. Ships as a 0.8.x patch.
 Spec: `docs/superpowers/specs/2026-09-18-vscode-parity-design.md`.
 
-### 13. v0.8.2 follow-ups and small features — in progress (issue #69)
+### 13. v0.8.2 follow-ups and small features — done (issue #69)
 
 Bundles the deferred review follow-ups (#67, #59), the auto-resizing VSCode
 composer (#68) and TUI banner gradients (#65). Ships as a 0.8.x patch.

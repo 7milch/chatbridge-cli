@@ -141,7 +141,9 @@ ui: {
 ```
 
 Activation throws a message listing missing `contributes` IDs
-when the manifest and `id` disagree. Verify by hand: F5 in VSCode → Log in
+when the manifest and `id` disagree. Vendor extensions on
+`@chatbridge/vscode` >= 0.8.1 must also declare `<id>.reopen` (and should
+bind it to Ctrl+R); a manifest copied from an older example lacks it. Verify by hand: F5 in VSCode → Log in
 → send → right-click a selection → send → New Chat → Log out.
 
 ### Building the `.vsix`
