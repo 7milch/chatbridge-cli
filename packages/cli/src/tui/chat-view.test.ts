@@ -356,6 +356,20 @@ describe("ChatView", () => {
     expect(await t.frameWith("▹ second")).toContain("▹ second");
   });
 
+  test("the status row shows the open's retry progress when it reports one", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = () => resolve();
+    });
+    const t = await setup({ openGate: gate });
+    expect(t.model.status).toBe("opening");
+    t.model.openProgress = "Opening browser... (attempt 2/3)";
+    t.model.onChange();
+    expect(await t.frameWith("(attempt 2/3)")).toContain("(attempt 2/3)");
+    release();
+    await t.model.ready;
+  });
+
   test("the status row says the browser is opening until the open lands", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {

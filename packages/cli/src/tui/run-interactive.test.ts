@@ -528,9 +528,10 @@ describe("runInteractive", () => {
     frame = await waitFor(t, "── reopened ──");
     try {
       expect(frame).toContain("── reopened ──");
-      // Only the pre-UI open reported; the reopen's would land on the TUI.
+      // Opening messages go to the model's status row, never to stderr:
+      // neither the first open nor the reopen may reach onProgress.
       expect(progress.filter((m) => m === "Opening browser...")).toHaveLength(
-        1,
+        0,
       );
     } finally {
       t.mockInput.pressKey("c", { ctrl: true });

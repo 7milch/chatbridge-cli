@@ -1568,6 +1568,38 @@ describe("/login", () => {
     expect(model.pendingLogin).toBeUndefined();
   });
 
+  test("open progress is exposed while the open runs and cleared after", async () => {
+    const open = deferred<ChatSessionLike>();
+    const s = fakeSession();
+    const model = new ChatModel({
+      openSession: (report) => {
+        report("Opening browser... (attempt 2/2)");
+        return open.promise;
+      },
+      login: async () => {},
+      clearAuth: async () => {},
+    });
+    expect(model.status).toBe("opening");
+    expect(model.openProgress).toBe("Opening browser... (attempt 2/2)");
+    open.resolve(s.session);
+    await model.ready;
+    expect(model.openProgress).toBeUndefined();
+  });
+
+  test("open progress is cleared when the open fails", async () => {
+    const model = new ChatModel({
+      openSession: async (report) => {
+        report("Opening browser... (attempt 2/2)");
+        throw new Error("boom");
+      },
+      login: async () => {},
+      clearAuth: async () => {},
+    });
+    await model.ready;
+    expect(model.status).toBe("dead");
+    expect(model.openProgress).toBeUndefined();
+  });
+
   test("progress is exposed while the login runs and cleared after", async () => {
     const login = deferred<void>();
     const model = await modelWith(fakeSession().session, {

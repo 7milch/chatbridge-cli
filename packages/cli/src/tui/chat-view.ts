@@ -365,11 +365,17 @@ export class ChatView {
         break;
       case "resetting":
         this.stopSpinner();
-        this.status.content = styled(theme.muted(RESETTING_STATUS));
+        // A retrying open reports the attempt; show it instead of the
+        // static line so the wait is not silent.
+        this.status.content = styled(
+          theme.muted(this.model.openProgress ?? RESETTING_STATUS),
+        );
         break;
       case "opening":
         this.stopSpinner();
-        this.status.content = styled(theme.muted(OPENING_STATUS));
+        this.status.content = styled(
+          theme.muted(this.model.openProgress ?? OPENING_STATUS),
+        );
         break;
       case "logging-in": {
         this.stopSpinner();
