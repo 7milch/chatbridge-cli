@@ -10,11 +10,7 @@ import type {
 } from "../shell/run-command.js";
 import type { ShellConfig } from "../shell/shell-config.js";
 import { resolveBanner } from "./banner.js";
-import {
-  ChatModel,
-  type ChatModelOptions,
-  type ChatSessionLike,
-} from "./chat-model.js";
+import type { ChatModelOptions, ChatSessionLike } from "./chat-model.js";
 import {
   ChatView,
   DEAD_GUIDE,
@@ -32,37 +28,8 @@ import {
 } from "./chat-view.js";
 import { POPUP_HINT } from "./mention-popup.js";
 import { type ResolvedSpinner, resolveSpinner } from "./spinner.js";
+import { modelWith } from "./test-helpers.js";
 import { styled, theme } from "./theme.js";
-
-/** Builds a model whose first open resolves to `session` and whose reopens
- * go to `opts.openSession`, then waits for the eager open so the model
- * starts idle. */
-async function modelWith(
-  session: ChatSessionLike,
-  opts: Partial<ChatModelOptions> = {},
-  gate?: Promise<void>,
-): Promise<ChatModel> {
-  const reopen = opts.openSession;
-  let opened = false;
-  const model = new ChatModel({
-    login: async () => {},
-    clearAuth: async () => {},
-    ...opts,
-    openSession: async () => {
-      if (!opened) {
-        opened = true;
-        if (gate) await gate;
-        return session;
-      }
-      if (!reopen) throw new Error("not expected");
-      return reopen();
-    },
-  });
-  // A gated first open leaves the model `opening`, which is the point of
-  // the tests that pass one.
-  if (!gate) await model.ready;
-  return model;
-}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

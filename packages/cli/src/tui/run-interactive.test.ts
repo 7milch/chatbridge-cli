@@ -5,11 +5,6 @@ import type { AuthStore } from "@chatbridge/runtime";
 import { createTestRenderer } from "@opentui/core/testing";
 import { FileIndex } from "../mentions/file-index.js";
 import type { ShellResult } from "../shell/run-command.js";
-import {
-  ChatModel,
-  type ChatModelOptions,
-  type ChatSessionLike,
-} from "./chat-model.js";
 import { ChatView } from "./chat-view.js";
 import {
   runInteractive,
@@ -17,32 +12,7 @@ import {
   waitForQuit,
 } from "./run-interactive.js";
 import { resolveSpinner } from "./spinner.js";
-
-/** Builds a model whose first open resolves to `session` and whose reopens
- * go to `opts.openSession`, then waits for the eager open so the model
- * starts idle. */
-async function modelWith(
-  session: ChatSessionLike,
-  opts: Partial<ChatModelOptions> = {},
-): Promise<ChatModel> {
-  const reopen = opts.openSession;
-  let opened = false;
-  const model = new ChatModel({
-    login: async () => {},
-    clearAuth: async () => {},
-    ...opts,
-    openSession: async () => {
-      if (!opened) {
-        opened = true;
-        return session;
-      }
-      if (!reopen) throw new Error("not expected");
-      return reopen();
-    },
-  });
-  await model.ready;
-  return model;
-}
+import { modelWith } from "./test-helpers.js";
 
 describe("waitForQuit", () => {
   test("resolves when the renderer is destroyed from outside", async () => {

@@ -12,11 +12,8 @@ import type {
   RunningCommand,
   ShellResult,
 } from "../shell/run-command.js";
-import {
-  ChatModel,
-  type ChatModelOptions,
-  type ChatSessionLike,
-} from "./chat-model.js";
+import { ChatModel, type ChatSessionLike } from "./chat-model.js";
+import { modelWith } from "./test-helpers.js";
 
 function deferred<T>() {
   let resolve!: (v: T) => void;
@@ -65,32 +62,6 @@ const noReopen = {
     throw new Error("not expected");
   },
 };
-
-/** Builds a model whose first open resolves to `session` and whose reopens
- * go to `opts.openSession` (a reset without one is a test bug), then waits
- * for the eager open so the model starts idle. */
-async function modelWith(
-  session: ChatSessionLike,
-  opts: Partial<ChatModelOptions> = {},
-): Promise<ChatModel> {
-  const reopen = opts.openSession;
-  let opened = false;
-  const model = new ChatModel({
-    login: async () => {},
-    clearAuth: async () => {},
-    ...opts,
-    openSession: async () => {
-      if (!opened) {
-        opened = true;
-        return session;
-      }
-      if (!reopen) throw new Error("not expected");
-      return reopen();
-    },
-  });
-  await model.ready;
-  return model;
-}
 
 /** A model over a first session plus a queue of sessions for reopens. */
 async function harness(opts: { closeTimeoutMs?: number } = {}) {
