@@ -33,6 +33,14 @@ function tick() {
   return new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
+/** The nth entry of a list of deferreds, failing loudly when the code under
+ * test never created it (Biome forbids `!`, and `?.` would pass silently). */
+function nth<T>(list: readonly T[], i: number): T {
+  const entry = list[i];
+  if (entry === undefined) throw new Error(`no entry at index ${i}`);
+  return entry;
+}
+
 /** A fake session. `label`, when given, prefixes recorded calls so a test
  * over two sessions can tell which one was sent to. */
 function fakeSession(label = "") {
@@ -1762,7 +1770,7 @@ describe("provider commands", () => {
     await tick();
     expect(model.status).toBe("busy");
     expect(s.commands).toEqual([{ name: "model", args: "" }]);
-    s.commandResults[0]?.resolve({ kind: "show", text: "gpt-x" });
+    nth(s.commandResults, 0).resolve({ kind: "show", text: "gpt-x" });
     expect(await p).toBe(true);
     expect(model.messages).toEqual([
       { role: "user", text: "/model" },
@@ -1779,13 +1787,13 @@ describe("provider commands", () => {
     const p = model.submit("/summarize the doc");
     await tick();
     expect(s.commands).toEqual([{ name: "summarize", args: "the doc" }]);
-    s.commandResults[0]?.resolve({
+    nth(s.commandResults, 0).resolve({
       kind: "send",
       prompt: "Summarize: the doc",
     });
     await tick();
     expect(s.calls).toEqual(["Summarize: the doc"]);
-    s.replies[0]?.resolve("done");
+    nth(s.replies, 0).resolve("done");
     expect(await p).toBe(true);
     expect(model.messages).toEqual([
       { role: "user", text: "/summarize the doc" },
@@ -1806,7 +1814,7 @@ describe("provider commands", () => {
     await first;
     await tick();
     expect(s.commands).toEqual([{ name: "model", args: "" }]);
-    s.commandResults[0]?.resolve({ kind: "show", text: "m" });
+    nth(s.commandResults, 0).resolve({ kind: "show", text: "m" });
     await tick();
     expect(model.messages.at(-1)).toEqual({ role: "help", text: "m" });
   });
@@ -1816,16 +1824,42 @@ describe("provider commands", () => {
     const model = await modelWith(s.session, { ...noReopen, commands });
     let p = model.submit("/model");
     await tick();
-    s.commandResults[0]?.reject(new ResponseTimeoutError("slow"));
+    nth(s.commandResults, 0).reject(new ResponseTimeoutError("slow"));
     await p;
     expect(model.messages.at(-1)).toEqual({ role: "error", text: "slow" });
     expect(model.status).toBe("idle");
     p = model.submit("/model");
     await tick();
-    s.commandResults[1]?.reject(new Error("page gone"));
+    nth(s.commandResults, 1).reject(new Error("page gone"));
     await p;
     expect(model.status).toBe("dead");
     expect(model.messages.at(-1)).toEqual({ role: "error", text: "page gone" });
+  });
+
+  test("a `send` carries the held shell results, released with the reply", async () => {
+    const s = fakeSession();
+    const runner = fakeRunner();
+    const model = await modelWith(s.session, {
+      ...noReopen,
+      commands,
+      runCommand: runner.runCommand,
+      shell: { leadIn: "x", autoSend: false },
+    });
+    const shell = model.runShell("ls");
+    await tick();
+    runner.finish();
+    await shell;
+    expect(model.heldResults).toHaveLength(1);
+
+    const p = model.submit("/summarize x");
+    await tick();
+    nth(s.commandResults, 0).resolve({ kind: "send", prompt: "Summarize: x" });
+    await tick();
+    expect(s.calls[0]).toBe("Summarize: x\n\n### $ ls\n```\n```");
+    nth(s.replies, 0).resolve("ok");
+    await p;
+    expect(model.heldResults).toEqual([]);
+    expect(model.messages[0]?.held).toBe(false);
   });
 
   test("a session without runCommand reports the command as unavailable", async () => {

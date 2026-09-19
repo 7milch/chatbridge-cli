@@ -283,7 +283,7 @@ export class ChatModel {
       return true;
     }
     return slash
-      ? this.runCustom(slash.custom, slash.args, prompt)
+      ? this.runCustom(slash.custom, slash.args, prompt, false)
       : this.runTurn(prompt, false);
   }
 
@@ -319,10 +319,25 @@ export class ChatModel {
     // never queue.
     const slash = parseSlashCommand(next, this.commandNames);
     if (slash && "custom" in slash) {
-      void this.runCustom(slash.custom, slash.args, next);
+      void this.runCustom(slash.custom, slash.args, next, true);
     } else {
       void this.runTurn(next, true);
     }
+  }
+
+  /** Appends the held shell results to an outgoing prompt. They ride along
+   * but are released only when the reply arrives: a timeout returns to idle
+   * for a retry, and that retry must carry them again. */
+  private withHeld(prompt: string): { outgoing: string; carriesHeld: boolean } {
+    if (this.heldResults.length === 0) {
+      return { outgoing: prompt, carriesHeld: false };
+    }
+    return {
+      outgoing: [prompt, ...this.heldResults.map(formatShellSection)].join(
+        "\n\n",
+      ),
+      carriesHeld: true,
+    };
   }
 
   /** One turn. `fromQueue` selects what a MentionError does with the text:
@@ -356,16 +371,7 @@ export class ChatModel {
       message.attachments = expansion.attachments;
     }
     this.messages.push(message);
-    let outgoing = expansion.prompt;
-    // The held results ride along but are released only when the reply
-    // arrives: a timeout returns to idle for a retry, and that retry must
-    // carry them again.
-    const carriesHeld = this.heldResults.length > 0;
-    if (carriesHeld) {
-      outgoing = [outgoing, ...this.heldResults.map(formatShellSection)].join(
-        "\n\n",
-      );
-    }
+    const { outgoing, carriesHeld } = this.withHeld(expansion.prompt);
     this.onChange();
     await this.sendPrompt(outgoing, carriesHeld);
     return true;
@@ -587,11 +593,14 @@ export class ChatModel {
   }
 
   /** One provider `/command`, from `idle`. `typed` is the line as the user
-   * wrote it: it is what the history shows, whatever the command sends. */
+   * wrote it: it is what the history shows, whatever the command sends.
+   * `fromQueue` mirrors runTurn: a dequeued line the session cannot run goes
+   * back to the front of the queue instead of being dropped. */
   private async runCustom(
     name: string,
     args: string,
     typed: string,
+    fromQueue: boolean,
   ): Promise<boolean> {
     const session = this.requireSession();
     if (session.runCommand === undefined) {
@@ -599,6 +608,7 @@ export class ChatModel {
         role: "error",
         text: `/${name} is not available in this session.`,
       });
+      if (fromQueue) this.queue.unshift(typed);
       this.onChange();
       return false;
     }
@@ -631,13 +641,7 @@ export class ChatModel {
     }
     // `send`: the rest of an ordinary turn. Held shell results ride along
     // exactly as they do for a typed message.
-    let outgoing = result.prompt;
-    const carriesHeld = this.heldResults.length > 0;
-    if (carriesHeld) {
-      outgoing = [outgoing, ...this.heldResults.map(formatShellSection)].join(
-        "\n\n",
-      );
-    }
+    const { outgoing, carriesHeld } = this.withHeld(result.prompt);
     await this.sendPrompt(outgoing, carriesHeld);
     return true;
   }
