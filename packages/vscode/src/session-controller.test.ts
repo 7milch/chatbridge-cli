@@ -12,6 +12,7 @@ import {
 } from "@chatbridge/core";
 import {
   type ChatSessionLike,
+  REOPENED_SEPARATOR,
   SessionController,
   type SessionControllerOptions,
 } from "./session-controller.js";
@@ -970,6 +971,7 @@ describe("URL hooks", () => {
         throw new UrlHookError(["https://w/x: 403"]);
       },
     });
+    h.controller.addAttachment({ path: "a.txt", bytes: 1, content: "a" });
     const r = await h.controller.send("https://w/x");
     expect(r).toEqual({
       ok: false,
@@ -978,8 +980,36 @@ describe("URL hooks", () => {
     });
     const s = h.controller.getState();
     expect(s.messages).toEqual([{ role: "error", text: "https://w/x: 403" }]);
+    expect(s.pendingAttachments).toEqual([{ path: "a.txt", bytes: 1 }]);
     expect(s.status).toBe("closed");
     expect(h.opens).toBe(0);
     expect(h.sent).toEqual([]);
+  });
+
+  test("a reopen during URL expansion drops the turn instead of opening a second browser", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const h = harness({
+      expandUrls: async () => {
+        await gate;
+        return [];
+      },
+    });
+    const p = h.controller.send("a");
+    await settle();
+    await h.controller.reopen();
+    expect(h.opens).toBe(1);
+    release();
+    expect(await p).toEqual({ ok: true });
+    await settle();
+    expect(h.opens).toBe(1);
+    expect(h.sent).toEqual([]);
+    const s = h.controller.getState();
+    expect(s.status).toBe("idle");
+    expect(s.messages).toEqual([
+      { role: "separator", text: REOPENED_SEPARATOR },
+    ]);
   });
 });

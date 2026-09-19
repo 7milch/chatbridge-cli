@@ -212,15 +212,22 @@ export class SessionController {
   /** Pushes the user entry and runs the turn (or the command). Shared by
    * send, runCommand and drain. */
   private async startTurn(turn: QueuedTurn): Promise<SendResult> {
+    // URL expansion is a network wait; a reopen or a close during it makes
+    // this turn stale, and it must not open a browser of its own.
+    const generation = this.generation;
     if (turn.command) {
       this.push({ role: "user", text: turn.text, attachments: [] });
-      return this.runProviderCommand(turn.command);
+      return this.runProviderCommand(turn.command, generation);
     }
     let attachments = turn.attachments;
     if (this.opts.expandUrls) {
       this.expanding = true;
       try {
         const urls = await this.opts.expandUrls(turn.text);
+        if (generation !== this.generation) {
+          this.expanding = false;
+          return { ok: true }; // stale: the reopen/close owns the state now
+        }
         attachments = [
           ...attachments,
           ...urls.map((u) => ({
@@ -233,7 +240,12 @@ export class SessionController {
         if (!(err instanceof UrlHookError)) throw err;
         // The user's to fix: report, send nothing, leave the status alone.
         const message = err.message;
+        // Cleared here rather than only in `finally`, which runs after the
+        // push and the drain below: both must see the turn released.
         this.expanding = false;
+        // The composer was emptied by `send`; give the attachments back so
+        // the user only has to re-type the text.
+        this.pending = [...turn.attachments, ...this.pending];
         this.push({ role: "error", text: message });
         // Nothing else will run the entries that queued behind this one.
         this.drain();
@@ -254,7 +266,7 @@ export class SessionController {
       attachments: attachments.map(({ path, bytes }) => ({ path, bytes })),
     });
     this.lastPrompt = prompt;
-    return this.runTurn(prompt);
+    return this.runTurn(prompt, generation);
   }
 
   /** A provider `/command` from the webview. Queued like a message when a
@@ -277,12 +289,11 @@ export class SessionController {
 
   /** Runs the command on the session (opening one lazily, like a turn).
    * `show` prints; `send` continues as an ordinary turn with the prompt. */
-  private async runProviderCommand(command: {
-    name: string;
-    args: string;
-  }): Promise<SendResult> {
+  private async runProviderCommand(
+    command: { name: string; args: string },
+    generation: number,
+  ): Promise<SendResult> {
     this.lastError = undefined;
-    const generation = this.generation;
     this.claimTurn();
     try {
       const session = await this.ensureSession(generation);
@@ -302,7 +313,7 @@ export class SessionController {
         return { ok: true };
       }
       this.lastPrompt = result.prompt;
-      return this.runTurn(result.prompt);
+      return this.runTurn(result.prompt, generation);
     } catch (err) {
       if (generation !== this.generation) return { ok: true }; // stale
       return this.fail(err);
@@ -398,15 +409,17 @@ export class SessionController {
     this.lastError = undefined;
     if (this.status === "dead") this.status = "closed";
     this.emit();
-    return this.runTurn(this.lastPrompt);
+    return this.runTurn(this.lastPrompt, this.generation);
   }
 
-  private async runTurn(prompt: string): Promise<SendResult> {
+  private async runTurn(
+    prompt: string,
+    generation: number,
+  ): Promise<SendResult> {
     // A new turn supersedes whatever killed the previous one: a stale
     // `lastError` would keep the webview's error banner up after a
     // successful send from `dead`.
     this.lastError = undefined;
-    const generation = this.generation;
     this.claimTurn();
     try {
       const session = await this.ensureSession(generation);

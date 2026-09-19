@@ -81,6 +81,8 @@ export function createExtension(opts: CreateExtensionOptions) {
     );
     context.subscriptions.push(output, statusBar);
 
+    const commands = commandInfoOf(opts.provider);
+
     const bridge = new ChatViewBridge(
       () => (controller as SessionController).getState(),
       {
@@ -181,7 +183,7 @@ export function createExtension(opts: CreateExtensionOptions) {
         return { cliPath };
       },
       clearAuth: () => authStore.clear(),
-      commands: commandInfoOf(opts.provider),
+      commands,
     });
 
     context.subscriptions.push(
@@ -192,7 +194,7 @@ export function createExtension(opts: CreateExtensionOptions) {
           opts.displayName,
           bridge,
           uiConfig,
-          commandInfoOf(opts.provider),
+          commands,
         ),
       ),
     );
