@@ -23,7 +23,7 @@ every branch and needs no commit to change.
 |---|---|
 | The milestone in flight and what it bundles | [Open milestones](https://github.com/7milch/chatbridge-cli/milestones) |
 | Unscheduled ideas | Issues labelled [`backlog`](https://github.com/7milch/chatbridge-cli/issues?q=is%3Aissue+is%3Aopen+label%3Abacklog) |
-| Priority and progress | The project board (private for now) |
+| Priority and progress | [Project board](https://github.com/users/7milch/projects/1) (private, so the link 404s for anyone else) |
 | Long-term memory across sessions | The issue thread, via `gh issue comment` |
 | What shipped in each version | [Releases](https://github.com/7milch/chatbridge-cli/releases), generated at publish time from the merged pull requests |
 
