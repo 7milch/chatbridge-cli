@@ -527,10 +527,14 @@ export class ChatModel {
         return true;
       }
       case "login": {
-        const login = this.runLogin().finally(() => {
-          this.pendingLogin = undefined;
-        });
-        this.pendingLogin = login;
+        const login = this.runLogin();
+        // A second `/login` while one runs is a no-op that resolves at once;
+        // it must not clear the tracking of the login still in flight.
+        if (!this.pendingLogin) {
+          this.pendingLogin = login.finally(() => {
+            this.pendingLogin = undefined;
+          });
+        }
         await login;
         return true;
       }

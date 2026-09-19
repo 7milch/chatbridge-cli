@@ -436,10 +436,9 @@ describe("runInteractive", () => {
       createRenderer: async () => t.renderer,
       index: FileIndex.fromPaths([]),
     });
-    let frame = "";
-    frame = await waitFor(t, "Ctrl+R reopen");
+    await waitFor(t, "Ctrl+R reopen");
     t.mockInput.pressKey("r", { ctrl: true });
-    frame = await waitFor(t, "── reopened ──");
+    const frame = await waitFor(t, "── reopened ──");
     try {
       expect(frame).toContain("── reopened ──");
       expect(s.launches).toHaveLength(2);
@@ -464,8 +463,7 @@ describe("runInteractive", () => {
       createRenderer: async () => t.renderer,
       index: FileIndex.fromPaths([]),
     });
-    let frame = "";
-    frame = await waitFor(t, "Ctrl+R reopen");
+    const frame = await waitFor(t, "Ctrl+R reopen");
     t.mockInput.pressKey("r", { ctrl: true });
     // The second launch has started and is parked on the gate.
     for (let i = 0; i < 50 && s.launches.length < 2; i++) {
@@ -500,8 +498,7 @@ describe("runInteractive", () => {
       resolved = true;
       return r;
     });
-    let frame = "";
-    frame = await waitFor(t, "Ctrl+R reopen");
+    const frame = await waitFor(t, "Ctrl+R reopen");
     // Nothing from close() yet, and nothing may be printed over the live TUI.
     expect(progress.some((m) => m.includes("Could not save auth state"))).toBe(
       false,
@@ -550,8 +547,7 @@ describe("runInteractive", () => {
       createRenderer: async () => t.renderer,
       index: FileIndex.fromPaths([]),
     });
-    let frame = "";
-    frame = await waitFor(t, "not logged in");
+    const frame = await waitFor(t, "not logged in");
     try {
       // The UI came up despite the failure, and says how to fix it.
       expect(frame).toContain("not logged in");
