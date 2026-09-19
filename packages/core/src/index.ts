@@ -54,3 +54,12 @@ export {
   parseSlashCommand,
   unknownCommandMessage,
 } from "./slash-commands.js";
+export {
+  type ResolvedUrl,
+  type UrlExpansion,
+  type UrlHookOptions,
+  UrlHookError,
+  expandUrlHooks,
+  findUrls,
+  resolveUrlHooks,
+} from "./expand-url-hooks.js";
