@@ -11,6 +11,7 @@ import { type CliConfig, configPath, loadConfig } from "./config.js";
 import { describeError, exitCodeFor } from "./exit-codes.js";
 import { resolveProvider } from "./resolve-provider.js";
 import { type ShellConfig, resolveShellConfig } from "./shell/shell-config.js";
+import { type BannerOptions, validateBanner } from "./tui/banner-options.js";
 import { supportsInteractive } from "./tui/runtime-check.js";
 import type { SpinnerOptions } from "./tui/spinner.js";
 
@@ -19,9 +20,10 @@ export interface CreateCliOptions {
   name: string;
   /** Shown by --version and in the interactive startup banner. */
   version?: string;
-  /** Interactive startup banner, one element per row; replaces the default
-   * (name, version and a one-line hint). Used verbatim. */
-  banner?: string[];
+  /** Interactive startup banner: plain lines (all dim), or `{ lines,
+   * colors?, mode? }` to colour rows, cells or a vertical gradient.
+   * Replaces the default (name, version and a one-line hint). */
+  banner?: string[] | BannerOptions;
   /** Busy-status spinner shown while a turn is in flight, in the style of
    * `banner`; fields not set keep their default. Frames must share a
    * display width. */
@@ -65,6 +67,7 @@ function isParseArgsError(err: unknown): err is Error & { code: string } {
 }
 
 export function createCli(opts: CreateCliOptions) {
+  validateBanner(opts.banner);
   const configDir = opts.configDir ?? opts.name;
   const location = { configDir, baseDir: opts.baseDir };
 

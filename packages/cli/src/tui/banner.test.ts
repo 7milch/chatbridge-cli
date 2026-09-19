@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { TextAttributes } from "@opentui/core";
-import { resolveBanner } from "./banner.js";
+import { RGBA, TextAttributes } from "@opentui/core";
+import { bannerColorAt, resolveBanner, validateBanner } from "./banner.js";
 
 const text = (lines: ReturnType<typeof resolveBanner>) =>
   lines.map((l) => l.chunks.map((c) => c.text).join(""));
@@ -51,5 +51,103 @@ describe("resolveBanner", () => {
     for (const l of lines) {
       expect(l.chunks[0]?.attributes).toBe(TextAttributes.DIM);
     }
+  });
+});
+
+describe("bannerColorAt", () => {
+  test("per-line cycles by row", () => {
+    const spec = { rows: 3, colors: [1, 2], mode: "per-line" as const };
+    expect([0, 1, 2].map((r) => bannerColorAt(r, 5, spec))).toEqual([1, 2, 1]);
+  });
+  test("per-char cycles diagonally", () => {
+    const spec = {
+      rows: 2,
+      colors: ["#a", "#b", "#c"],
+      mode: "per-char" as const,
+    };
+    expect(bannerColorAt(0, 0, spec)).toBe("#a");
+    expect(bannerColorAt(0, 1, spec)).toBe("#b");
+    expect(bannerColorAt(1, 0, spec)).toBe("#b");
+    expect(bannerColorAt(1, 2, spec)).toBe("#a");
+  });
+  test("gradient interpolates down the rows", () => {
+    const spec = {
+      rows: 3,
+      colors: ["#000000", "#ffffff"],
+      mode: "gradient" as const,
+    };
+    expect(bannerColorAt(0, 0, spec)).toBe("#000000");
+    expect(bannerColorAt(1, 9, spec)).toBe("#808080");
+    expect(bannerColorAt(2, 0, spec)).toBe("#ffffff");
+  });
+  test("gradient over three stops and a single row", () => {
+    const spec = {
+      rows: 5,
+      colors: ["#000000", "#ffffff", "#000000"],
+      mode: "gradient" as const,
+    };
+    expect(bannerColorAt(2, 0, spec)).toBe("#ffffff");
+    expect(bannerColorAt(0, 0, { ...spec, rows: 1 })).toBe("#000000");
+  });
+});
+
+describe("validateBanner", () => {
+  test("plain lines and a colourless object pass", () => {
+    expect(() => validateBanner(["a"])).not.toThrow();
+    expect(() => validateBanner({ lines: ["a"] })).not.toThrow();
+    expect(() => validateBanner(undefined)).not.toThrow();
+  });
+  test("gradient needs two or more hex colours", () => {
+    expect(() =>
+      validateBanner({ lines: ["a"], colors: ["#000000"], mode: "gradient" }),
+    ).toThrow(/banner.colors/);
+    expect(() =>
+      validateBanner({
+        lines: ["a"],
+        colors: ["#000000", 4],
+        mode: "gradient",
+      }),
+    ).toThrow(/hex/);
+  });
+  test("per-line and per-char need at least one colour", () => {
+    expect(() =>
+      validateBanner({ lines: ["a"], colors: [], mode: "per-char" }),
+    ).toThrow(/banner.colors/);
+  });
+});
+
+describe("resolveBanner with colours", () => {
+  test("per-line: one chunk per line in the row's colour", () => {
+    const lines = resolveBanner({
+      name: "x",
+      providerName: "p",
+      banner: { lines: ["ab", "cd"], colors: ["#ff0000", "#00ff00"] },
+    });
+    expect(text(lines)).toEqual(["ab", "cd"]);
+    expect(lines[0]?.chunks).toHaveLength(1);
+    expect(lines[0]?.chunks[0]?.fg).toEqual(RGBA.fromHex("#ff0000"));
+    expect(lines[1]?.chunks[0]?.fg).toEqual(RGBA.fromHex("#00ff00"));
+  });
+  test("per-char: adjacent cells of one colour share a chunk", () => {
+    const lines = resolveBanner({
+      name: "x",
+      providerName: "p",
+      banner: { lines: ["abc"], colors: [1, 2], mode: "per-char" },
+    });
+    expect(lines[0]?.chunks.map((c) => c.text)).toEqual(["a", "b", "c"]);
+    const wide = resolveBanner({
+      name: "x",
+      providerName: "p",
+      banner: { lines: ["abcd"], colors: [1], mode: "per-char" },
+    });
+    expect(wide[0]?.chunks).toHaveLength(1);
+  });
+  test("an empty line yields one empty chunk", () => {
+    const lines = resolveBanner({
+      name: "x",
+      providerName: "p",
+      banner: { lines: [""], colors: [1], mode: "per-char" },
+    });
+    expect(text(lines)).toEqual([""]);
   });
 });

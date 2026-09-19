@@ -59,3 +59,16 @@ export function styled(...parts: Array<TextChunk | string>): StyledText {
     ),
   );
 }
+
+/** Linear mix of two "#rrggbb" colours; t = 0 gives `a`, 1 gives `b`. */
+export function mixHex(a: string, b: string, t: number): string {
+  const pa = Number.parseInt(a.slice(1), 16);
+  const pb = Number.parseInt(b.slice(1), 16);
+  const ch = (shift: number) => {
+    const x = (pa >> shift) & 0xff;
+    const y = (pb >> shift) & 0xff;
+    return Math.round(x + (y - x) * t);
+  };
+  const v = (ch(16) << 16) | (ch(8) << 8) | ch(0);
+  return `#${v.toString(16).padStart(6, "0")}`;
+}

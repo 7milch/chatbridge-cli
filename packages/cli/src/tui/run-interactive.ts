@@ -11,6 +11,7 @@ import {
 } from "@opentui/core";
 import { FileIndex } from "../mentions/file-index.js";
 import type { ShellConfig } from "../shell/shell-config.js";
+import type { BannerOptions } from "./banner-options.js";
 import { resolveBanner } from "./banner.js";
 import {
   ChatModel,
@@ -26,7 +27,7 @@ export interface InteractiveOptions extends ChatSessionOptions {
   /** Shown in the default startup banner. */
   version?: string;
   /** Vendor startup banner; replaces the default when set. */
-  banner?: string[];
+  banner?: string[] | BannerOptions;
   /** Vendor busy spinner; unset fields keep the default. */
   spinner?: SpinnerOptions;
   /** Resolved `!` shell mode settings. Default: DEFAULT_SHELL_CONFIG. */

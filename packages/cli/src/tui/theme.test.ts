@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { TextAttributes } from "@opentui/core";
-import { MUTED_COLOR, colored, styled, theme } from "./theme.js";
+import { MUTED_COLOR, colored, mixHex, styled, theme } from "./theme.js";
 
 describe("theme", () => {
   test("badge is bold and inverse without a colour", () => {
@@ -63,5 +63,14 @@ describe("theme", () => {
     expect(hex.fg?.r).toBeCloseTo(1);
     expect(hex.fg?.g).toBeCloseTo(0);
     expect(hex.fg?.b).toBeCloseTo(0);
+  });
+});
+
+describe("mixHex", () => {
+  test("endpoints and midpoint", () => {
+    expect(mixHex("#000000", "#ffffff", 0)).toBe("#000000");
+    expect(mixHex("#000000", "#ffffff", 1)).toBe("#ffffff");
+    expect(mixHex("#000000", "#ffffff", 0.5)).toBe("#808080");
+    expect(mixHex("#ff0000", "#0000ff", 0.25)).toBe("#bf0040");
   });
 });

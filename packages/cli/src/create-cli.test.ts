@@ -44,6 +44,18 @@ afterEach(() => {
   if (baseDir) rmSync(baseDir, { recursive: true, force: true });
 });
 
+describe("banner validation", () => {
+  test("an invalid banner gradient is rejected at createCli time", () => {
+    expect(() =>
+      createCli({
+        name: "x",
+        provider: stubProvider(),
+        banner: { lines: ["a"], colors: ["#000000"], mode: "gradient" },
+      }),
+    ).toThrow(/banner.colors/);
+  });
+});
+
 describe("--timeout validation", () => {
   test("rejects a non-numeric value without launching a browser", async () => {
     const cli = createCli({ name: "test-cli", provider: stubProvider() });
