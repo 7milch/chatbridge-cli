@@ -22,10 +22,12 @@ export function exitCodeFor(code: string): number {
 
 export const INSTALL_HINT = "Run: npx playwright install chromium";
 
-/** The stderr text for a framework error: the message, plus the install
- * hint when Chromium is missing. */
+/** The stderr text for a framework error: the message, plus the CLI-side
+ * remedy for the failures a user can act on (install Chromium, retry
+ * headful). */
 export function describeError(err: ChatBridgeError): string {
-  return err.code === "BROWSER_UNAVAILABLE"
-    ? `${err.message}\n${INSTALL_HINT}`
-    : err.message;
+  if (err.code === "BROWSER_UNAVAILABLE")
+    return `${err.message}\n${INSTALL_HINT}`;
+  if (err.code === "BLOCKED") return `${err.message} Try --headful.`;
+  return err.message;
 }

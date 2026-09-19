@@ -208,9 +208,8 @@ describe("ChatSession.open", () => {
     h.block = "challenge page";
     const err = await ChatSession.open(opts(h)).catch((e) => e);
     expect(err).toBeInstanceOf(BlockedError);
-    expect(err.message).toBe(
-      'Blocked by "fake": challenge page. Try --headful.',
-    );
+    expect(err.message).toContain('Blocked by "');
+    expect(err.message).not.toContain("--headful");
     expect(h.detectBlockCalls).toBe(1);
     expect(h.closed).toBe(1);
   });
@@ -316,9 +315,8 @@ describe("ChatSession.send timeout diagnosis", () => {
     (await replyOf(h, 0)).reject(timeout());
     const err = await first.catch((e) => e);
     expect(err).toBeInstanceOf(BlockedError);
-    expect(err.message).toBe(
-      'Blocked by "fake": challenge page. Try --headful.',
-    );
+    expect(err.message).toContain('Blocked by "');
+    expect(err.message).not.toContain("--headful");
     await session.close();
   });
 

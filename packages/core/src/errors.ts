@@ -52,8 +52,8 @@ export class InvalidStateError extends ChatBridgeError {
 }
 
 /** The service blocked the automated browser (bot challenge, IdP refusing
- * automation); logging in again would not help. The message suggests
- * --headful. */
+ * automation); logging in again would not help. The CLI appends the
+ * --headful hint; the VSCode extension its settings hint. */
 export class BlockedError extends ChatBridgeError {
   constructor(message: string, options?: ErrorOptions) {
     super("BLOCKED", message, options);

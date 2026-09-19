@@ -84,9 +84,7 @@ export class ChatSession {
         )
       : undefined;
     if (block !== undefined) {
-      throw new BlockedError(
-        `Blocked by "${provider.name}": ${block}. Try --headful.`,
-      );
+      throw new BlockedError(`Blocked by "${provider.name}": ${block}.`);
     }
     throw new AuthExpiredError(
       `Auth state for "${provider.name}" is no longer valid. Run \`auth login\` again.`,

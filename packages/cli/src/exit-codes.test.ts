@@ -33,8 +33,13 @@ describe("describeError", () => {
     );
   });
 
+  test("BLOCKED gets the --headful hint", () => {
+    expect(describeError(new BlockedError('Blocked by "x": captcha.'))).toBe(
+      'Blocked by "x": captcha. Try --headful.',
+    );
+  });
+
   test("other errors are the message alone", () => {
-    expect(describeError(new BlockedError("blocked"))).toBe("blocked");
     expect(describeError(new ChatBridgeError("X", "m"))).toBe("m");
   });
 });

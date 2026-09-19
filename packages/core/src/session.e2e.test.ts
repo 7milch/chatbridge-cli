@@ -144,9 +144,7 @@ describe("ChatSession", () => {
       timeoutMs: 30_000,
     }).catch((e) => e);
     expect(err).toBeInstanceOf(BlockedError);
-    expect(err.message).toBe(
-      'Blocked by "dummy-chat": challenge page. Try --headful.',
-    );
+    expect(err.message).toBe('Blocked by "dummy-chat": challenge page.');
   }, 60_000);
 
   test("a timeout after the login expired is reported as AuthExpiredError", async () => {
