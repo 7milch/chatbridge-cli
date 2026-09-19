@@ -91,4 +91,8 @@ provisional until the interactive-mode milestone.
 - TDD; `bun run check` must pass before every commit.
 - Current milestone plan: `docs/superpowers/plans/2026-09-07-interactive-tui.md`
 
-Roadmap across milestones: `docs/ROADMAP.md`.
+What is in flight lives on GitHub, not in a file: repository
+[milestones](https://github.com/7milch/chatbridge-cli/milestones) for the current
+milestone, issues labelled `backlog` for unscheduled ideas, and a private project
+board for priority. `docs/ROADMAP.md` records shipped milestones and the standing
+design rules only; do not track status there.

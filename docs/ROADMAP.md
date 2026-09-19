@@ -14,7 +14,26 @@ across sessions.
 
 All three layers consume the same `Provider` contract from `@chatbridge/provider`.
 
+## How work is tracked
+
+Status does not live in this file. It lives on GitHub, so it is the same on
+every branch and needs no commit to change.
+
+| What | Where |
+|---|---|
+| The milestone in flight and what it bundles | [Open milestones](https://github.com/7milch/chatbridge-cli/milestones) |
+| Unscheduled ideas | Issues labelled [`backlog`](https://github.com/7milch/chatbridge-cli/issues?q=is%3Aissue+is%3Aopen+label%3Abacklog) |
+| Priority and progress | The project board (private for now) |
+| Long-term memory across sessions | The issue thread, via `gh issue comment` |
+
+This file keeps the shipped history below, plus the standing design rules at the
+end. When a milestone ships, add a heading for it here and close its milestone.
+A backlog item becomes a milestone when it is picked up: give it a milestone and
+drop the `backlog` label.
+
 ## Milestones
+
+Shipped, newest last.
 
 ### 1. One-shot vertical slice — done (PR #2, 2026-09-06)
 
@@ -185,50 +204,24 @@ inside it. Dropped files and pasted editor selections become attachment
 chips in the webview. Ships as a 0.8.x patch.
 Spec: `docs/superpowers/specs/2026-09-18-vscode-parity-design.md`.
 
-### 13. v0.8.2 follow-ups and small features — done (issue #69)
+### 13. v0.8.2 follow-ups and small features — done (issue #69, PR #70, 2026-09-19)
 
 Bundles the deferred review follow-ups (#67, #59), the auto-resizing VSCode
 composer (#68) and TUI banner gradients (#65). Ships as a 0.8.x patch.
 
-### 5. Company adoption
+## Backlog
+
+Moved to GitHub. See the issues labelled
+[`backlog`](https://github.com/7milch/chatbridge-cli/issues?q=is%3Aissue+is%3Aopen+label%3Abacklog);
+each one becomes a milestone when it is picked up.
+
+## Company adoption
 
 Company repository builds `company-ai-cli` via `createCli({ name, provider, configDir })`
 on top of the published packages. Nothing company-specific lands in this repo.
 
-## Backlog
-
-Not scheduled. Each item becomes a milestone when picked up.
-
-- **Streaming display.** Both observed services grow one assistant element
-  in place, so streaming can be a generic poll in the core over two
-  provider knobs (`streaming.responseText(page)` and
-  `streaming.isComplete(page)`), with `ChatSession.send(prompt, { onDelta })`
-  emitting deltas and still taking the final text from `waitForResponse`;
-  one-shot stays batch. Full sketch in the 3b spec's backlog note.
-- **Markdown rendering in the TUI history.** Wanted; needs an OpenTUI
-  rendering approach for code blocks and lists.
-- **Cross-process conversation resume (chat handle).** Provider would expose
-  the service's conversation id; the CLI would reopen it.
-- **History persistence.** Save the interactive transcript to disk.
-- **`@file` mentions in one-shot mode.** Behind an explicit flag; `-p`
-  stays verbatim by default.
-- **Live re-scan of the mention index.** New files appear without a
-  restart.
-- **Configurable retry and timeout for opening the browser.** Today
-  `ChatSession.open()` runs launch → goto → isLoggedIn → startNewChat once,
-  under the single `--timeout` that also covers turns, and `auth login`
-  hardcodes 30 s. Give the opening phase its own timeout and a retry count
-  (re-run the whole phase after a launch or navigation failure, closing the
-  browser in between; never retry auth-required / auth-expired / blocked).
-  Three layers, each overriding the one before: a built-in default → the
-  provider's default as an optional field on `Provider` (a slow corporate
-  service needs more than the dummy) → environment variables
-  (`CHATBRIDGE_OPEN_TIMEOUT` / `CHATBRIDGE_OPEN_RETRIES`, names to be
-  confirmed). Retry logic in core, knob resolution in `@chatbridge/cli`,
-  progress reported per attempt through `onProgress`. Open questions
-  (per-step vs. whole-phase timeout and the relation to `--timeout`, whether
-  `auth login` and `Ctrl+R` share the knobs, a `config.json` layer, backoff,
-  vendor defaults via `createCli`) are recorded in issue #42.
+Tracked in the company repository, not here; no milestone is opened in this repo
+for it.
 
 ## Standing design rules
 
