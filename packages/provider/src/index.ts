@@ -10,6 +10,57 @@ export interface ProviderOpenDefaults {
   retries?: number;
 }
 
+/** What a provider command hands back. `show`: the UI prints `text` in the
+ * history. `send`: the UI sends `prompt` as an ordinary turn; the history
+ * keeps the `/command` line the user typed, the service alone sees the
+ * prompt. */
+export type ProviderCommandResult =
+  | { kind: "show"; text: string }
+  | { kind: "send"; prompt: string };
+
+/** A `/command` a provider adds to the interactive UIs (TUI, VSCode). Not
+ * available in one-shot mode. Runs on the chat page like every other
+ * provider method, under the session timeout. */
+export interface ProviderCommand {
+  /** Typed as `/name`. Lower-case letters only; the built-in names
+   * (BUILTIN_COMMAND_NAMES) are reserved. */
+  name: string;
+  /** One line for `/help`. */
+  description: string;
+  /** `args` is the rest of the line after the command word, trimmed; `""`
+   * when there is none. May contain newlines. */
+  run(page: Page, args: string): Promise<ProviderCommandResult>;
+}
+
+/** Commands the framework itself defines; a provider cannot redefine them.
+ * Core's slash-command table is built from this list. */
+export const BUILTIN_COMMAND_NAMES = [
+  "login",
+  "logout",
+  "new",
+  "reopen",
+  "help",
+] as const;
+
+export interface UrlHookResult {
+  /** The attachment line shown in the history, e.g. "Confluence: Title". */
+  label: string;
+  content: string;
+}
+
+/** Expands a URL typed in a message into an attachment. The framework never
+ * fetches anything itself: `resolve` is the provider's, and so is whatever
+ * credential it needs. The interactive UIs only. */
+export interface UrlHook {
+  /** Which URLs this hook takes. A RegExp is used with `.test`, so it must
+   * not carry the `g` or `y` flag. */
+  match: RegExp | ((url: string) => boolean);
+  /** Return the content, or throw with a message meant for the user
+   * ("403 from Confluence", "script not found"). Runs under the session
+   * timeout. */
+  resolve(url: string): Promise<UrlHookResult>;
+}
+
 /**
  * A Provider implements all service-specific browser behaviour for one
  * web chat AI service. The framework owns the browser lifecycle and auth
@@ -42,11 +93,45 @@ export interface Provider {
   /** Optional. A slow service may raise the opening timeout; a flaky one
    * may ask for retries. See ProviderOpenDefaults. */
   open?: ProviderOpenDefaults;
+  /** Optional. `/commands` for the interactive UIs, listed by `/help` after
+   * the built-ins. Validated by defineProvider. */
+  commands?: ProviderCommand[];
+  /** Optional. Tried in order for every URL in a message; the first hook
+   * whose `match` accepts the URL resolves it. Validated by defineProvider. */
+  urlHooks?: UrlHook[];
 }
 
-/** Identity helper: gives provider authors type inference and a future
- * validation hook without any runtime cost today. */
+const COMMAND_NAME = /^[a-z]+$/;
+const BUILTINS: ReadonlySet<string> = new Set(BUILTIN_COMMAND_NAMES);
+
+/** Identity helper with validation: gives provider authors type inference
+ * and fails fast, at definition time, on a command list or URL hook the
+ * UIs could not use. */
 export function defineProvider(provider: Provider): Provider {
+  const seen = new Set<string>();
+  for (const c of provider.commands ?? []) {
+    if (!COMMAND_NAME.test(c.name)) {
+      throw new Error(
+        `Provider command name "${c.name}" must match /^[a-z]+$/.`,
+      );
+    }
+    if (BUILTINS.has(c.name)) {
+      throw new Error(
+        `Provider command "/${c.name}" collides with a built-in command.`,
+      );
+    }
+    if (seen.has(c.name)) {
+      throw new Error(`Provider command "/${c.name}" is defined twice.`);
+    }
+    seen.add(c.name);
+  }
+  for (const h of provider.urlHooks ?? []) {
+    if (h.match instanceof RegExp && /[gy]/.test(h.match.flags)) {
+      throw new Error(
+        `URL hook RegExp ${h.match} must not use the g or y flag (it makes .test stateful).`,
+      );
+    }
+  }
   return provider;
 }
 
