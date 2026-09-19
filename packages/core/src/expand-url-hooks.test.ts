@@ -141,6 +141,17 @@ describe("expandUrlHooks", () => {
     );
     expect(r.attachments).toEqual([{ path: "Wiki: t/a", bytes: 27 }]);
   });
+  test("an unmatched URL stays in the prefix; only the matched one is attached", async () => {
+    const r = await expandUrlHooks(
+      "compare https://wiki.test/a with https://other.test/b",
+      [wiki],
+      opts,
+    );
+    expect(r.prompt).toBe(
+      "compare https://wiki.test/a with https://other.test/b\n\n### Wiki: t/a\n```\nbody of https://wiki.test/a\n```",
+    );
+    expect(r.attachments).toEqual([{ path: "Wiki: t/a", bytes: 27 }]);
+  });
   test("unchanged text when nothing matches", async () => {
     expect(await expandUrlHooks("plain", [wiki], opts)).toEqual({
       prompt: "plain",

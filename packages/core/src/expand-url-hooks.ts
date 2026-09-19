@@ -39,14 +39,14 @@ export interface UrlHookOptions {
   alreadyBytes?: number;
 }
 
-const URL = /https?:\/\/\S+/g;
+const URL_TOKEN = /https?:\/\/\S+/g;
 /** Prose and Markdown put these right after a link. */
 const TRAILING = /[)>.,;:'"!?\]]+$/;
 
 /** Every distinct URL in `text`, in first-occurrence order. */
 export function findUrls(text: string): string[] {
   const out: string[] = [];
-  for (const m of text.matchAll(URL)) {
+  for (const m of text.matchAll(URL_TOKEN)) {
     const url = m[0].replace(TRAILING, "");
     if (!out.includes(url)) out.push(url);
   }
