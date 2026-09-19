@@ -1,5 +1,4 @@
 import {
-  helpText,
   parseSlashCommand,
   unknownCommandMessage,
 } from "@chatbridge/core/slash-commands";
@@ -83,6 +82,10 @@ function renderMessage(m: Message): HTMLElement {
   const box = el("div", `message ${m.role}`);
   if (m.role === "separator") {
     box.textContent = `— ${m.text} —`;
+    return box;
+  }
+  if (m.role === "help") {
+    box.textContent = m.text;
     return box;
   }
   box.appendChild(el("div", "text", m.text));
@@ -225,14 +228,6 @@ function submit(): void {
   showInlineError(undefined);
   if (slash) {
     input.value = "";
-    if (slash.command === "help") {
-      // The welcome block hides the history; the help block must be seen.
-      welcome.hidden = true;
-      history.hidden = false;
-      history.appendChild(el("div", "message help", helpText()));
-      history.scrollTop = history.scrollHeight;
-      return;
-    }
     const name = slash.command === "new" ? "newChat" : slash.command;
     vscode.postMessage({ type: "command", name });
     return;
@@ -257,11 +252,9 @@ input.addEventListener("keydown", (e) => {
     input.value === "" &&
     (lastState?.queue.length ?? 0) > 0
   ) {
+    // The composer is filled from the host's `tookBack` answer, not from
+    // `lastState`: an entry drained in between must never be re-sent.
     e.preventDefault();
-    const entries = lastState?.queue ?? [];
-    input.value = entries.map((q) => q.text).join("\n\n");
-    // Setting the value fires no `input` event, so clear the error here.
-    showInlineError(undefined);
     vscode.postMessage({ type: "takeBack" });
   }
 });
@@ -358,6 +351,11 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
     clearTimeout(p.timer);
     pendingPastes.delete(m.id);
     if (!m.attached) insertAtCaret(p.text);
+  } else if (m.type === "tookBack") {
+    input.value = m.entries.map((q) => q.text).join("\n\n");
+    // Setting the value fires no `input` event, so clear the error here.
+    showInlineError(undefined);
+    input.focus();
   }
 });
 

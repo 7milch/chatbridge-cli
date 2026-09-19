@@ -1,4 +1,5 @@
 import type {
+  QueueEntry,
   State,
   ToHost,
   ToWebview,
@@ -22,13 +23,15 @@ export interface ChatViewHandlers {
   pasted(id: number, text: string): void;
 }
 
-const COMMANDS: ReadonlySet<string> = new Set([
+const COMMAND_LIST = [
   "login",
   "logout",
   "newChat",
   "installBrowser",
   "reopen",
-]);
+  "help",
+] satisfies WebviewCommand[];
+const COMMANDS: ReadonlySet<string> = new Set(COMMAND_LIST);
 
 function isToHost(m: unknown): m is ToHost {
   if (typeof m !== "object" || m === null) return false;
@@ -114,6 +117,10 @@ export class ChatViewBridge {
 
   pushPasteResult(id: number, attached: boolean): void {
     void this.webview?.postMessage({ type: "pasteResult", id, attached });
+  }
+
+  pushTookBack(entries: QueueEntry[]): void {
+    void this.webview?.postMessage({ type: "tookBack", entries });
   }
 
   pushProgress(text: string): void {

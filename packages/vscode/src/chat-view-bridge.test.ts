@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ChatViewBridge, type WebviewLike } from "./chat-view-bridge.js";
-import type { State, ToHost, ToWebview } from "./protocol.js";
+import type { State, ToHost, ToWebview, WebviewCommand } from "./protocol.js";
 
 function fakeWebview() {
   const posted: ToWebview[] = [];
@@ -184,5 +184,50 @@ describe("ChatViewBridge", () => {
     bridge.attach(w.webview);
     bridge.pushPasteResult(3, true);
     expect(w.posted).toEqual([{ type: "pasteResult", id: 3, attached: true }]);
+  });
+  test("pushTookBack posts the entries", () => {
+    const bridge = new ChatViewBridge(() => state, {
+      send() {},
+      removeAttachment() {},
+      takeBack() {},
+      removeQueued() {},
+      command() {},
+      attachUris() {},
+      pasted() {},
+    });
+    const w = fakeWebview();
+    bridge.attach(w.webview);
+    bridge.pushTookBack([{ text: "a", attachments: [] }]);
+    expect(w.posted.at(-1)).toEqual({
+      type: "tookBack",
+      entries: [{ text: "a", attachments: [] }],
+    });
+  });
+
+  test("every WebviewCommand name is accepted", () => {
+    const names: WebviewCommand[] = [
+      "login",
+      "logout",
+      "newChat",
+      "installBrowser",
+      "reopen",
+      "help",
+    ];
+    for (const name of names) {
+      const calls: string[] = [];
+      const bridge = new ChatViewBridge(() => state, {
+        send() {},
+        removeAttachment() {},
+        takeBack() {},
+        removeQueued() {},
+        command: (n) => calls.push(n),
+        attachUris() {},
+        pasted() {},
+      });
+      const w = fakeWebview();
+      bridge.attach(w.webview);
+      w.receive({ type: "command", name });
+      expect(calls.at(-1)).toEqual(name);
+    }
   });
 });

@@ -20,6 +20,7 @@ interface Fake {
     | "reopen"
     | "discard"
     | "markLoggedIn"
+    | "pushHelp"
     | "addAttachment"
     | "removeAttachment"
     | "getState"
@@ -86,6 +87,7 @@ function fake(): Fake {
       return !f.busy;
     },
     markLoggedIn: () => f.log.push("markLoggedIn"),
+    pushHelp: (t: string) => f.log.push(`help:${t.split("\n")[0]}`),
     addAttachment: (a) => {
       f.log.push(`attach:${a.path}:${a.bytes}`);
       return a.path.includes("toobig")

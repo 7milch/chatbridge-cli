@@ -84,7 +84,16 @@ export function createExtension(opts: CreateExtensionOptions) {
       {
         send: (text) => void handlers.send(text),
         removeAttachment: (i) => controller?.removeAttachment(i),
-        takeBack: () => void controller?.takeBack(),
+        takeBack: () => {
+          const r = controller?.takeBack();
+          if (!r) return;
+          bridge.pushTookBack(r.entries);
+          if (r.droppedAttachments > 0) {
+            void vscode.window.showWarningMessage(
+              `${r.droppedAttachments} attachment(s) left out: total size limit.`,
+            );
+          }
+        },
         removeQueued: (i) => controller?.removeQueued(i),
         command: (name) => void handlers[name](),
         attachUris: (uris) => void handlers.attachUris(uris),

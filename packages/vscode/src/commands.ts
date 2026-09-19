@@ -1,5 +1,6 @@
 import type { LoginOptions } from "@chatbridge/core";
 import { LoginAbortedError } from "@chatbridge/core";
+import { helpText } from "@chatbridge/core/slash-commands";
 import type { InstallBrowserOptions } from "./install-browser.js";
 import type { SessionController } from "./session-controller.js";
 import type { EditorSnapshot, VscodeUi } from "./vscode-ui.js";
@@ -22,6 +23,8 @@ export interface CommandHandlers {
   newChat(): Promise<void>;
   reopen(): Promise<void>;
   installBrowser(): Promise<void>;
+  /** From the webview's `/help`: the listing joins the history. */
+  help(): void;
   sendSelection(): Promise<void>;
   sendFile(uri: unknown): Promise<void>;
   focus(): void;
@@ -146,6 +149,8 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
     },
 
     reopen: () => controller.reopen(),
+
+    help: () => controller.pushHelp(helpText()),
 
     async installBrowser() {
       if (await runInstall()) ui.showInformationMessage("Chromium installed.");

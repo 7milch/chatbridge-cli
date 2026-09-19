@@ -78,10 +78,10 @@ renders an idle frame with entries waiting.
   entry: `text` (first line, ellipsised) plus `📎 N files` when the entry
   has attachments, and a × button (`removeQueued`). Hidden when empty.
 - **Up** in an empty composer with a non-empty queue posts `takeBack`; the
-  host answers with a `state` (queue empty) and the webview fills the
-  composer from the entries it just displayed — the host adds the
-  attachments back to `pendingAttachments` itself, so the next `state`
-  carries them.
+  host answers with `tookBack` (the entries it removed) and then a `state`;
+  the webview fills the composer from `tookBack` only, so an entry drained
+  in between is never re-sent. Attachments that no longer fit under the
+  total cap are left out and a warning says how many.
 - The composer stays enabled while busy (it queues). The Send button label
   becomes `Queue` while the status is not `idle`/`closed`.
 - Status row while busy with a queue: `Waiting... · 2 queued`.

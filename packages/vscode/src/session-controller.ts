@@ -124,6 +124,11 @@ export class SessionController {
     this.emit();
   }
 
+  /** A `/help` listing, as a history entry. */
+  pushHelp(text: string): void {
+    this.push({ role: "help", text });
+  }
+
   private push(message: Message): void {
     this.messages.push(message);
     this.emit();
