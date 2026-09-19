@@ -13,6 +13,7 @@ import { type CommandHandlers, createCommands } from "./commands.js";
 import { installBrowser } from "./install-browser.js";
 import { COMMAND_NAMES, missingContributions } from "./manifest.js";
 import { SessionController } from "./session-controller.js";
+import { parseTimeoutSec } from "./timeout-setting.js";
 import { type ExtensionUiOptions, resolveUiConfig } from "./ui-config.js";
 import { createVscodeUi } from "./vscode-ui.js";
 
@@ -91,15 +92,23 @@ export function createExtension(opts: CreateExtensionOptions) {
       },
     );
 
+    let warnedTimeout = false;
     function settings() {
       const cfg = vscode.workspace.getConfiguration(opts.id);
+      const fallbackMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+      const { timeoutMs, invalid } = parseTimeoutSec(
+        cfg.get<unknown>("timeoutSec"),
+        fallbackMs,
+      );
+      if (invalid && !warnedTimeout) {
+        warnedTimeout = true;
+        void vscode.window.showWarningMessage(
+          `${opts.displayName}: "${opts.id}.timeoutSec" must be a positive number; using ${fallbackMs / 1000} s.`,
+        );
+      }
       return {
         headless: cfg.get<boolean>("headless", opts.headless ?? true),
-        timeoutMs:
-          cfg.get<number>(
-            "timeoutSec",
-            (opts.timeoutMs ?? DEFAULT_TIMEOUT_MS) / 1000,
-          ) * 1000,
+        timeoutMs,
       };
     }
 
