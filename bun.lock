@@ -46,7 +46,6 @@
       },
       "dependencies": {
         "@chatbridge/core": "workspace:*",
-        "@chatbridge/provider": "workspace:*",
         "@opentui/core": "0.5.10",
         "ignore": "^7.0.9",
       },

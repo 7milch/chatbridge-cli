@@ -1,5 +1,8 @@
-import { ChatBridgeError, type OpenOptions } from "@chatbridge/core";
-import type { Provider } from "@chatbridge/provider";
+import {
+  ChatBridgeError,
+  type OpenOptions,
+  type Provider,
+} from "@chatbridge/core";
 import type { CliConfig } from "./config.js";
 
 export type { OpenOptions };
