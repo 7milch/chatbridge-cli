@@ -105,6 +105,11 @@ export const IDLE_SEPARATOR = "reopened after idle";
 /** Remedies for the two failures a user can fix from inside the TUI. */
 export const AUTH_HINT = "Type /login to log in.";
 export const INSTALL_HINT = "Run: npx playwright install chromium";
+/** Status-line notices `/copy` leaves behind. Lower case: they sit on the
+ * status line next to the state's own text, not in the history. */
+export const COPIED_NOTICE = "copied";
+export const COPY_FAILED_NOTICE = "copy failed";
+export const NOTHING_TO_COPY_NOTICE = "nothing to copy yet";
 
 export interface ChatModelOptions {
   /** Opens a session: called once by the constructor and by every reset.
@@ -139,6 +144,10 @@ export interface ChatModelOptions {
   /** The provider's `/commands` (name and description); `/help` lists them
    * and submit() recognises them. Default: none. */
   commands?: readonly CommandInfo[];
+  /** `/copy`: puts the text on the system clipboard, resolving to whether
+   * it got there. Default: a function that always fails — a model built
+   * without a clipboard says "copy failed" rather than lying. */
+  copy?: (text: string) => Promise<boolean>;
 }
 
 /** Conversation state for the interactive UI. No OpenTUI dependency. */
@@ -159,6 +168,9 @@ export class ChatModel {
    * model was resetting or dead), trimmed, in arrival order. Drained one
    * entry per turn. */
   readonly queue: string[] = [];
+  /** A short message for the status line (`/copy`'s outcome). The view
+   * shows it for a moment and clears it; the model only sets it. */
+  notice: string | undefined;
   /** Called after every state change. */
   onChange: () => void = () => {};
   /** Resolves when the initial open settled (idle or dead). Never rejects,
@@ -212,6 +224,7 @@ export class ChatModel {
   private readonly cwd: string;
   private readonly commands: readonly CommandInfo[];
   private readonly commandNames: ReadonlySet<string>;
+  private readonly copy: (text: string) => Promise<boolean>;
 
   constructor(opts: ChatModelOptions) {
     this.openSession = opts.openSession;
@@ -225,6 +238,7 @@ export class ChatModel {
     this.cwd = opts.cwd ?? process.cwd();
     this.commands = opts.commands ?? [];
     this.commandNames = commandNamesOf({ commands: this.commands });
+    this.copy = opts.copy ?? (async () => false);
     // Last: openInitial may settle synchronously enough to touch the
     // fields above.
     this.ready = this.openInitial();
@@ -658,6 +672,13 @@ export class ChatModel {
     return entries;
   }
 
+  /** Shows a short message on the status line. The view owns how long it
+   * stays; it clears `notice` when the time is up. */
+  notify(text: string): void {
+    this.notice = text;
+    this.onChange();
+  }
+
   /** Runs one `/command`. Resolves like submit(): true when the input was
    * taken, false for an unknown command, which the view refills so the
    * user can fix the typo. */
@@ -682,6 +703,27 @@ export class ChatModel {
         this.messages.push({ role: "help", text: helpText(this.commands) });
         this.onChange();
         return true;
+      case "copy": {
+        // Nothing is sent and no session is needed, so `/copy` works in
+        // every state, the idle close included. An incomplete reply is
+        // skipped: half a reply is not what the user meant to copy.
+        // A backwards loop, not findLast: the build targets ES2022.
+        let reply: Message | undefined;
+        for (let i = this.messages.length - 1; i >= 0; i--) {
+          const m = this.messages[i];
+          if (m?.role === "assistant" && m.incomplete !== true) {
+            reply = m;
+            break;
+          }
+        }
+        if (reply === undefined) {
+          this.notify(NOTHING_TO_COPY_NOTICE);
+          return true;
+        }
+        const ok = await this.copy(reply.text).catch(() => false);
+        this.notify(ok ? COPIED_NOTICE : COPY_FAILED_NOTICE);
+        return true;
+      }
       case "new":
         await this.reset(NEW_CHAT_SEPARATOR);
         return true;

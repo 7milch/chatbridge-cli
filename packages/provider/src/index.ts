@@ -59,6 +59,7 @@ export const BUILTIN_COMMAND_NAMES = [
   "logout",
   "new",
   "reopen",
+  "copy",
   "help",
 ] as const;
 

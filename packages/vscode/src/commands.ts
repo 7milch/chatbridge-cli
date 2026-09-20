@@ -17,6 +17,10 @@ export interface CommandDeps {
   clearAuth: () => Promise<void>;
   /** The provider's own commands, listed by `/help`. */
   commands?: readonly CommandInfo[];
+  /** `/copy`: puts text on the system clipboard. Optional, so a vendor's
+   * older wiring still type-checks; `/copy` then reports a failure rather
+   * than silently doing nothing. */
+  writeClipboard?: (text: string) => Thenable<void>;
 }
 
 export interface CommandHandlers {
@@ -25,6 +29,9 @@ export interface CommandHandlers {
   newChat(): Promise<void>;
   reopen(): Promise<void>;
   installBrowser(): Promise<void>;
+  /** From the webview's `/copy`: the last reply, as the provider returned
+   * it, onto the system clipboard. Nothing is sent and nothing is logged. */
+  copy(): Promise<void>;
   /** From the webview's `/help`: the listing joins the history. */
   help(): void;
   /** From the webview's `/name args`. */
@@ -179,6 +186,27 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
     },
 
     reopen: () => controller.reopen(),
+
+    async copy() {
+      const reply = controller.lastReply();
+      if (reply === undefined) {
+        ui.showInformationMessage("Nothing to copy yet.");
+        return;
+      }
+      const write = deps.writeClipboard;
+      if (write === undefined) {
+        ui.showWarningMessage("Could not copy the last reply.");
+        return;
+      }
+      try {
+        await write(reply);
+      } catch {
+        // The reply itself never reaches a message, a log or the warning.
+        ui.showWarningMessage("Could not copy the last reply.");
+        return;
+      }
+      ui.showInformationMessage("Copied the last reply.");
+    },
 
     help,
 

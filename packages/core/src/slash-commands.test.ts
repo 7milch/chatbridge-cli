@@ -56,6 +56,12 @@ describe("parseSlashCommand", () => {
     expect(parseSlashCommand("/model")).toEqual({ unknown: "model" });
     expect(parseSlashCommand("/model x")).toEqual({ unknown: "model" });
   });
+  test("/copy is a built-in and takes no arguments", () => {
+    expect(parseSlashCommand("/copy", new Set())).toEqual({ command: "copy" });
+    expect(parseSlashCommand("/copy 2", new Set())).toEqual({
+      error: "/copy takes no arguments.",
+    });
+  });
   test("a built-in still wins over a same-named custom entry", () => {
     expect(parseSlashCommand("/help", new Set(["help"]))).toEqual({
       command: "help",
@@ -64,6 +70,12 @@ describe("parseSlashCommand", () => {
 });
 
 describe("helpText", () => {
+  test("lists /copy, just before /help", () => {
+    const names = SLASH_COMMANDS.map((c) => c.name);
+    expect(names.at(-2)).toBe("copy");
+    expect(names.at(-1)).toBe("help");
+    expect(helpText([])).toContain("/copy");
+  });
   test("lists every built-in with its description", () => {
     const text = helpText();
     for (const c of SLASH_COMMANDS) {

@@ -1478,6 +1478,32 @@ describe("idle close", () => {
   });
 });
 
+describe("SessionController.lastReply", () => {
+  test("undefined on a fresh controller", () => {
+    expect(harness().controller.lastReply()).toBeUndefined();
+  });
+
+  test("the newest assistant text, unaffected by later entries", async () => {
+    const h = harness();
+    const first = h.controller.send("one");
+    await settle();
+    h.replies[0].resolve("Echo: one");
+    await first;
+    expect(h.controller.lastReply()).toBe("Echo: one");
+
+    const second = h.controller.send("two");
+    await settle();
+    h.replies[1].resolve("Echo: two");
+    await second;
+    expect(h.controller.lastReply()).toBe("Echo: two");
+
+    // A help listing and a separator are not replies.
+    h.controller.pushHelp("/help  List these commands");
+    await h.controller.discard("Logged out");
+    expect(h.controller.lastReply()).toBe("Echo: two");
+  });
+});
+
 describe("droppedAttachmentsLine", () => {
   test("has a real plural: a screen reader reads this sentence out", () => {
     expect(droppedAttachmentsLine(1)).toBe(

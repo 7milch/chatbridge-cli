@@ -494,6 +494,35 @@ describe("runInteractive", () => {
     };
   }
 
+  test("the copy seam is what the model uses for /copy", async () => {
+    const t = await createTestRenderer({ width: 80, height: 20 });
+    const copied: string[] = [];
+    const run = runInteractive({
+      ...sessionOpts().opts,
+      createSession: async () => ({
+        send: async (prompt: string) => `Echo: ${prompt}`,
+        close: async () => {},
+        kill: async () => {},
+      }),
+      createRenderer: async () => t.renderer,
+      index: FileIndex.fromPaths([]),
+      copy: async (text) => {
+        copied.push(text);
+        return true;
+      },
+    });
+    await waitFor(t, "Ctrl+R reopen");
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    await waitFor(t, "Echo: hi");
+    await t.mockInput.typeText("/copy");
+    t.mockInput.pressEnter();
+    await waitFor(t, "copied");
+    t.mockInput.pressKey("c", { ctrl: true });
+    expect(await run).toEqual({});
+    expect(copied).toEqual(["Echo: hi"]);
+  });
+
   test("teardown waits for an idle close that is still saving auth state", async () => {
     const t = await createTestRenderer({ width: 80, height: 20 });
     let expire: ((closing: Promise<void>) => void) | undefined;

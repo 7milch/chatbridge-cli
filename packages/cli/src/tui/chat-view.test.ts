@@ -12,8 +12,13 @@ import type {
 } from "../shell/run-command.js";
 import type { ShellConfig } from "../shell/shell-config.js";
 import { resolveBanner } from "./banner.js";
-import type { ChatModelOptions, ChatSessionLike } from "./chat-model.js";
 import {
+  COPIED_NOTICE,
+  type ChatModelOptions,
+  type ChatSessionLike,
+} from "./chat-model.js";
+import {
+  BUSY_GUIDE,
   ChatView,
   DEAD_GUIDE,
   GUIDE,
@@ -159,6 +164,9 @@ async function setup(
     openGate?: Promise<void>;
     login?: ChatModelOptions["login"];
     commands?: CommandInfo[];
+    copy?: (text: string) => Promise<boolean>;
+    /** Shortened so a test can watch the notice come and go. */
+    noticeMs?: number;
   } = {},
 ) {
   const t = await createTestRenderer({
@@ -176,6 +184,7 @@ async function setup(
         opts.expand ?? (async (text) => ({ prompt: text, attachments: [] })),
       runCommand: opts.runCommand,
       shell: opts.shell,
+      ...(opts.copy ? { copy: opts.copy } : {}),
       ...(opts.login ? { login: opts.login } : {}),
     },
     opts.openGate,
@@ -197,6 +206,7 @@ async function setup(
       opts.paths ?? ["src/chat-view.ts", "src/chat-model.ts", "README.md"],
     ),
     commands: opts.commands ?? [],
+    ...(opts.noticeMs === undefined ? {} : { noticeMs: opts.noticeMs }),
   });
   teardown = () => {
     view.destroy();
@@ -1905,5 +1915,77 @@ describe("ChatView: markdown", () => {
     expect(frame).not.toContain("## Half");
     expect(frame).toContain(INCOMPLETE_NOTE);
     expect(frame.indexOf("Half")).toBeLessThan(frame.indexOf("Timed out."));
+  });
+});
+
+describe("ChatView: the /copy notice", () => {
+  /** Waits for a frame without `text`, the counterpart of frameWith. */
+  async function frameWithout(
+    t: Awaited<ReturnType<typeof setup>>,
+    text: string,
+    tries = 100,
+  ): Promise<string> {
+    for (let i = 0; i < tries; i++) {
+      await sleep(20);
+      await t.renderOnce();
+      const f = t.captureCharFrame();
+      if (!f.includes(text)) return f;
+    }
+    throw new Error(`every frame still showed ${JSON.stringify(text)}`);
+  }
+
+  test("shows the notice, then the idle guide again", async () => {
+    const t = await setup({ delayMs: 1, copy: async () => true, noticeMs: 80 });
+    await t.model.submit("hello");
+    await t.model.submit("/copy");
+    const shown = await t.frameWith(COPIED_NOTICE);
+    expect(shown).not.toContain(GUIDE);
+    const later = await frameWithout(t, COPIED_NOTICE);
+    expect(t.model.notice).toBeUndefined();
+    expect(later).toContain(GUIDE);
+  });
+
+  test("a notice during a busy turn shows and then returns to the busy status line", async () => {
+    const s = streamingSession();
+    const t = await setup({
+      session: s.session,
+      copy: async () => true,
+      noticeMs: 80,
+    });
+    void t.model.submit("first");
+    await t.frameWith("Thinking…");
+    s.resolve("Echo: first");
+    await t.frameWith("Echo: first");
+    void t.model.submit("second");
+    await t.frameWith("Thinking…");
+    await t.model.submit("/copy");
+    const shown = await t.frameWith(COPIED_NOTICE);
+    // The spinner tick must not paint over the notice while it is up.
+    expect(shown).not.toContain(BUSY_GUIDE);
+    const later = await frameWithout(t, COPIED_NOTICE);
+    expect(later).toContain(BUSY_GUIDE);
+    s.resolve("Echo: second");
+  });
+
+  test("a pinned teardown message outlives a notice", async () => {
+    const t = await setup({ copy: async () => true, noticeMs: 80 });
+    await t.model.submit("hello");
+    t.view.setStatus("Closing browser...");
+    await t.model.submit("/copy");
+    await t.renderOnce();
+    const frame = t.captureCharFrame();
+    expect(frame).toContain("Closing browser...");
+    expect(frame).not.toContain(COPIED_NOTICE);
+  });
+
+  test("destroy() clears the notice timer", async () => {
+    const t = await setup({ copy: async () => true, noticeMs: 10_000 });
+    await t.model.submit("hello");
+    await t.model.submit("/copy");
+    await t.frameWith(COPIED_NOTICE);
+    t.view.destroy();
+    // A leaked timer would clear the notice and repaint a destroyed view.
+    await sleep(30);
+    expect(t.model.notice).toBe(COPIED_NOTICE);
   });
 });

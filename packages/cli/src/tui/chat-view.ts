@@ -56,7 +56,10 @@ export const IDLE_CLOSED_GUIDE =
 export const INCOMPLETE_NOTE = "(incomplete)";
 /** The key guide appended to the busy status line. The frame and the label
  * moved to the pending row, which leaves room for it. */
-const BUSY_GUIDE = "Ctrl+R reopen · Ctrl+C quit";
+export const BUSY_GUIDE = "Ctrl+R reopen · Ctrl+C quit";
+/** How long a `model.notice` (a `/copy` outcome) stays on the status line
+ * before the state's own line comes back. */
+export const NOTICE_MS = 2_000;
 /** Rows the queue list may take; a longer queue ends with a "+N more" row. */
 export const MAX_QUEUE_ROWS = 5;
 export const RESETTING_STATUS = "Reopening browser...";
@@ -144,6 +147,8 @@ export interface ChatViewOptions {
   index: FileIndex;
   /** The provider's commands; the `/` popup lists them after the built-ins. */
   commands?: readonly CommandInfo[];
+  /** How long a `model.notice` stays on the status line. Tests shorten it. */
+  noticeMs?: number;
 }
 
 /** KeyHandler's `on` is typed through a generic EventEmitter that does not
@@ -199,6 +204,13 @@ export class ChatView {
   /** The row of the turn in flight, while there is one. */
   private pendingRow: PendingRow | undefined;
   private spinner: ReturnType<typeof setInterval> | undefined;
+  /** Clears `model.notice` when its time is up; undefined while none is
+   * showing. */
+  private noticeTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The notice the timer in flight belongs to, so a repaint of the same
+   * notice does not keep pushing its end away. */
+  private shownNotice: string | undefined;
+  private readonly noticeMs: number;
   private spinnerMode: "busy" | "running" | undefined;
   private frame = 0;
   private readonly spinnerSpec: ResolvedSpinner;
@@ -228,6 +240,7 @@ export class ChatView {
     this.index = opts.index;
     this.commands = opts.commands ?? [];
     this.spinnerSpec = opts.spinner;
+    this.noticeMs = opts.noticeMs ?? NOTICE_MS;
     this.frameStyler =
       opts.spinner.frameColor === undefined
         ? undefined
@@ -435,7 +448,26 @@ export class ChatView {
       return;
     }
     this.paintStatus();
+    // After paintStatus, which keeps the spinner running for the state the
+    // model is in: the notice only borrows the line it painted.
+    if (this.model.notice !== undefined) this.paintNotice(this.model.notice);
     this.syncPending();
+  }
+
+  /** Puts a short-lived notice on the status line and schedules its end.
+   * The state's own line comes back when the timer clears `model.notice`
+   * and repaints. */
+  private paintNotice(text: string): void {
+    this.status.content = styled(theme.muted(text));
+    if (this.shownNotice === text && this.noticeTimer !== undefined) return;
+    this.shownNotice = text;
+    clearTimeout(this.noticeTimer);
+    this.noticeTimer = setTimeout(() => {
+      this.noticeTimer = undefined;
+      this.shownNotice = undefined;
+      this.model.notice = undefined;
+      this.update();
+    }, this.noticeMs);
   }
 
   /** Puts the model's status on the status line and runs or stops the
@@ -711,6 +743,8 @@ export class ChatView {
     );
     this.popup.destroy();
     this.stopSpinner();
+    clearTimeout(this.noticeTimer);
+    this.noticeTimer = undefined;
     // Forgets the row without touching the renderer, which may be gone.
     this.dropPending();
     // Owns a native handle of its own, independent of the renderer.
@@ -1109,6 +1143,9 @@ export class ChatView {
     }
     // The frame and the label are on the pending row, where the reply will
     // land; the status line is left with the wait's numbers and the keys.
+    // A notice owns the line while it is up; the tick still animates the
+    // pending row.
+    if (this.model.notice !== undefined) return;
     const queued = n > 0 ? `  · ${n} queued` : "";
     this.status.content = styled(
       theme.muted(`${elapsed}s / ${this.budgetSec}s${queued} · ${BUSY_GUIDE}`),

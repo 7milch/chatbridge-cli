@@ -101,6 +101,11 @@ describe("defineProvider: commands", () => {
       );
     }
   });
+  test("rejects /copy, a built-in since the clipboard milestone", () => {
+    expect(() =>
+      defineProvider({ ...baseProvider, commands: [cmd("copy")] }),
+    ).toThrow('Provider command "/copy" collides with a built-in command.');
+  });
   test("rejects a duplicate", () => {
     expect(() =>
       defineProvider({

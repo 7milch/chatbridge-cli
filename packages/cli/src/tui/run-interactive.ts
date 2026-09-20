@@ -20,6 +20,7 @@ import {
   type ChatSessionLike,
 } from "./chat-model.js";
 import { ChatView } from "./chat-view.js";
+import { copyToClipboard, spawnClipboardProcess } from "./clipboard.js";
 import { expandInput } from "./expand-input.js";
 import { type SpinnerOptions, resolveSpinner } from "./spinner.js";
 
@@ -42,6 +43,8 @@ export interface InteractiveOptions extends ChatSessionOptions {
   createSession?: ChatModelOptions["openSession"];
   /** Test-only: replaces runLogin. */
   login?: ChatModelOptions["login"];
+  /** Test-only: replaces the system clipboard `/copy` writes to. */
+  copy?: ChatModelOptions["copy"];
 }
 
 const CLOSE_TIMEOUT_MS = 5_000;
@@ -164,6 +167,17 @@ export async function runInteractive(
   let model: ChatModel | undefined;
   try {
     const commands = commandInfoOf(opts.provider);
+    // One function, shared: the renderer's OSC 52 escape is the last resort
+    // of the platform command, and it needs the renderer that exists here.
+    const copy =
+      opts.copy ??
+      ((text: string) =>
+        copyToClipboard(text, {
+          env: process.env,
+          platform: process.platform,
+          process: spawnClipboardProcess,
+          osc52: (t) => renderer.copyToClipboardOSC52(t),
+        }));
     model = new ChatModel({
       openSession:
         opts.createSession ??
@@ -188,6 +202,7 @@ export async function runInteractive(
             onProgress: report,
           })),
       clearAuth: () => opts.authStore.clear(),
+      copy,
       shell: opts.shell,
       commands,
       expand: (text) =>

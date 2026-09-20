@@ -164,6 +164,18 @@ export class SessionController {
     this.emit();
   }
 
+  /** The newest assistant reply, for `/copy`; undefined before the first
+   * one. Nothing else in the history is a reply, so later help, error and
+   * separator entries leave it alone. */
+  lastReply(): string | undefined {
+    // A backwards loop, not findLast: the build targets ES2022.
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const m = this.messages[i];
+      if (m?.role === "assistant") return m.text;
+    }
+    return undefined;
+  }
+
   /** A `/help` listing, as a history entry. */
   pushHelp(text: string): void {
     this.push({ role: "help", text });

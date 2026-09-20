@@ -32,6 +32,7 @@ export const COMMAND_LIST = [
   "newChat",
   "installBrowser",
   "reopen",
+  "copy",
   "help",
   "pickFiles",
 ] satisfies WebviewCommand[];
