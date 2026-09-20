@@ -14,6 +14,16 @@ describe("onSendResult", () => {
     expect(s.calls).toEqual([[{ text: "a", attachments: [] }]]);
   });
 
+  test("a reopen during expansion also hands the text back", () => {
+    const s = spy();
+    onSendResult(
+      { ok: false, code: "REOPENED", message: "not sent" },
+      "a",
+      s.push,
+    );
+    expect(s.calls).toEqual([[{ text: "a", attachments: [] }]]);
+  });
+
   test("a successful send refills nothing", () => {
     const s = spy();
     onSendResult({ ok: true }, "a", s.push);

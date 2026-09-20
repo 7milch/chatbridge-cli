@@ -1177,26 +1177,90 @@ describe("URL hooks", () => {
     await h.controller.reopen();
     expect(h.opens).toBe(1);
     release();
-    expect(await p).toEqual({ ok: true });
+    // Refused like a hook refusal, so the extension refills the composer
+    // rather than leaving the text only in the history.
+    expect(await p).toEqual({
+      ok: false,
+      code: "REOPENED",
+      message: "Reopened while resolving URLs; message not sent.",
+    });
     await settle();
     expect(h.opens).toBe(1);
     // The stale turn is not sent, but the one queued behind it is.
     expect(h.sent).toEqual(["b"]);
     const s = h.controller.getState();
     expect(s.status).toBe("busy");
-    // Its attachments come back to the composer and its text stays readable
-    // in the history, so nothing the user typed is lost.
+    // Its attachments come back to the composer and the refusal above hands
+    // the text back, so nothing the user typed is lost.
     expect(s.pendingAttachments).toEqual([{ path: "a.txt", bytes: 1 }]);
     expect(s.messages).toEqual([
       { role: "separator", text: REOPENED_SEPARATOR },
       {
         role: "error",
-        text: "Reopened while resolving URLs; message not sent: a",
+        text: "Reopened while resolving URLs; message not sent.",
       },
       { role: "user", text: "b", attachments: [] },
     ]);
     h.replies[0]?.resolve("ok");
     await settle();
+  });
+
+  test("a stale turn whose attachments no longer fit says how many were left out", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const h = harness({
+      expandUrls: async () => {
+        await gate;
+        return [];
+      },
+    });
+    expect(
+      h.controller.addAttachment({
+        path: "big.txt",
+        bytes: MAX_FILE_BYTES,
+        content: "b",
+      }),
+    ).toEqual({ ok: true });
+    const p = h.controller.send("a");
+    // `send` emptied the composer, so these are files dropped in while the
+    // hooks were still resolving. Five max-size files fit on their own, but
+    // not beside `big.txt`.
+    expect(MAX_FILE_BYTES * 6).toBeGreaterThan(MAX_TOTAL_BYTES);
+    for (let i = 0; i < 5; i++) {
+      expect(
+        h.controller.addAttachment({
+          path: `n${i}.txt`,
+          bytes: MAX_FILE_BYTES,
+          content: "n",
+        }),
+      ).toEqual({ ok: true });
+    }
+    await h.controller.reopen();
+    release();
+    expect(await p).toEqual({
+      ok: false,
+      code: "REOPENED",
+      message: "Reopened while resolving URLs; message not sent.",
+    });
+    await waitFor(() => h.controller.getState().messages.length === 2);
+    const s = h.controller.getState();
+    // `big.txt` no longer fits; it is reported, not forced in.
+    expect(s.pendingAttachments.map((a) => a.path)).toEqual([
+      "n0.txt",
+      "n1.txt",
+      "n2.txt",
+      "n3.txt",
+      "n4.txt",
+    ]);
+    expect(s.messages).toEqual([
+      { role: "separator", text: REOPENED_SEPARATOR },
+      {
+        role: "error",
+        text: "Reopened while resolving URLs; message not sent.\n1 attachment(s) left out: total size limit.",
+      },
+    ]);
   });
 });
 

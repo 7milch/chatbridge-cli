@@ -5,7 +5,10 @@ import type { SendResult } from "./session-controller.js";
  * empties the composer as it posts `send`, so the host has to hand the text
  * back. Every other failure happened after the turn was accepted, and the
  * history entry is the record of it. */
-export const REFUSED_CODES: ReadonlySet<string> = new Set(["URL_HOOK"]);
+export const REFUSED_CODES: ReadonlySet<string> = new Set([
+  "URL_HOOK",
+  "REOPENED",
+]);
 
 /** What the extension does with the result of a send from the webview's
  * composer. Split out of the wiring so it has a unit test of its own. */

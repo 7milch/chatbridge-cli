@@ -97,6 +97,11 @@ const EMPTY: SendResult = {
   message: "Nothing to send.",
 };
 
+/** The stale-expansion refusal: the turn was claimed, then a reopen or a
+ * close took the state over. Nothing was sent, so it is refused like a
+ * hook refusal and the composer gets the text back. */
+const REOPENED_MESSAGE = "Reopened while resolving URLs; message not sent.";
+
 /** Owns the history, the pending attachments and the ChatSession. No
  * vscode import: the extension wires it to the webview and the commands. */
 export class SessionController {
@@ -238,21 +243,23 @@ export class SessionController {
         if (generation !== this.generation) {
           // Stale: the reopen/close owns the state now. The turn is not
           // sent, but `send` already emptied the composer, so give the
-          // attachments back and leave the text in the history.
+          // attachments back and refuse, which returns the text too.
           this.expanding = false;
           const dropped = this.restorePending(turn.attachments);
           const note =
             dropped === 0 ? "" : SessionController.droppedLine(dropped);
+          // The text is not repeated here: the refusal code below sends it
+          // back to the composer, exactly as the UrlHookError branch does.
           this.messages.push({
             role: "error",
-            text: `Reopened while resolving URLs; message not sent: ${turn.text}${note}`,
+            text: `${REOPENED_MESSAGE}${note}`,
           });
           // Nothing else will run the entries queued behind this one. Only
           // from `idle`: a stale turn from `close()` must not open a browser
           // after deactivate.
           if (this.status === "idle") this.drain();
           this.emit();
-          return { ok: true };
+          return { ok: false, code: "REOPENED", message: REOPENED_MESSAGE };
         }
         attachments = [
           ...attachments,
