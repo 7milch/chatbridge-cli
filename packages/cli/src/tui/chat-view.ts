@@ -150,8 +150,8 @@ interface ShellEntry {
 /** Builds the OpenTUI tree for one ChatModel and mirrors its state.
  * Layout, top to bottom: badge header / banner-or-history / queue list
  * (hidden while the queue is empty) / hairline input (1–5 rows) / inline
- * mention popup (hidden unless the cursor is in an `@` mention) / status
- * line. */
+ * completion popup (hidden unless the cursor is in an `@` mention or a
+ * leading `/` command word) / status line. */
 export class ChatView {
   private readonly body: BoxRenderable;
   private readonly banner: BoxRenderable;

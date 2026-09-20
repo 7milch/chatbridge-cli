@@ -38,8 +38,12 @@ a static page with `no-preference` as the floor), two runs back to back:
 | `reduce`, animated (default now) — run 2 | 0.00 | 0.0% |
 | `no-preference`, static (control) — run 2 | -0.01 | -0.1% |
 
-(The static-control row's -0.01 in run 2 is measurement noise from `ps
-time`'s one-second resolution, not negative CPU usage.)
+(The static-control row's -0.01 in run 2 is not negative CPU usage: the
+reading is a difference between two sums over the browser's process tree,
+and it goes slightly negative when the tree shrinks between the snapshots —
+most likely a short-lived helper process counted in the first one and gone by
+the second. The measured cause was not chased down; at -0.1% of one core it
+does not change the conclusion.)
 
 ## Conclusion
 
