@@ -97,6 +97,17 @@ describe("dummyReply", () => {
 });
 
 describe("renderDummyMarkdown", () => {
+  test("a fence right after text, with no blank line, is still a code block", () => {
+    // A prompt is echoed verbatim, and people type a fence straight under a
+    // sentence; folding it into the paragraph would turn the whole block into
+    // one line that Markdown then reads as an inline code span.
+    expect(
+      renderDummyMarkdown("see:\n```ts\nconst a = 1;\nconst b = 2;\n```\ndone"),
+    ).toBe(
+      '<p>see:</p><pre><code class="language-ts">const a = 1;\nconst b = 2;</code></pre><p>done</p>',
+    );
+  });
+
   test("renders every block kind the `md:` reply uses", () => {
     const html = renderDummyMarkdown(dummyReply("md: x"));
     expect(html).toContain("<p>Echo: md: x</p>");

@@ -104,6 +104,10 @@ function markdownBlocks(source: string): string[] {
   };
   for (const line of source.split("\n")) {
     if (line.startsWith("```")) {
+      // An opening fence starts its own block even without a blank line
+      // above it; left in the paragraph, the code would be joined into one
+      // line and read back as an inline code span.
+      if (!fenced) flush();
       current.push(line);
       if (fenced) flush();
       fenced = !fenced;
