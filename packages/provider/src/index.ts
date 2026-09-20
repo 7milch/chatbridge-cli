@@ -1,4 +1,6 @@
-import type { Page } from "playwright-core";
+import type { Locator, Page } from "playwright-core";
+
+export { elementToMarkdown } from "./element-to-markdown.js";
 
 /** Provider defaults for the opening phase (launch → goto → isLoggedIn →
  * startNewChat). Users override both via config.json and env vars. */
@@ -212,4 +214,4 @@ export function defineProvider(provider: Provider): Provider {
   return provider;
 }
 
-export type { Page };
+export type { Locator, Page };
