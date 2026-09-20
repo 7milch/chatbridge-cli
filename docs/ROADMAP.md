@@ -233,6 +233,16 @@ one-box composer with a file picker and a `/` command menu (#97), and typing
 `/` completes commands in both UIs (#86). Also the eight v0.9.0 follow-ups
 (#87–#94). Ships on the 0.9.x line.
 
+### 17. Streaming, Markdown and TUI polish — done (issue #71, PR #112, 2026-09-21)
+
+Interactive replies stream and render as Markdown in the TUI: providers opt in
+with `responseFormat`, `streaming.responseText` and the `elementToMarkdown`
+helper, and the wait indicator is the last history row the reply grows from
+(#71, #72, #96). Text can be copied by dragging or with the new `/copy`
+built-in, focus stays on the input and PgUp/PgDn page the history (#98, #99,
+#100), and teardown waits for an idle close that is still saving auth state
+(#103). Ships as v0.10.0.
+
 ## Backlog
 
 Moved to GitHub. See the issues labelled
