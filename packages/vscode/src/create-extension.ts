@@ -19,6 +19,7 @@ import {
   missingContributions,
   recommendedContributions,
 } from "./manifest.js";
+import { onSendResult } from "./send-result.js";
 import { SessionController } from "./session-controller.js";
 import { parseIdleTimeoutMin, parseTimeoutSec } from "./timeout-setting.js";
 import { type ExtensionUiOptions, resolveUiConfig } from "./ui-config.js";
@@ -104,13 +105,11 @@ export function createExtension(opts: CreateExtensionOptions) {
       () => (controller as SessionController).getState(),
       {
         send: (text) =>
-          void handlers.send(text).then((r) => {
-            // The webview empties the composer as it posts `send`; a hook
-            // refusal sends nothing, so give the text back to be fixed.
-            if (!r.ok && r.code === "URL_HOOK") {
-              bridge.pushTookBack([{ text, attachments: [] }]);
-            }
-          }),
+          void handlers
+            .send(text)
+            .then((r) =>
+              onSendResult(r, text, (entries) => bridge.pushTookBack(entries)),
+            ),
         removeAttachment: (i) => controller?.removeAttachment(i),
         takeBack: () => {
           const r = controller?.takeBack();
