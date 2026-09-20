@@ -1,3 +1,9 @@
+/* Several blocks below set an explicit `display`, which beats the UA
+   stylesheet's `[hidden]` rule; `hidden` is how every one of them is
+   shown and hidden, so it wins here once and for all. */
+[hidden] {
+  display: none !important;
+}
 body {
   margin: 0;
   display: flex;
@@ -185,6 +191,13 @@ body {
 .icon-button[aria-expanded="true"] {
   background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
 }
+/* `#composer-box:focus-within` lights the whole box whichever control is
+   focused, and `#input` has no outline, so each button needs its own ring
+   for a keyboard user to tell them apart. */
+.icon-button:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
 .icon-button:disabled {
   opacity: 0.4;
   cursor: default;
@@ -212,7 +225,9 @@ body {
      bottom keeps the popup above it however tall the input has grown. */
   left: 8px;
   right: 8px;
-  bottom: 42px;
+  /* Clear of the action row: #composer's 8px padding + #composer-box's 1px
+     border and 6px padding + the row's 24px height + its 4px margin-top. */
+  bottom: 43px;
   z-index: 5;
   max-height: 240px;
   overflow-y: auto;
@@ -274,10 +289,6 @@ body {
   text-align: center;
   opacity: 0.7;
 }
-/* `display: flex` above would otherwise beat the `hidden` attribute. */
-#welcome[hidden] {
-  display: none;
-}
 #banner {
   max-width: 100%;
   height: auto;
@@ -301,10 +312,6 @@ body {
 #send.secondary {
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
-}
-/* `hidden` alone does not beat the SVG's own display in every engine. */
-#send .icon[hidden] {
-  display: none;
 }
 #input:disabled {
   opacity: 0.5;
