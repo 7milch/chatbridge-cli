@@ -105,6 +105,16 @@ async function settle() {
   await new Promise((r) => setTimeout(r, 0));
 }
 
+/** Waits until `cond` holds, so a test observes a real state change instead
+ * of a fixed number of turns of the event loop. */
+async function waitFor(cond: () => boolean, tries = 100): Promise<void> {
+  for (let i = 0; i < tries; i++) {
+    if (cond()) return;
+    await settle();
+  }
+  throw new Error("waitFor: condition never became true");
+}
+
 describe("SessionController", () => {
   test("starts closed with an empty history", () => {
     const h = harness();
@@ -935,6 +945,80 @@ describe("SessionController.runCommand", () => {
     h.commandResults[1]?.reject(new Error("gone"));
     expect((await p).ok).toBe(false);
     expect(h.controller.getState().status).toBe("dead");
+  });
+
+  test("a session without runCommand refuses without killing the controller", async () => {
+    const h = harness();
+    // A session that cannot run commands at all, as an older or partial
+    // ChatSession implementation would be.
+    const plain: ChatSessionLike = {
+      async send() {
+        return "reply";
+      },
+      async close() {},
+      async kill() {},
+    };
+    h.controller = new SessionController({
+      openSession: async () => {
+        h.opens++;
+        return plain;
+      },
+      closeTimeoutMs: 20,
+      onChange: (s) => h.states.push(s.status),
+    });
+    const r = await h.controller.runCommand("model", "", "/model");
+    expect(r).toEqual({
+      ok: false,
+      code: "COMMAND_UNAVAILABLE",
+      message: "/model is not available in this session.",
+    });
+    const s = h.controller.getState();
+    expect(s.status).toBe("idle");
+    expect(s.lastError).toBeUndefined();
+    expect(s.messages).toEqual([
+      { role: "user", text: "/model", attachments: [] },
+      { role: "error", text: "/model is not available in this session." },
+    ]);
+    // The browser is still usable: an ordinary send goes through.
+    expect(await h.controller.send("hi")).toEqual({ ok: true });
+    expect(h.opens).toBe(1);
+  });
+
+  test("a queued turn still drains after an unavailable command", async () => {
+    const h = harness();
+    const plain: ChatSessionLike = {
+      async send(prompt) {
+        h.sent.push(prompt);
+        return "reply";
+      },
+      async close() {},
+      async kill() {},
+    };
+    h.controller = new SessionController({
+      openSession: async () => {
+        h.opens++;
+        return plain;
+      },
+      closeTimeoutMs: 20,
+      onChange: (s) => h.states.push(s.status),
+    });
+    const running = h.controller.runCommand("model", "", "/model");
+    expect(await h.controller.send("after")).toEqual({
+      ok: true,
+      queued: true,
+    });
+    await running;
+    // The drained turn is asynchronous: wait for its reply to land, not for
+    // a fixed number of microtasks.
+    await waitFor(() =>
+      h.controller
+        .getState()
+        .messages.some((m) => m.role === "assistant" && m.text === "reply"),
+    );
+    expect(h.sent).toEqual(["after"]);
+    const after = h.controller.getState();
+    expect(after.status).toBe("idle");
+    expect(after.queue).toEqual([]);
   });
 });
 

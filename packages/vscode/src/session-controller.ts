@@ -83,6 +83,14 @@ export interface SessionControllerOptions {
 
 export const CLOSE_TIMEOUT_MS = 5_000;
 
+/** Errors a turn can fail with without ending the session: the browser is
+ * still usable, so the controller returns to `idle` and drains its queue
+ * instead of going `dead` and dropping the browser. */
+export const NON_FATAL_CODES: ReadonlySet<string> = new Set([
+  "RESPONSE_TIMEOUT",
+  "COMMAND_UNAVAILABLE",
+]);
+
 const EMPTY: SendResult = {
   ok: false,
   code: "EMPTY",
@@ -319,7 +327,13 @@ export class SessionController {
       const session = await this.ensureSession(generation);
       if (session === undefined) return { ok: true }; // stale
       if (session.runCommand === undefined) {
-        throw new Error(`/${command.name} is not available in this session.`);
+        // Unreachable with the real ChatSession. A coded error keeps it out
+        // of `fail()`'s fatal branch: a session that cannot run a command is
+        // a caller bug, not a reason to close the user's browser.
+        throw new ChatBridgeError(
+          "COMMAND_UNAVAILABLE",
+          `/${command.name} is not available in this session.`,
+        );
       }
       if (this.status !== "busy") this.setStatus("busy");
       const result = await session.runCommand(command.name, command.args);
@@ -476,7 +490,7 @@ export class SessionController {
     const { code, message } = this.pushError(err);
     // Show the error before `dropSession` (up to `closeTimeoutMs`) runs.
     this.emit();
-    if (code === "RESPONSE_TIMEOUT") {
+    if (NON_FATAL_CODES.has(code)) {
       this.status = "idle";
       this.drain();
       this.emit();
