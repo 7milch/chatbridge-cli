@@ -46,6 +46,17 @@ export interface OpenOptions {
  * browser. The same 5 s cap the UIs use for a reset. */
 export const IDLE_CLOSE_BUDGET_MS = 5_000;
 
+/** Default interval between `streaming.responseText` polls. */
+export const DEFAULT_POLL_INTERVAL_MS = 250;
+
+export interface SendOptions {
+  /** Interactive UIs only. Receives the whole reply text so far — not a
+   * delta — each time it changes, while the turn is pending. Never called
+   * after `send` settles. Needs `provider.streaming`; without it, or without
+   * this callback, the turn is not polled at all. */
+  onPartial?: (textSoFar: string) => void;
+}
+
 export interface ChatSessionOptions {
   provider: Provider;
   authStore: AuthStore;
@@ -80,6 +91,8 @@ export interface ChatSessionOptions {
   idleNow?: () => number;
   /** Test-only: how often the idle watch checks its deadline. */
   idleTickMs?: number;
+  /** Test-only: the wait between two `streaming.responseText` polls. */
+  pollSleep?: (ms: number) => Promise<void>;
 }
 
 /** The default missing-browser pre-check looks for the *headed*
@@ -112,8 +125,14 @@ export class ChatSession {
     private readonly rt: RuntimeLike,
     private readonly provider: Provider,
     private readonly timeoutMs: number,
+    private readonly pollSleep: (ms: number) => Promise<void>,
     private readonly onProgress?: (message: string) => void,
   ) {}
+
+  /** What `send` resolves with, for the UI to pick a renderer. */
+  get responseFormat(): "markdown" | "text" {
+    return this.provider.responseFormat ?? "text";
+  }
 
   /** Arms the idle close, unless the resolved timeout disables it. */
   private startIdleWatch(opts: ChatSessionOptions): void {
@@ -224,7 +243,14 @@ export class ChatSession {
         // The opening phase set the page default to open.timeoutMs; turns
         // run under --timeout, so hand the page back to that budget.
         rt.page.setDefaultTimeout(timeoutMs);
-        const session = new ChatSession(rt, provider, timeoutMs, onProgress);
+        const session = new ChatSession(
+          rt,
+          provider,
+          timeoutMs,
+          opts.pollSleep ??
+            ((ms) => new Promise<void>((r) => setTimeout(r, ms))),
+          onProgress,
+        );
         // Only once the opening phase succeeded: a session that never
         // opened has no browser to close.
         session.startIdleWatch(opts);
@@ -266,8 +292,12 @@ export class ChatSession {
   }
 
   /** sendMessage → waitForResponse for one turn. A timeout leaves the
-   * session usable; the caller may send again. */
-  async send(prompt: string): Promise<string> {
+   * session usable; the caller may send again.
+   *
+   * With `opts.onPartial` and a provider that has `streaming`, the reply text
+   * so far is reported while the turn is pending (see `pollPartial`); the
+   * resolved value, completion and timeouts are unaffected. */
+  async send(prompt: string, opts: SendOptions = {}): Promise<string> {
     if (this.closed) {
       throw new InvalidStateError("ChatSession is closed.");
     }
@@ -282,9 +312,11 @@ export class ChatSession {
         this.provider.sendMessage(this.rt.page, prompt),
       );
       this.onProgress?.("Waiting for response...");
-      return await runStep("waitForResponse", this.timeoutMs, () =>
+      const waiting = runStep("waitForResponse", this.timeoutMs, () =>
         this.provider.waitForResponse(this.rt.page),
       );
+      this.pollPartial(waiting, opts.onPartial);
+      return await waiting;
     } catch (err) {
       if (err instanceof ResponseTimeoutError) await this.diagnoseTimeout();
       throw err;
@@ -292,6 +324,50 @@ export class ChatSession {
       this.pending = false;
       this.idleWatch?.resume();
     }
+  }
+
+  /** Feeds `onPartial` while `waiting` is pending. Completion, the final text
+   * and the timeout all stay with `waitForResponse`; this only reads. One
+   * poll at a time, and nothing is emitted once the turn has settled — the
+   * loop is not awaited, so a `responseText` parked on a wedged page costs
+   * the turn nothing. */
+  private pollPartial(
+    waiting: Promise<unknown>,
+    onPartial: ((textSoFar: string) => void) | undefined,
+  ): void {
+    const streaming = this.provider.streaming;
+    if (onPartial === undefined || streaming === undefined) return;
+    let settled = false;
+    const done = () => {
+      settled = true;
+    };
+    // Both handlers: the derived promise resolves either way, so a turn that
+    // times out leaves no unhandled rejection behind.
+    waiting.then(done, done);
+    const interval = streaming.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    void (async () => {
+      let last: string | undefined;
+      while (!settled) {
+        // The sleep leads every iteration, so a throwing responseText retries
+        // on the next tick rather than spinning.
+        await this.pollSleep(interval);
+        if (settled) return;
+        let text: string | undefined;
+        try {
+          text = await streaming.responseText(this.rt.page);
+        } catch {
+          continue; // a node detached mid-read; the next poll sees the new one
+        }
+        if (settled) return;
+        if (typeof text !== "string" || text === last) continue;
+        last = text;
+        try {
+          onPartial(text);
+        } catch {
+          // The UI's callback is not ours to trust with the turn.
+        }
+      }
+    })();
   }
 
   /** Runs one provider `/command` on the chat page. Same guards as `send`:
