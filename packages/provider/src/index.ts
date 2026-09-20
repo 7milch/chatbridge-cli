@@ -79,6 +79,18 @@ export interface UrlHook {
   resolve(url: string): Promise<UrlHookResult>;
 }
 
+/** Lets interactive UIs show the reply while it is being written. Core polls
+ * `responseText` while `waitForResponse` is pending; completion, the final
+ * text and timeouts still come from `waitForResponse`. */
+export interface ProviderStreaming {
+  /** Text so far of the reply to the most recent `sendMessage`, in
+   * `responseFormat`. `undefined` while only a placeholder exists. Must
+   * never return an earlier turn's text. */
+  responseText(page: Page): Promise<string | undefined>;
+  /** Poll interval in ms. Default 250. */
+  pollIntervalMs?: number;
+}
+
 /**
  * A Provider implements all service-specific browser behaviour for one
  * web chat AI service. The framework owns the browser lifecycle and auth
@@ -108,6 +120,12 @@ export interface Provider {
    * core calls this only after `isLoggedIn` returned false. Must not throw
    * on an ordinary logged-out page. */
   detectBlock?(page: Page): Promise<string | undefined>;
+  /** Optional. What `waitForResponse` (and `streaming.responseText`) return.
+   * "text" (default) is shown verbatim. "markdown" is rendered as Markdown
+   * by UIs that support it; `elementToMarkdown` produces it from the DOM. */
+  responseFormat?: "markdown" | "text";
+  /** Optional. See ProviderStreaming. */
+  streaming?: ProviderStreaming;
   /** Optional. A slow service may raise the opening timeout; a flaky one
    * may ask for retries. See ProviderOpenDefaults. */
   open?: ProviderOpenDefaults;
@@ -173,6 +191,23 @@ export function defineProvider(provider: Provider): Provider {
     throw new Error(
       `Provider idle.timeoutMs must be a non-negative finite number, got ${idleTimeout}.`,
     );
+  }
+  const format = provider.responseFormat;
+  if (format !== undefined && format !== "markdown" && format !== "text") {
+    throw new Error(
+      `Provider responseFormat must be "markdown" or "text", got ${JSON.stringify(format)}.`,
+    );
+  }
+  if (provider.streaming !== undefined) {
+    if (typeof provider.streaming.responseText !== "function") {
+      throw new Error("Provider streaming.responseText must be a function.");
+    }
+    const poll = provider.streaming.pollIntervalMs;
+    if (poll !== undefined && (!Number.isFinite(poll) || poll <= 0)) {
+      throw new Error(
+        `Provider streaming.pollIntervalMs must be a finite number greater than 0, got ${poll}.`,
+      );
+    }
   }
   return provider;
 }
