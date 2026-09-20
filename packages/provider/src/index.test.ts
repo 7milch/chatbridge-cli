@@ -128,3 +128,41 @@ describe("defineProvider: urlHooks", () => {
     }
   });
 });
+
+describe("defineProvider: browser", () => {
+  test("keeps a valid reducedMotion value", () => {
+    for (const reducedMotion of ["reduce", "no-preference"] as const) {
+      expect(
+        defineProvider({ ...base, browser: { reducedMotion } }).browser,
+      ).toEqual({ reducedMotion });
+    }
+  });
+  test("rejects any other value", () => {
+    expect(() =>
+      defineProvider({
+        ...base,
+        browser: { reducedMotion: "off" as unknown as "reduce" },
+      }),
+    ).toThrow(
+      'Provider browser.reducedMotion must be "reduce" or "no-preference", got "off".',
+    );
+  });
+});
+
+describe("defineProvider: idle", () => {
+  test("keeps a non-negative timeout, 0 included", () => {
+    for (const timeoutMs of [0, 60_000]) {
+      expect(defineProvider({ ...base, idle: { timeoutMs } }).idle).toEqual({
+        timeoutMs,
+      });
+    }
+  });
+  test.each([-1, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects %p",
+    (timeoutMs) => {
+      expect(() => defineProvider({ ...base, idle: { timeoutMs } })).toThrow(
+        "Provider idle.timeoutMs must be a non-negative finite number",
+      );
+    },
+  );
+});
