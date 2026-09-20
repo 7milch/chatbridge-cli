@@ -41,7 +41,15 @@ export class BrowserRuntime {
           ? // Playwright accepts a file path for storageState.
             opts.authStore.path()
           : undefined;
-        const context = await browser.newContext({ storageState });
+        // The only newContext() in the repo, so this covers every launch —
+        // headless, headful, and the `auth login` window — and a page looks
+        // the same in all of them when debugging. Reduced motion is the
+        // default because an idle animating page is rasterised on the CPU
+        // for as long as the session stays open.
+        const context = await browser.newContext({
+          storageState,
+          reducedMotion: opts.provider.browser?.reducedMotion ?? "reduce",
+        });
         const page = await context.newPage();
         return new BrowserRuntime(browserServer, context, page, opts.authStore);
       } catch (err) {
