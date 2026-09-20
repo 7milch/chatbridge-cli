@@ -47,6 +47,27 @@ describe("resolveIdleOptions", () => {
     ).toEqual({ timeoutMs: 1_800_000 });
   });
 
+  test("a blank env value is unset, not 0", () => {
+    // Number(" ") is 0, which would silently disable the idle close.
+    expect(
+      resolveIdleOptions({
+        provider: {},
+        config: { idle: { timeoutMin: 30 } },
+        env: { CHATBRIDGE_IDLE_TIMEOUT: "  " },
+      }),
+    ).toEqual({ timeoutMs: 1_800_000 });
+  });
+
+  test("surrounding whitespace is ignored, not rejected", () => {
+    expect(
+      resolveIdleOptions({
+        provider: {},
+        config: {},
+        env: { CHATBRIDGE_IDLE_TIMEOUT: " 45 " },
+      }),
+    ).toEqual({ timeoutMs: 2_700_000 });
+  });
+
   test("0 disables the idle close, from config and from the env", () => {
     expect(
       resolveIdleOptions({

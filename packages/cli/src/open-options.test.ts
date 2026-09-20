@@ -40,6 +40,28 @@ describe("resolveOpenOptions", () => {
     ).toEqual({ timeoutMs: 45_000, retries: 1 });
   });
 
+  test("a blank env value is unset, and whitespace around a value is ignored", () => {
+    // Number(" ") is 0: blank CHATBRIDGE_OPEN_RETRIES would silently reset
+    // the retries, and blank CHATBRIDGE_OPEN_TIMEOUT would be rejected.
+    expect(
+      resolveOpenOptions({
+        provider: {},
+        config: { open: { timeoutSec: 30, retries: 1 } },
+        env: { CHATBRIDGE_OPEN_TIMEOUT: "  ", CHATBRIDGE_OPEN_RETRIES: " " },
+      }),
+    ).toEqual({ timeoutMs: 30_000, retries: 1 });
+    expect(
+      resolveOpenOptions({
+        provider: {},
+        config: {},
+        env: {
+          CHATBRIDGE_OPEN_TIMEOUT: " 45 ",
+          CHATBRIDGE_OPEN_RETRIES: " 2 ",
+        },
+      }),
+    ).toEqual({ timeoutMs: 45_000, retries: 2 });
+  });
+
   test.each([
     [{ CHATBRIDGE_OPEN_TIMEOUT: "abc" }, "CHATBRIDGE_OPEN_TIMEOUT"],
     [{ CHATBRIDGE_OPEN_TIMEOUT: "0" }, "CHATBRIDGE_OPEN_TIMEOUT"],

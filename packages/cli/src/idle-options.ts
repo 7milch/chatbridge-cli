@@ -29,7 +29,9 @@ export function resolveIdleOptions(
   if (p?.timeoutMs !== undefined) out.timeoutMs = p.timeoutMs;
   const c = input.config.idle;
   if (c?.timeoutMin !== undefined) out.timeoutMs = c.timeoutMin * 60_000;
-  const raw = input.env.CHATBRIDGE_IDLE_TIMEOUT;
+  // Trimmed first: Number(" ") is 0, so a blank value would disable the
+  // idle close instead of meaning "not set".
+  const raw = input.env.CHATBRIDGE_IDLE_TIMEOUT?.trim();
   if (raw !== undefined && raw !== "") {
     const minutes = Number(raw);
     if (!Number.isFinite(minutes) || minutes < 0) {
