@@ -216,6 +216,14 @@ The "Opening browser..." phase gets a per-step timeout and a retry count,
 resolved built-in → provider → config.json → env (#42); one-shot mode now
 reads config.json. Banner gradients gain a direction (#81). Ships as v0.8.3.
 
+### 15. Provider extension points: slash commands and URL hooks — done (issue #83, PR #85, 2026-09-20)
+
+A Provider can ship `/commands` (`show` prints on the page's behalf, `send`
+expands into a turn) and URL hooks (a matching URL is resolved by the
+provider and attached like an `@file` mention), both for the TUI and
+VSCode only (#83, #84). The framework never fetches and never sees a
+credential. Ships as v0.9.0.
+
 ## Backlog
 
 Moved to GitHub. See the issues labelled
