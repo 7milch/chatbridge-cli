@@ -73,11 +73,14 @@ export const { activate, deactivate } = createExtension({
 - **Up** on an empty composer takes the last queued message back for
   editing; queued entries can also be removed individually.
 - **`/` commands** — `/login`, `/logout`, `/new`, `/reopen`, `/help`, the
-  same table the TUI uses, plus whatever the provider adds. Only the bare
-  form on its own counts, so anything else (including `/usr/bin` style
-  paths) is sent verbatim. The `/` button in the action row lists them all;
-  choosing one writes `/name ` into the composer instead of running it, so
-  arguments can follow.
+  same table the TUI uses, plus whatever the provider adds. Type `/` in the
+  composer and the menu opens, filtered as you type: **↑/↓** select, **Tab**
+  completes the word to `/name ` so arguments can follow, **Enter**
+  completes too — unless what you typed is already the whole command, in
+  which case it runs — and **Esc** closes. The `/` button in the action row
+  opens the same menu unfiltered. Completing never runs the command. Only
+  the bare form on its own counts when you send, so anything else (including
+  `/usr/bin` style paths) is sent verbatim.
 - **`+`** opens the native file picker; the chosen files become the same
   attachment chips a drop produces.
 - The send button is `↑` and turns into a queue icon while a turn is in

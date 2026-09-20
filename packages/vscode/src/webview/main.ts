@@ -15,7 +15,9 @@ import {
   CommandMenuModel,
   buildSections,
   buttonMenuAction,
-  insertCommand,
+  replaceCommandWord,
+  typingMenuAction,
+  typingMenuPrefix,
 } from "./command-menu.js";
 import {
   hintText,
@@ -355,6 +357,7 @@ input.addEventListener("input", () => {
   showInlineError(undefined);
   fitComposer();
   if (lastState) renderComposer(lastState);
+  refreshTypingMenu();
 });
 
 // The native picker, not a hidden <input type=file>: the host must read the
@@ -506,6 +509,30 @@ let menu: CommandMenuModel | undefined;
  * opens the same one from `#input`, which then owns both, so the owner is a
  * variable rather than hard-wired into each of these functions. */
 let menuOwner: HTMLElement = commandsButton;
+/** The composer text an Escape dismissed the typing menu over. Without it the
+ * next caret event would reopen the menu over the same text and Escape would
+ * be useless; any edit clears it. */
+let dismissedText: string | undefined;
+
+/** The owner's state while the menu is open. On the textarea the combobox
+ * attributes are added and removed with the menu — `#commands` carries its
+ * own in the HTML, so there only `aria-expanded` flips. */
+function setOwnerExpanded(open: boolean): void {
+  if (menuOwner === input) {
+    if (open) {
+      input.setAttribute("aria-expanded", "true");
+      input.setAttribute("aria-controls", "command-menu");
+      input.setAttribute("aria-autocomplete", "list");
+    } else {
+      input.removeAttribute("aria-expanded");
+      input.removeAttribute("aria-controls");
+      input.removeAttribute("aria-autocomplete");
+    }
+  } else {
+    menuOwner.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+  if (!open) menuOwner.removeAttribute("aria-activedescendant");
+}
 
 function paintSelection(): void {
   const selectedId =
@@ -535,15 +562,21 @@ function closeMenu(focusTarget?: HTMLElement): void {
   menu = undefined;
   commandMenu.hidden = true;
   commandMenu.replaceChildren();
-  menuOwner.setAttribute("aria-expanded", "false");
-  menuOwner.removeAttribute("aria-activedescendant");
+  setOwnerExpanded(false);
   focusTarget?.focus();
 }
 
 function chooseCommand(index: number): void {
   const picked = menu?.items[index];
   if (!picked) return;
-  const { text, cursor } = insertCommand(input.value, picked.name);
+  // `replaceCommandWord` falls back to `insertCommand` when nothing under the
+  // cursor is a command word, which is the button's case; a half-typed `/lo`
+  // is replaced rather than left in front of the chosen command.
+  const { text, cursor } = replaceCommandWord(
+    input.value,
+    input.selectionStart ?? 0,
+    picked.name,
+  );
   closeMenu();
   input.value = text;
   input.focus();
@@ -553,11 +586,26 @@ function chooseCommand(index: number): void {
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-function openMenu(): void {
+/** Builds and shows the menu. With a `prefix` the list is filtered to the
+ * command word being typed and the textarea stays focused and owns the menu;
+ * without one it is the button's full menu. */
+function openMenu(prefix?: string): void {
   // The display name is only in the document title (buildHtml puts it
   // there); the protocol carries no provider name.
-  menu = new CommandMenuModel(buildSections(document.title, providerCommands));
-  menuOwner = commandsButton;
+  const sections = buildSections(document.title, providerCommands, prefix);
+  // Only the typing menu can come up empty: nothing matches what was typed,
+  // so there is nothing to offer and any menu already up is dismissed.
+  if (sections.length === 0) {
+    closeMenu();
+    return;
+  }
+  menu = new CommandMenuModel(sections);
+  const owner = prefix === undefined ? commandsButton : input;
+  if (owner !== menuOwner) {
+    // Hand the ARIA state over rather than leaving it stale on the old owner.
+    setOwnerExpanded(false);
+    menuOwner = owner;
+  }
   commandMenu.replaceChildren();
   let index = 0;
   for (const section of menu.sections) {
@@ -585,17 +633,45 @@ function openMenu(): void {
     commandMenu.appendChild(group);
   }
   commandMenu.hidden = false;
-  menuOwner.setAttribute("aria-expanded", "true");
+  setOwnerExpanded(true);
   paintSelection();
-  // Focus stays on the owner, never moves to the input: that is what makes
-  // `aria-activedescendant` announce the active option, and it leaves the
-  // composer's own Enter, arrows and IME untouched while the menu is open.
-  menuOwner.focus();
+  // Focus stays on the owner: on the button that is what makes
+  // `aria-activedescendant` announce the active option while the composer's
+  // own Enter, arrows and IME are left untouched, and in typing mode it means
+  // the caret never leaves the textarea at all.
+  if (menuOwner === commandsButton) menuOwner.focus();
 }
 
 commandsButton.addEventListener("click", () => {
+  // A typing menu is already gone by now: the click's `mousedown` is outside
+  // its owner and the popup, so the listener below closed it. Pressing the
+  // button therefore swaps a filtered menu for the full one, which is what it
+  // says it does.
   if (menu) closeMenu(input);
   else openMenu();
+});
+
+/** Opens, updates or closes the menu for the `/` word being typed. */
+function refreshTypingMenu(): void {
+  if (input.value !== dismissedText) dismissedText = undefined;
+  const prefix = typingMenuPrefix(
+    input.value,
+    input.selectionStart ?? 0,
+    dismissedText,
+  );
+  if (prefix === undefined) {
+    // A menu the button opened is the button's business; only the typing one
+    // follows the caret. Closing must not move the focus or the caret.
+    if (menuOwner === input) closeMenu();
+    return;
+  }
+  openMenu(prefix);
+}
+
+// A click or an arrow key inside the word changes what is being completed,
+// and neither fires `input`; `selectionchange` covers both.
+document.addEventListener("selectionchange", () => {
+  if (document.activeElement === input) refreshTypingMenu();
 });
 
 /** Menu keys are only the ones pressed on the owner or inside the popup.
@@ -615,6 +691,35 @@ document.addEventListener(
   "keydown",
   (e) => {
     if (!menu || !isMenuKeyEvent(e.target)) return;
+    if (menuOwner === input) {
+      const action = typingMenuAction(
+        e,
+        input.value,
+        input.selectionStart ?? 0,
+        menu.selected,
+      );
+      if (action === "pass") return;
+      if (action === "submit") {
+        // Nothing left to complete: the key falls through untouched to the
+        // composer's own handler, whose Enter branch sends.
+        closeMenu();
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      if (action === "up" || action === "down") {
+        menu.move(action === "down" ? 1 : -1);
+        paintSelection();
+      } else if (action === "accept") {
+        chooseCommand(menu.selectedIndex);
+      } else {
+        // Escape. Focus and caret stay where they are, and the text is
+        // remembered so the next caret event does not reopen the menu over it.
+        dismissedText = input.value;
+        closeMenu();
+      }
+      return;
+    }
     const action = buttonMenuAction(e);
     if (action === "pass") return;
     e.preventDefault();
