@@ -840,6 +840,46 @@ describe("ChatSession: idle close", () => {
     expect(h.killed).toBe(0);
   });
 
+  test("onIdleExpired receives a promise that settles only after the close", async () => {
+    const h = harness();
+    const c = clock();
+    const { options } = idleOpts(h, c);
+    let closing: Promise<void> | undefined;
+    let closedWhenTold = -1;
+    await ChatSession.open({
+      ...options,
+      onIdleExpired: (p) => {
+        closing = p;
+        closedWhenTold = h.closed;
+      },
+    });
+    c.advance(IDLE_MS + 1);
+    await waitFor(() => closing !== undefined, "the expiry callback");
+    // Told first: nothing was closed yet when the UI heard about it.
+    expect(closedWhenTold).toBe(0);
+    await closing;
+    expect(h.closed).toBe(1);
+    expect(h.saved).toBe(1);
+  });
+
+  test("the closing promise resolves after the kill fallback and never rejects", async () => {
+    const h = harness();
+    const c = clock();
+    const { options } = idleOpts(h, c);
+    let closing: Promise<void> | undefined;
+    await ChatSession.open({
+      ...options,
+      onIdleExpired: (p) => {
+        closing = p;
+      },
+    });
+    h.loginGate = new Promise<void>(() => {}); // close() parks forever
+    c.advance(IDLE_MS + 1);
+    await waitFor(() => closing !== undefined, "the expiry callback");
+    await expect(closing).resolves.toBeUndefined();
+    expect(h.killed).toBe(1);
+  }, 20_000);
+
   test("a wedged page is killed after the close budget", async () => {
     const h = harness();
     const c = clock();

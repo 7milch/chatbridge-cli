@@ -1906,7 +1906,9 @@ describe("idle close", () => {
       commands: [{ name: "model", description: "Show the model" }],
       ...opts,
       openSession: async (_report, onIdleExpired) => {
-        expire.push(onIdleExpired);
+        // These tests only care that the expiry reached the model, so the
+        // close they hand over is already settled.
+        expire.push(() => onIdleExpired(Promise.resolve()));
         const s = sessions[n++];
         if (s === undefined) throw new Error("no session queued");
         return s.session;
@@ -1915,6 +1917,35 @@ describe("idle close", () => {
     await model.ready;
     return { model, sessions, expire };
   }
+
+  test("idle expiry keeps the in-flight close reachable until it settles", async () => {
+    let expire: ((closing: Promise<void>) => void) | undefined;
+    let settle!: () => void;
+    const closing = new Promise<void>((r) => {
+      settle = r;
+    });
+    const session: ChatSessionLike = {
+      send: async () => "ok",
+      close: async () => {},
+      kill: async () => {},
+    };
+    const model = new ChatModel({
+      login: async () => {},
+      clearAuth: async () => {},
+      openSession: async (_report, onIdleExpired) => {
+        expire = onIdleExpired;
+        return session;
+      },
+    });
+    await model.ready;
+    expire?.(closing);
+    expect(model.session).toBeUndefined();
+    expect(model.idleClosing).toBe(closing);
+    settle();
+    await closing;
+    await Promise.resolve();
+    expect(model.idleClosing).toBeUndefined();
+  });
 
   test("expiry drops the session and the next prompt reopens and sends", async () => {
     const h = await idleHarness();

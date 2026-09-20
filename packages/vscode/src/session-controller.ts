@@ -66,8 +66,11 @@ export interface TakeBackResult {
 export interface SessionControllerOptions {
   /** Opens a ChatSession; called lazily on the first send after `closed`.
    * `onIdleExpired` is handed to the session so core can tell the
-   * controller it closed the browser after the idle timeout. */
-  openSession: (onIdleExpired: () => void) => Promise<ChatSessionLike>;
+   * controller it closed the browser after the idle timeout, passing the
+   * promise of that close so deactivate can wait for the auth-state save. */
+  openSession: (
+    onIdleExpired: (closing: Promise<void>) => void,
+  ) => Promise<ChatSessionLike>;
   /** How long newChat / discard / close wait before killing. Default 5 s. */
   closeTimeoutMs?: number;
   /** Called with the full state after every change. */
@@ -126,6 +129,10 @@ export class SessionController {
    * but no status change shows it yet, so a send arriving meanwhile must
    * queue rather than start a second turn. */
   private expanding = false;
+  /** The idle close core is still running, if any. The controller has
+   * already dropped that session, so this is the only handle close() has
+   * to wait for the auth-state save. Cleared once it settles. */
+  private idleClosing: Promise<void> | undefined;
   private readonly closeTimeoutMs: number;
 
   constructor(private readonly opts: SessionControllerOptions) {
@@ -566,8 +573,8 @@ export class SessionController {
   private open(): Promise<ChatSessionLike> {
     let opened: ChatSessionLike | undefined;
     return this.opts
-      .openSession(() => {
-        if (opened !== undefined) this.idleExpired(opened);
+      .openSession((closing) => {
+        if (opened !== undefined) this.idleExpired(opened, closing);
       })
       .then((session) => {
         opened = session;
@@ -575,16 +582,38 @@ export class SessionController {
       });
   }
 
-  /** Core closed `session`'s browser after the idle timeout. It is already
-   * closing, so the session is only forgotten here; the lazy open on the
-   * next send does the rest. */
-  private idleExpired(session: ChatSessionLike): void {
+  /** Core is closing `session`'s browser after the idle timeout, and
+   * `closing` settles when that close has finished. The session is only
+   * forgotten here; the lazy open on the next send does the rest. */
+  private idleExpired(session: ChatSessionLike, closing: Promise<void>): void {
     if (this.session !== session) return; // stale: a reopen replaced it
     this.session = undefined;
+    this.idleClosing = closing;
+    void closing.then(() => {
+      if (this.idleClosing === closing) this.idleClosing = undefined;
+    });
     // A fresh chat must not re-send a prompt from before the break.
     this.lastPrompt = undefined;
     this.messages.push({ role: "separator", text: IDLE_CLOSED_SEPARATOR });
     this.setStatus("closed");
+  }
+
+  /** Waits for an idle close still in flight, capped like every other
+   * close here: deactivate must not hang on a wedged browser. */
+  private async settleIdleClose(): Promise<void> {
+    const closing = this.idleClosing;
+    if (closing === undefined) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        closing,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, this.closeTimeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 
   private async dropSession(): Promise<void> {
@@ -678,6 +707,9 @@ export class SessionController {
     // A reopen in flight is stale from here on: its new browser must be
     // closed rather than adopted by a controller the user has shut down.
     this.generation++;
+    // Core may still be saving the rotated auth state from an idle close;
+    // the controller no longer holds that session, only its promise.
+    await this.settleIdleClose();
     await this.dropSession();
     if (this.status !== "dead") this.status = "closed";
     this.emit();

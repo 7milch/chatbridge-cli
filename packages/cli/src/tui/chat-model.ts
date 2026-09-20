@@ -101,10 +101,11 @@ export interface ChatModelOptions {
    * entry in the history rather than a crash before the first frame.
    * `report` paints the status row while the open runs (retry attempts);
    * `onIdleExpired` is handed to the session so core can tell the model
-   * that it closed the browser after the idle timeout. */
+   * that it closed the browser after the idle timeout, passing the promise
+   * of that close so teardown can wait for the auth-state save. */
   openSession: (
     report: (message: string) => void,
-    onIdleExpired: () => void,
+    onIdleExpired: (closing: Promise<void>) => void,
   ) => Promise<ChatSessionLike>;
   /** `/login`: the headful login; resolves when the auth state is saved. */
   login: (opts: {
@@ -155,6 +156,10 @@ export class ChatModel {
   /** True once the idle timeout closed the browser and no session has
    * replaced it. The next prompt reopens; the view says so. */
   idleClosed = false;
+  /** The idle close core is still running, if any. The model has already
+   * dropped that session, so this is the only handle teardown has to wait
+   * for the auth-state save. Cleared once it settles. */
+  idleClosing: Promise<void> | undefined;
   /** Where a turn that ended while `/login` was running left the model.
    * The login owns the status meanwhile, so the turn records its outcome
    * here and runLogin restores it instead of the status it captured. */
@@ -177,7 +182,7 @@ export class ChatModel {
   private running: RunningCommand | undefined;
   private readonly openSession: (
     report: (message: string) => void,
-    onIdleExpired: () => void,
+    onIdleExpired: (closing: Promise<void>) => void,
   ) => Promise<ChatSessionLike>;
   private readonly login: ChatModelOptions["login"];
   private readonly clearAuth: () => Promise<void>;
@@ -256,8 +261,8 @@ export class ChatModel {
     report: (message: string) => void,
   ): Promise<ChatSessionLike> {
     const holder: { opened?: ChatSessionLike } = {};
-    const session = await this.openSession(report, () => {
-      if (holder.opened !== undefined) this.idleExpired(holder.opened);
+    const session = await this.openSession(report, (closing) => {
+      if (holder.opened !== undefined) this.idleExpired(holder.opened, closing);
     });
     // Both assignments must stay synchronous after this await: an expiry
     // that fires between `holder.opened` and the caller's `this.current`
@@ -267,14 +272,19 @@ export class ChatModel {
     return session;
   }
 
-  /** Core has closed `session`'s browser after the idle timeout. The
-   * session is gone but the model stays usable: the status is untouched
-   * (it is `idle`, since a turn would have held the watch paused), and the
-   * next prompt reopens through the ordinary reset path. */
-  private idleExpired(session: ChatSessionLike): void {
+  /** Core is closing `session`'s browser after the idle timeout, and
+   * `closing` settles when that close has finished. The session is gone but
+   * the model stays usable: the status is untouched (it is `idle`, since a
+   * turn would have held the watch paused), and the next prompt reopens
+   * through the ordinary reset path. */
+  private idleExpired(session: ChatSessionLike, closing: Promise<void>): void {
     if (this.current !== session) return; // stale: a reset replaced it
     this.current = undefined;
     this.idleClosed = true;
+    this.idleClosing = closing;
+    void closing.then(() => {
+      if (this.idleClosing === closing) this.idleClosing = undefined;
+    });
     this.onChange();
   }
 

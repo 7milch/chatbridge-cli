@@ -484,6 +484,83 @@ describe("runInteractive", () => {
     expect(s.launches[1]?.closed).toBe(1);
   });
 
+  /** A session the model can hold, for the idle-close teardown tests: core
+   * owns the real browser there, so the fake never has to close one. */
+  function idleSession() {
+    return {
+      send: async () => "",
+      close: async () => {},
+      kill: async () => {},
+    };
+  }
+
+  test("teardown waits for an idle close that is still saving auth state", async () => {
+    const t = await createTestRenderer({ width: 80, height: 20 });
+    let expire: ((closing: Promise<void>) => void) | undefined;
+    let settle!: () => void;
+    const closing = new Promise<void>((r) => {
+      settle = r;
+    });
+    let resolved = false;
+    const run = runInteractive({
+      ...sessionOpts().opts,
+      createSession: async (_report, onIdleExpired) => {
+        expire = onIdleExpired;
+        return idleSession();
+      },
+      createRenderer: async () => t.renderer,
+      index: FileIndex.fromPaths([]),
+    }).then((r) => {
+      resolved = true;
+      return r;
+    });
+    await waitFor(t, "Ctrl+R reopen");
+    // Core has dropped the session into its idle close; the model no longer
+    // holds it, so `closing` is teardown's only handle on the save.
+    expire?.(closing);
+    t.mockInput.pressKey("c", { ctrl: true });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(resolved).toBe(false);
+    settle();
+    expect(await run).toEqual({});
+  });
+
+  test("a wedged idle close is given up on after the teardown budget", async () => {
+    const t = await createTestRenderer({ width: 80, height: 20 });
+    let expire: ((closing: Promise<void>) => void) | undefined;
+    const exits: Array<number | undefined> = [];
+    const errs: string[] = [];
+    const realExit = process.exit;
+    const realWrite = process.stderr.write.bind(process.stderr);
+    process.exit = ((code?: number) => {
+      exits.push(code);
+    }) as unknown as typeof process.exit;
+    process.stderr.write = ((chunk: unknown) => {
+      errs.push(String(chunk));
+      return true;
+    }) as unknown as typeof process.stderr.write;
+    try {
+      const run = runInteractive({
+        ...sessionOpts().opts,
+        createSession: async (_report, onIdleExpired) => {
+          expire = onIdleExpired;
+          return idleSession();
+        },
+        createRenderer: async () => t.renderer,
+        index: FileIndex.fromPaths([]),
+      });
+      await waitFor(t, "Ctrl+R reopen");
+      expire?.(new Promise<void>(() => {})); // the close never settles
+      t.mockInput.pressKey("c", { ctrl: true });
+      await run;
+    } finally {
+      process.exit = realExit;
+      process.stderr.write = realWrite;
+    }
+    expect(exits).toEqual([1]);
+    expect(errs).toContain("browser did not close within 5 s; exiting\n");
+  }, 20_000);
+
   test("teardown progress messages are flushed after the terminal is restored", async () => {
     const t = await createTestRenderer({ width: 80, height: 20 });
     const s = sessionOpts(undefined, true);

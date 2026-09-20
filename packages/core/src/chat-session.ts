@@ -72,8 +72,10 @@ export interface ChatSessionOptions {
   idle?: IdleOptions;
   /** Called synchronously when the idle period expires, before anything is
    * awaited, so the UI has dropped its reference by the time the browser
-   * starts closing. */
-  onIdleExpired?: () => void;
+   * starts closing. `closing` settles when that close (or its kill fallback)
+   * has finished, and never rejects: a UI that is torn down meanwhile waits
+   * for it, so the process does not exit under the auth-state save. */
+  onIdleExpired?: (closing: Promise<void>) => void;
   /** Test-only: the clock the idle watch compares against. */
   idleNow?: () => number;
   /** Test-only: how often the idle watch checks its deadline. */
@@ -135,16 +137,26 @@ export class ChatSession {
   /** The idle close. The UI is told first and synchronously, so it has
    * dropped this session before anything awaits: from here `send` and
    * `runCommand` reject as closed. A normal close runs first, to save the
-   * rotated auth state; a wedged page is killed after the budget. */
+   * rotated auth state; a wedged page is killed after the budget. The UI
+   * also gets the promise of this close, because it no longer holds the
+   * session to join it. */
   private async expireIdle(
     timeoutMs: number,
-    onIdleExpired: (() => void) | undefined,
+    onIdleExpired: ((closing: Promise<void>) => void) | undefined,
   ): Promise<void> {
-    onIdleExpired?.();
-    this.onProgress?.(
-      `Closing the browser after ${formatIdleDuration(timeoutMs)} idle...`,
-    );
-    await closeOrKill(this, IDLE_CLOSE_BUDGET_MS);
+    let settle!: () => void;
+    const closing = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    try {
+      onIdleExpired?.(closing);
+      this.onProgress?.(
+        `Closing the browser after ${formatIdleDuration(timeoutMs)} idle...`,
+      );
+      await closeOrKill(this, IDLE_CLOSE_BUDGET_MS);
+    } finally {
+      settle();
+    }
   }
 
   /** isLoggedIn → true: return. false: ask detectBlock (when the provider

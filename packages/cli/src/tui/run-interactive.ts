@@ -95,10 +95,11 @@ export function waitForQuit(
   });
 }
 
-/** Waits for an in-flight reset to settle, capped at CLOSE_TIMEOUT_MS.
- * True when there was nothing to wait for or it settled in time; false when
- * it did not, in which case the caller must not assume which session is
- * current and hard-exits instead. */
+/** Waits for an in-flight reset — or for an idle close still saving the
+ * auth state — to settle, capped at CLOSE_TIMEOUT_MS. True when there was
+ * nothing to wait for or it settled in time; false when it did not, in
+ * which case the caller must not assume which session is current and
+ * hard-exits instead. */
 async function settleReset(
   pending: Promise<void> | undefined,
 ): Promise<boolean> {
@@ -233,10 +234,14 @@ export async function runInteractive(
     // Wait for whichever is in flight, under the same cap.
     const pendingReset = model?.pendingReset;
     const settled = await settleReset(pendingReset ?? model?.ready);
+    // The idle close may still be saving the rotated auth state; the model
+    // no longer holds that session, only the promise of its close.
+    const idleSettled = await settleReset(model?.idleClosing);
     // The model may still hold no session: the open above failed.
     const open = model?.session;
     const closed =
       settled &&
+      idleSettled &&
       (open === undefined || (await closeWithTimeout(open, CLOSE_TIMEOUT_MS)));
     view?.destroy();
     renderer.destroy();

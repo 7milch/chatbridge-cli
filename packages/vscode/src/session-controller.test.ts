@@ -1313,18 +1313,23 @@ describe("URL hooks", () => {
 
 describe("idle close", () => {
   /** A controller whose opens hand back each session's expiry callback. */
-  function idleHarness() {
+  function idleHarness(closeTimeoutMs = 20) {
     const sessions: ChatSessionLike[] = [];
+    /** The raw callbacks, for the tests that care about the close promise. */
+    const expireWith: Array<(closing: Promise<void>) => void> = [];
+    /** The same callbacks with an already-settled close, for the tests that
+     * only care that the expiry reached the controller. */
     const expire: Array<() => void> = [];
     const states: string[] = [];
     const sent: string[] = [];
     const replies: Array<ReturnType<typeof deferred<string>>> = [];
     const closed = { count: 0 };
     const controller = new SessionController({
-      closeTimeoutMs: 20,
+      closeTimeoutMs,
       onChange: (state) => states.push(state.status),
       openSession: async (onIdleExpired) => {
-        expire.push(onIdleExpired);
+        expireWith.push(onIdleExpired);
+        expire.push(() => onIdleExpired(Promise.resolve()));
         const session: ChatSessionLike = {
           async send(prompt) {
             sent.push(prompt);
@@ -1341,7 +1346,16 @@ describe("idle close", () => {
         return session;
       },
     });
-    return { controller, sessions, expire, states, sent, replies, closed };
+    return {
+      controller,
+      sessions,
+      expire,
+      expireWith,
+      states,
+      sent,
+      replies,
+      closed,
+    };
   }
 
   /** The nth entry, failing loudly when it was never created. */
@@ -1421,6 +1435,35 @@ describe("idle close", () => {
       message: "Nothing to send.",
     });
     expect(h.sent).toEqual(["one"]);
+  });
+
+  test("close() waits for an idle close that is still saving auth state", async () => {
+    // A cap far longer than the wait, so what close() waits for is the
+    // close itself and not the timeout.
+    const h = idleHarness(500);
+    await firstTurn(h);
+    let settleClose!: () => void;
+    const closing = new Promise<void>((r) => {
+      settleClose = r;
+    });
+    at(h.expireWith, 0)(closing);
+    let closed = false;
+    const done = h.controller.close().then(() => {
+      closed = true;
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(closed).toBe(false);
+    settleClose();
+    await done;
+    expect(closed).toBe(true);
+  });
+
+  test("close() gives up on a wedged idle close after the cap", async () => {
+    const h = idleHarness(30);
+    await firstTurn(h);
+    at(h.expireWith, 0)(new Promise<void>(() => {})); // never settles
+    await expect(h.controller.close()).resolves.toBeUndefined();
+    expect(h.controller.getState().status).toBe("closed");
   });
 
   test("an expiry after close() is ignored", async () => {
