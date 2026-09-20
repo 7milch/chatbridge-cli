@@ -44,6 +44,13 @@ export {
   closeWithTimeout,
 } from "./close-session.js";
 export {
+  DEFAULT_IDLE_TIMEOUT_MS,
+  IdleWatch,
+  type IdleOptions,
+  type IdleWatchOptions,
+  formatIdleDuration,
+} from "./idle-watch.js";
+export {
   type CommandInfo,
   type ParsedSlash,
   SLASH_COMMANDS,
