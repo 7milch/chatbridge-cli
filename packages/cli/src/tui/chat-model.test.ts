@@ -2007,4 +2007,57 @@ describe("idle close", () => {
     await tick();
     expect(nth(h.sessions, 1).calls[0]).toContain("hi\n");
   });
+
+  test("a message queued behind a shell command reopens instead of throwing", async () => {
+    const runner = fakeRunner();
+    const h = await idleHarness({ runCommand: runner.runCommand });
+    nth(h.expire, 0)();
+    const shell = h.model.runShell("sleep 5");
+    await tick();
+    expect(h.model.status).toBe("running");
+    // Typed while the command runs: queued, so it never met submit()'s
+    // idle-close guard.
+    expect(await h.model.submit("later")).toBe(true);
+    expect(h.model.queue).toEqual(["later"]);
+    runner.emit("hi\n");
+    runner.finish();
+    expect(await shell).toBe(true);
+    // The drain at the end of the shell command has no session to send to;
+    // it must reopen rather than throw into a voided promise.
+    await h.model.pendingReset;
+    await tick();
+    expect(h.model.idleClosed).toBe(false);
+    expect(h.model.session).toBe(nth(h.sessions, 1).session);
+    expect(
+      h.model.messages.some(
+        (m) => m.role === "separator" && m.text === IDLE_SEPARATOR,
+      ),
+    ).toBe(true);
+    expect(h.model.queue).toEqual([]);
+    const sent = nth(h.sessions, 1).calls[0] ?? "";
+    expect(sent).toStartWith("b:later");
+    // The held shell result still rides out with it.
+    expect(sent).toContain("hi\n");
+  });
+
+  test("a message queued during a failing /login reopens instead of throwing", async () => {
+    const gate = deferred<void>();
+    const h = await idleHarness({ login: () => gate.promise });
+    const login = h.model.submit("/login");
+    await tick();
+    expect(h.model.status).toBe("logging-in");
+    // The idle watch is not paused during a login, so expiry can land here.
+    nth(h.expire, 0)();
+    expect(h.model.idleClosed).toBe(true);
+    expect(await h.model.submit("later")).toBe(true);
+    expect(h.model.queue).toEqual(["later"]);
+    gate.reject(new Error("login failed"));
+    await login;
+    // The failure path restores `idle` and drains directly; that drain has
+    // no session either.
+    await h.model.pendingReset;
+    await tick();
+    expect(h.model.idleClosed).toBe(false);
+    expect(nth(h.sessions, 1).calls).toEqual(["b:later"]);
+  });
 });

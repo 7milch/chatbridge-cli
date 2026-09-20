@@ -360,6 +360,15 @@ export class ChatModel {
   /** Sends the oldest queued entry as the next turn, if any. Called at every
    * transition to idle that may continue the conversation. */
   private drain(): void {
+    // The idle close left no session to send to, and a line can reach the
+    // queue without passing submit()'s guard — typed while a shell command
+    // or a `/login` was in flight. Reopen instead; the reset's own drain
+    // delivers the queue, held shell results and all. Checked before the
+    // shift, so nothing is dequeued and lost on the way.
+    if (this.idleClosed) {
+      if (this.queue.length > 0) void this.reset(IDLE_SEPARATOR);
+      return;
+    }
     const next = this.queue.shift();
     if (next === undefined) return;
     // A queued entry is always a message or a provider command: built-ins
