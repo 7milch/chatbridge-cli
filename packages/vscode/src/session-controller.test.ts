@@ -1205,6 +1205,52 @@ describe("URL hooks", () => {
     await settle();
   });
 
+  test("a stale turn drained from the queue keeps its text in the history", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const h = harness({
+      // Only the queued turn's expansion is held open; the first one runs
+      // straight through so the queue gets a chance to drain.
+      expandUrls: async (text) => {
+        if (text === "b") await gate;
+        return [];
+      },
+    });
+    const first = h.controller.send("a");
+    await waitFor(() => h.sent.length === 1);
+    h.controller.addAttachment({ path: "b.txt", bytes: 1, content: "b" });
+    expect(await h.controller.send("b")).toEqual({ ok: true, queued: true });
+    // The composer is empty again, so "b" lives only in the queue entry.
+    expect(h.controller.getState().pendingAttachments).toEqual([]);
+    h.replies[0]?.resolve("1");
+    await first;
+    // "b" is drained and is now waiting on the gate inside its expansion.
+    await waitFor(() => h.controller.getState().queue.length === 0);
+    await h.controller.reopen();
+    release();
+    // `drain()` discards the result, so nothing refills the composer for a
+    // queued turn: the history entry is the only place the text can live.
+    await waitFor(() => h.controller.getState().messages.length === 4);
+    const s = h.controller.getState();
+    expect(s.messages).toEqual([
+      { role: "user", text: "a", attachments: [] },
+      { role: "assistant", text: "1" },
+      { role: "separator", text: REOPENED_SEPARATOR },
+      {
+        role: "error",
+        text: "Reopened while resolving URLs; message not sent: b",
+      },
+    ]);
+    // Its attachments still come back to the composer.
+    expect(s.pendingAttachments).toEqual([{ path: "b.txt", bytes: 1 }]);
+    expect(h.sent).toEqual(["a"]);
+    expect(s.queue).toEqual([]);
+    // The reopen's session is ready and nothing is left to run.
+    expect(s.status).toBe("idle");
+  });
+
   test("a stale turn whose attachments no longer fit says how many were left out", async () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => {

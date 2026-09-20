@@ -100,7 +100,8 @@ const EMPTY: SendResult = {
 /** The stale-expansion refusal: the turn was claimed, then a reopen or a
  * close took the state over. Nothing was sent, so it is refused like a
  * hook refusal and the composer gets the text back. */
-const REOPENED_MESSAGE = "Reopened while resolving URLs; message not sent.";
+const REOPENED_STEM = "Reopened while resolving URLs; message not sent";
+const REOPENED_MESSAGE = `${REOPENED_STEM}.`;
 
 /** Owns the history, the pending attachments and the ChatSession. No
  * vscode import: the extension wires it to the webview and the commands. */
@@ -226,8 +227,12 @@ export class SessionController {
   }
 
   /** Pushes the user entry and runs the turn (or the command). Shared by
-   * send, runCommand and drain. */
-  private async startTurn(turn: QueuedTurn): Promise<SendResult> {
+   * send, runCommand and drain. `fromQueue` marks a turn `drain()` started:
+   * its result has no caller, so a refusal cannot reach the composer. */
+  private async startTurn(
+    turn: QueuedTurn,
+    fromQueue = false,
+  ): Promise<SendResult> {
     // URL expansion is a network wait; a reopen or a close during it makes
     // this turn stale, and it must not open a browser of its own.
     const generation = this.generation;
@@ -242,17 +247,21 @@ export class SessionController {
         const urls = await this.opts.expandUrls(turn.text);
         if (generation !== this.generation) {
           // Stale: the reopen/close owns the state now. The turn is not
-          // sent, but `send` already emptied the composer, so give the
-          // attachments back and refuse, which returns the text too.
+          // sent, and its attachments go back to the composer either way.
+          // From the composer, the refusal below hands the text back, so
+          // the entry does not repeat it. From the queue there is no caller
+          // to refuse to, and a takeBack would overwrite whatever the user
+          // is typing now, so the text stays in the entry instead.
           this.expanding = false;
           const dropped = this.restorePending(turn.attachments);
           const note =
             dropped === 0 ? "" : SessionController.droppedLine(dropped);
-          // The text is not repeated here: the refusal code below sends it
-          // back to the composer, exactly as the UrlHookError branch does.
+          const head = fromQueue
+            ? `${REOPENED_STEM}: ${turn.text}`
+            : REOPENED_MESSAGE;
           this.messages.push({
             role: "error",
-            text: `${REOPENED_MESSAGE}${note}`,
+            text: `${head}${note}`,
           });
           // Nothing else will run the entries queued behind this one. Only
           // from `idle`: a stale turn from `close()` must not open a browser
@@ -406,7 +415,7 @@ export class SessionController {
     // A URL_HOOK failure here pushes its error entry and drops the entry:
     // the queue is not a composer, so there is nowhere to hand the text
     // back to — the user reads the error and re-types.
-    void this.startTurn(next);
+    void this.startTurn(next, true);
   }
 
   /** Puts attachments back in front of whatever is pending, skipping the
