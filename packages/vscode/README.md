@@ -34,7 +34,9 @@ export const { activate, deactivate } = createExtension({
   provider's `idle.timeoutMs` (default 24 h), and the user's
   `<id>.idleTimeoutMinutes` setting overrides it (`0` disables). When it
   fires, the chat view shows a `closed after idle` separator and the next
-  message reopens the browser as a new chat.
+  message reopens the browser as a new chat. Do not give the setting a
+  `default` in your manifest: VS Code then always hands back a value, which
+  overrides the provider's (the same is true of `<id>.timeoutSec`).
 - `headless` — whether sessions launch a headless browser (default `true`).
   The user's `<id>.headless` setting overrides it.
 - `ui` — optional vendor branding, all fields plain text (no HTML, no
@@ -168,6 +170,14 @@ the `createExtension` default.
 the browser is closed; the next message reopens it, with a `closed after
 idle` separator marking the new conversation. Unset means the provider's own
 `idle.timeoutMs`, then 24 hours. `0` disables the idle close.
+
+"Unset" means the user has not set it *and* your manifest declares no
+`default` for it: a `contributes.configuration` `default` is what VS Code
+returns when the user has set nothing, so declaring one overrides the
+provider's `idle.timeoutMs` for every user. The same holds for
+`<id>.timeoutSec` and the `createExtension` `timeoutMs` default. Describe the
+intended fallback in the setting's `description` instead, as
+`examples/vscode-dummy-chat` does.
 
 ## Packaging
 

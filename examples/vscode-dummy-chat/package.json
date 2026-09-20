@@ -156,8 +156,7 @@
         },
         "chatbridge-dummy.idleTimeoutMinutes": {
           "type": "number",
-          "default": 1440,
-          "description": "Minutes of inactivity before the browser is closed; 0 disables."
+          "description": "Minutes of inactivity before the browser is closed; 0 disables. Unset: the provider's own value, normally 1440. Declaring a \"default\" here would override the provider's value, so this setting deliberately has none."
         }
       }
     }

@@ -228,7 +228,11 @@ Two more optional fields tune the framework's browser handling:
   (24 h; `0` disables). After it the browser is closed and the UI reopens
   it on the next prompt, as a new chat. The user's config key `idle`, the
   `CHATBRIDGE_IDLE_TIMEOUT` environment variable and the VSCode
-  `idleTimeoutMinutes` setting override it.
+  `idleTimeoutMinutes` setting override it. In a VSCode manifest, declare
+  `idleTimeoutMinutes` (and `timeoutSec`) with no `default`: a declared
+  `default` is what `workspace.getConfiguration().get()` returns when the
+  user has set nothing, so it silently overrides the provider's value.
+  Put the intended fallback in the setting's `description` instead.
 
 ## Traps seen in the wild
 
