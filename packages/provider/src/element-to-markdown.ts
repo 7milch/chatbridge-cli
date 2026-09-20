@@ -202,8 +202,9 @@ function walk(root: Element): string {
     return Array.from(el.childNodes).map(inline).join("").trim();
   }
 
-  return blocks(root)
-    .join("\n\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  // One blank line between blocks and no more. The limit is applied by the
+  // join, never to the finished string: `blocks` already drops empty blocks,
+  // and a global collapse would eat blank lines inside fenced code, whose
+  // content is verbatim.
+  return blocks(root).join("\n\n").trim();
 }

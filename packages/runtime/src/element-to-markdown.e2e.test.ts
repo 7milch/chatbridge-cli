@@ -48,6 +48,11 @@ const CASES: Array<[name: string, html: string, expected: string]> = [
     "<pre><code>```\nx\n```</code></pre>",
     "````\n```\nx\n```\n````",
   ],
+  [
+    "blank lines inside code are kept",
+    "<pre><code>a\n\n\nb</code></pre>",
+    "```\na\n\n\nb\n```",
+  ],
   ["unordered list", "<ul><li>a</li><li>b</li></ul>", "- a\n- b"],
   [
     "ordered list with start",
