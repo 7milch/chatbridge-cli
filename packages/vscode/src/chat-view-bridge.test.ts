@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   COMMAND_LIST,
   ChatViewBridge,
+  type ChatViewHandlers,
   type WebviewLike,
 } from "./chat-view-bridge.js";
 import type { State, ToHost, ToWebview, WebviewCommand } from "./protocol.js";
@@ -38,7 +39,55 @@ const state: State = {
   queue: [],
 };
 
+const noopHandlers: ChatViewHandlers = {
+  send() {},
+  removeAttachment() {},
+  takeBack() {},
+  removeQueued() {},
+  command() {},
+  customCommand() {},
+  attachUris() {},
+  pasted() {},
+};
+
 describe("ChatViewBridge", () => {
+  test("customCommand is validated and routed with name, args and text", () => {
+    const calls: unknown[] = [];
+    const bridge = new ChatViewBridge(() => state, {
+      ...noopHandlers,
+      customCommand: (name, args, text) => calls.push([name, args, text]),
+    });
+    const w = fakeWebview();
+    bridge.attach(w.webview);
+    w.receive({
+      type: "customCommand",
+      name: "model",
+      args: "",
+      text: "/model",
+    });
+    w.receive({
+      type: "customCommand",
+      name: 1,
+      args: "",
+    } as unknown as ToHost);
+    w.receive({ type: "customCommand", name: "x" } as unknown as ToHost);
+    expect(calls).toEqual([["model", "", "/model"]]);
+  });
+
+  test("ready posts the config with the provider commands", () => {
+    const bridge = new ChatViewBridge(() => state, noopHandlers);
+    const w = fakeWebview();
+    bridge.attach(w.webview, { welcome: "hi" }, [
+      { name: "model", description: "Show the model" },
+    ]);
+    w.receive({ type: "ready" });
+    expect(w.posted[0]).toEqual({
+      type: "config",
+      welcome: "hi",
+      commands: [{ name: "model", description: "Show the model" }],
+    });
+  });
+
   test("ready → current state is posted", () => {
     const calls: string[] = [];
     const bridge = new ChatViewBridge(() => state, {
@@ -47,6 +96,7 @@ describe("ChatViewBridge", () => {
       takeBack: () => calls.push("takeBack"),
       removeQueued: (i) => calls.push(`removeQueued:${i}`),
       command: (n) => calls.push(`cmd:${n}`),
+      customCommand() {},
       attachUris: (u) => calls.push(`attachUris:${u.join("|")}`),
       pasted: (id, text) => calls.push(`pasted:${id}:${text}`),
     });
@@ -67,6 +117,7 @@ describe("ChatViewBridge", () => {
       takeBack() {},
       removeQueued() {},
       command() {},
+      customCommand() {},
       attachUris() {},
       pasted() {},
     });
@@ -92,6 +143,7 @@ describe("ChatViewBridge", () => {
       takeBack() {},
       removeQueued() {},
       command() {},
+      customCommand() {},
       attachUris() {},
       pasted() {},
     });
@@ -115,6 +167,7 @@ describe("ChatViewBridge", () => {
       takeBack: () => calls.push("takeBack"),
       removeQueued: (i) => calls.push(`removeQueued:${i}`),
       command: (n) => calls.push(`cmd:${n}`),
+      customCommand() {},
       attachUris: (u) => calls.push(`attachUris:${u.join("|")}`),
       pasted: (id, text) => calls.push(`pasted:${id}:${text}`),
     });
@@ -143,6 +196,7 @@ describe("ChatViewBridge", () => {
       takeBack() {},
       removeQueued() {},
       command() {},
+      customCommand() {},
       attachUris() {},
       pasted() {},
     });
@@ -161,6 +215,7 @@ describe("ChatViewBridge", () => {
       takeBack() {},
       removeQueued() {},
       command() {},
+      customCommand() {},
       attachUris: (u) => calls.push(`attachUris:${u.join("|")}`),
       pasted: (id, text) => calls.push(`pasted:${id}:${text}`),
     });
@@ -181,6 +236,7 @@ describe("ChatViewBridge", () => {
       takeBack() {},
       removeQueued() {},
       command() {},
+      customCommand() {},
       attachUris() {},
       pasted() {},
     });
@@ -196,6 +252,7 @@ describe("ChatViewBridge", () => {
       takeBack() {},
       removeQueued() {},
       command() {},
+      customCommand() {},
       attachUris() {},
       pasted() {},
     });

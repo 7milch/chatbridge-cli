@@ -1,6 +1,7 @@
 /** One file appended to a prompt; the history shows one line per entry. */
 export interface Attachment {
-  /** Display path: relative, `/`-separated; may carry a `:L1-L2` suffix. */
+  /** Display string: a relative `/`-separated path (may carry a `:L1-L2`
+   * suffix), or a URL hook's label. */
   path: string;
   bytes: number;
 }

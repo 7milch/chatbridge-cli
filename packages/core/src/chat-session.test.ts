@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import type { Page, Provider } from "@chatbridge/provider";
+import type {
+  Page,
+  Provider,
+  ProviderCommandResult,
+} from "@chatbridge/provider";
 import type { AuthStore } from "@chatbridge/runtime";
 import {
   ChatSession,
@@ -49,6 +53,10 @@ interface Harness {
   detectBlockCalls: number;
   /** When set, isLoggedIn awaits this before answering. */
   loginGate: Promise<unknown> | undefined;
+  /** Every `run` the provider's "probe" command received. */
+  commandCalls: Array<{ name: string; args: string }>;
+  /** What "probe" returns, or throws when it is an Error. */
+  commandResult: ProviderCommandResult | Error;
 }
 
 function harness(): Harness {
@@ -64,6 +72,8 @@ function harness(): Harness {
     hasDetectBlock: false,
     detectBlockCalls: 0,
     loginGate: undefined,
+    commandCalls: [],
+    commandResult: { kind: "show", text: "ok" },
     provider: undefined as unknown as Provider,
     launch: undefined as unknown as Harness["launch"],
   };
@@ -84,6 +94,17 @@ function harness(): Harness {
       h.replies.push(d);
       return d.promise;
     },
+    commands: [
+      {
+        name: "probe",
+        description: "Probe",
+        async run(_page, args) {
+          h.commandCalls.push({ name: "probe", args });
+          if (h.commandResult instanceof Error) throw h.commandResult;
+          return h.commandResult;
+        },
+      },
+    ],
   };
   Object.defineProperty(h.provider, "detectBlock", {
     get() {
@@ -661,5 +682,91 @@ describe("ChatSession.kill", () => {
     await session.kill();
     reply.reject(new Error("Target page, context or browser has been closed"));
     await expect(p).rejects.toThrow("has been closed");
+  });
+});
+
+describe("ChatSession.runCommand", () => {
+  test("runs the named provider command with the args and returns its result", async () => {
+    const h = harness();
+    const s = await ChatSession.open(opts(h));
+    expect(await s.runCommand("probe", "a b")).toEqual({
+      kind: "show",
+      text: "ok",
+    });
+    expect(h.commandCalls).toEqual([{ name: "probe", args: "a b" }]);
+    h.commandResult = { kind: "send", prompt: "expanded" };
+    expect(await s.runCommand("probe", "")).toEqual({
+      kind: "send",
+      prompt: "expanded",
+    });
+  });
+
+  test("an unknown name is an InvalidStateError and never touches the provider", async () => {
+    const h = harness();
+    const s = await ChatSession.open(opts(h));
+    await expect(s.runCommand("nope", "")).rejects.toBeInstanceOf(
+      InvalidStateError,
+    );
+    expect(h.commandCalls).toEqual([]);
+  });
+
+  test("rejects while a send is pending, and after close", async () => {
+    const h = harness();
+    const s = await ChatSession.open(opts(h));
+    const p = s.send("hi");
+    await replyOf(h, 0);
+    await expect(s.runCommand("probe", "")).rejects.toBeInstanceOf(
+      InvalidStateError,
+    );
+    h.replies[0].resolve("r");
+    await p;
+    await s.close();
+    await expect(s.runCommand("probe", "")).rejects.toBeInstanceOf(
+      InvalidStateError,
+    );
+  });
+
+  test("a send is rejected while a command is running", async () => {
+    const h = harness();
+    const gate = deferred<void>();
+    h.provider.commands = [
+      {
+        name: "slow",
+        description: "",
+        async run() {
+          await gate.promise;
+          return { kind: "show", text: "" };
+        },
+      },
+    ];
+    const s = await ChatSession.open(opts(h));
+    const p = s.runCommand("slow", "");
+    await expect(s.send("hi")).rejects.toBeInstanceOf(InvalidStateError);
+    gate.resolve();
+    await p;
+  });
+
+  test("a Playwright timeout becomes ResponseTimeoutError naming the command", async () => {
+    const h = harness();
+    const err = new Error("boom");
+    err.name = "TimeoutError";
+    h.commandResult = err;
+    const s = await ChatSession.open(opts(h));
+    await expect(s.runCommand("probe", "")).rejects.toMatchObject({
+      name: "ResponseTimeoutError",
+      message: "Timed out during command:probe after 1000 ms.",
+    });
+  });
+
+  test("a timeout while logged out surfaces as AuthExpiredError", async () => {
+    const h = harness();
+    const err = new Error("boom");
+    err.name = "TimeoutError";
+    h.commandResult = err;
+    const s = await ChatSession.open(opts(h));
+    h.loggedIn = false;
+    await expect(s.runCommand("probe", "")).rejects.toBeInstanceOf(
+      AuthExpiredError,
+    );
   });
 });

@@ -16,6 +16,7 @@ interface Fake {
   controller: Pick<
     SessionController,
     | "send"
+    | "runCommand"
     | "retryLast"
     | "newChat"
     | "reopen"
@@ -72,6 +73,10 @@ function fake(): Fake {
       f.log.push(`send:${t}`);
       return f.sendResults.shift() ?? { ok: true };
     },
+    runCommand: async (name, args, text) => {
+      f.log.push(`runCommand:${name}:${args}:${text}`);
+      return f.sendResults.shift() ?? { ok: true };
+    },
     retryLast: async () => {
       f.log.push("retry");
       return { ok: true };
@@ -113,7 +118,7 @@ function fake(): Fake {
   return f;
 }
 
-function commands(f: Fake) {
+function commands(f: Fake, extra: Partial<CommandDeps> = {}) {
   return createCommands({
     displayName: "Acme AI",
     controller: f.controller as SessionController,
@@ -126,6 +131,7 @@ function commands(f: Fake) {
       f.log.push("clearAuth");
       f.cleared++;
     },
+    ...extra,
   });
 }
 
@@ -151,6 +157,22 @@ describe("commands", () => {
       expect(listing).toContain(`/${c.name}`);
       expect(listing).toContain(c.description);
     }
+  });
+
+  test("help also lists the provider's own commands", () => {
+    const f = fake();
+    commands(f, {
+      commands: [{ name: "model", description: "Show the model" }],
+    }).help();
+    const listing = f.log[0] ?? "";
+    expect(listing).toContain("/model");
+    expect(listing).toContain("Show the model");
+  });
+
+  test("customCommand forwards name, args and the typed line", async () => {
+    const f = fake();
+    await commands(f).customCommand("model", "", "/model");
+    expect(f.log).toEqual(["runCommand:model::/model"]);
   });
 
   test("a cancelled login is silent; another failure is shown", async () => {
@@ -282,6 +304,22 @@ describe("commands", () => {
       "report:Downloading Chromium",
       "retry",
     ]);
+  });
+
+  test("send returns the controller's result so the caller can refill the composer", async () => {
+    const f = fake();
+    f.sendResults.push({
+      ok: false,
+      code: "URL_HOOK",
+      message: "https://w/x: 403",
+    });
+    expect(await commands(f).send("https://w/x")).toEqual({
+      ok: false,
+      code: "URL_HOOK",
+      message: "https://w/x: 403",
+    });
+    // A hook refusal is the user's to fix: no install prompt.
+    expect(f.log).toEqual(["send:https://w/x"]);
   });
 
   test("declining the install leaves the error in the history only", async () => {

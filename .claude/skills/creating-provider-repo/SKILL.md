@@ -204,6 +204,8 @@ exactly one element on the observation date.
 | `sendMessage` | Record the assistant-message count (module-level `WeakMap<Page, number>`), fill (`fill()` works on `contenteditable` composers too), submit, then wait briefly for the "generating" state to begin (ignore timeout). |
 | `waitForResponse` | Wait for the done signal, then for the count to exceed the recorded one, then read the newest message with `innerText` until two reads 500 ms apart agree. Never return an earlier turn. Done signal first: some services insert a placeholder turn that is removed before the real one. |
 | `detectBlock` (optional) | Called only after `isLoggedIn` returned false. Return a short description when the page is a bot challenge or an IdP refusal (title, a known interstitial element); return `undefined` for a normal logged-out page. Must not throw. |
+| `commands` (optional, framework ≥ 0.9.0) | `/name` commands for the TUI and VSCode: `{ name, description, run(page, args) }` returning `{ kind: "show", text }` or `{ kind: "send", prompt }`. Names are lower-case letters, never a built-in. Not available in one-shot mode. |
+| `urlHooks` (optional, framework ≥ 0.9.0) | `{ match: RegExp | (url) => boolean, resolve(url) => { label, content } }`. Fetching and credentials are the provider's (a script with a PAT is fine); the framework only appends the content as an attachment. Runs under the session timeout; `MAX_FILE_BYTES` / `MAX_TOTAL_BYTES` apply. |
 
 ## Traps seen in the wild
 

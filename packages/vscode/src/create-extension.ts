@@ -3,7 +3,9 @@ import { join } from "node:path";
 import {
   ChatSession,
   type Provider,
+  commandInfoOf,
   createAuthStore,
+  resolveUrlHooks,
   runLogin,
 } from "@chatbridge/core";
 import * as vscode from "vscode";
@@ -79,10 +81,19 @@ export function createExtension(opts: CreateExtensionOptions) {
     );
     context.subscriptions.push(output, statusBar);
 
+    const commands = commandInfoOf(opts.provider);
+
     const bridge = new ChatViewBridge(
       () => (controller as SessionController).getState(),
       {
-        send: (text) => void handlers.send(text),
+        send: (text) =>
+          void handlers.send(text).then((r) => {
+            // The webview empties the composer as it posts `send`; a hook
+            // refusal sends nothing, so give the text back to be fixed.
+            if (!r.ok && r.code === "URL_HOOK") {
+              bridge.pushTookBack([{ text, attachments: [] }]);
+            }
+          }),
         removeAttachment: (i) => controller?.removeAttachment(i),
         takeBack: () => {
           const r = controller?.takeBack();
@@ -99,6 +110,8 @@ export function createExtension(opts: CreateExtensionOptions) {
         },
         removeQueued: (i) => controller?.removeQueued(i),
         command: (name) => void handlers[name](),
+        customCommand: (name, args, text) =>
+          void handlers.customCommand(name, args, text),
         attachUris: (uris) => void handlers.attachUris(uris),
         pasted: (id, text) => bridge.pushPasteResult(id, handlers.pasted(text)),
       },
@@ -138,6 +151,10 @@ export function createExtension(opts: CreateExtensionOptions) {
           ...settings(),
           onProgress: progress,
         }),
+      expandUrls: (text) =>
+        resolveUrlHooks(text, opts.provider.urlHooks ?? [], {
+          timeoutMs: settings().timeoutMs,
+        }),
       hints: {
         BLOCKED: `Set the "${opts.id}.headless" setting to false and try again.`,
         BROWSER_UNAVAILABLE: `Run "${opts.displayName}: Install Browser" and send again.`,
@@ -173,6 +190,7 @@ export function createExtension(opts: CreateExtensionOptions) {
         return { cliPath };
       },
       clearAuth: () => authStore.clear(),
+      commands,
     });
 
     context.subscriptions.push(
@@ -183,6 +201,7 @@ export function createExtension(opts: CreateExtensionOptions) {
           opts.displayName,
           bridge,
           uiConfig,
+          commands,
         ),
       ),
     );

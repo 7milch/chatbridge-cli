@@ -1,8 +1,8 @@
-import type { LoginOptions } from "@chatbridge/core";
+import type { CommandInfo, LoginOptions } from "@chatbridge/core";
 import { LoginAbortedError } from "@chatbridge/core";
 import { helpText } from "@chatbridge/core/slash-commands";
 import type { InstallBrowserOptions } from "./install-browser.js";
-import type { SessionController } from "./session-controller.js";
+import type { SendResult, SessionController } from "./session-controller.js";
 import type { EditorSnapshot, VscodeUi } from "./vscode-ui.js";
 
 export interface CommandDeps {
@@ -15,6 +15,8 @@ export interface CommandDeps {
   loginOptions: () => Omit<LoginOptions, "signal" | "onProgress">;
   installOptions: () => Omit<InstallBrowserOptions, "onProgress">;
   clearAuth: () => Promise<void>;
+  /** The provider's own commands, listed by `/help`. */
+  commands?: readonly CommandInfo[];
 }
 
 export interface CommandHandlers {
@@ -25,11 +27,14 @@ export interface CommandHandlers {
   installBrowser(): Promise<void>;
   /** From the webview's `/help`: the listing joins the history. */
   help(): void;
+  /** From the webview's `/name args`. */
+  customCommand(name: string, args: string, text: string): Promise<void>;
   sendSelection(): Promise<void>;
   sendFile(uri: unknown): Promise<void>;
   focus(): void;
-  /** From the webview's input box. */
-  send(text: string): Promise<void>;
+  /** From the webview's input box. The result is returned so the caller can
+   * hand the text back to the composer when the turn was refused. */
+  send(text: string): Promise<SendResult>;
   /** Files dropped on the webview; unreadable URIs are reported together. */
   attachUris(uris: string[]): Promise<void>;
   /** A paste into the input box; true when it became a selection chip. */
@@ -150,7 +155,15 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
 
     reopen: () => controller.reopen(),
 
-    help: () => controller.pushHelp(helpText()),
+    help: () => controller.pushHelp(helpText(deps.commands ?? [])),
+
+    async customCommand(name, args, text) {
+      const result = await controller.runCommand(name, args, text);
+      if (result.ok || result.code !== "BROWSER_UNAVAILABLE") return;
+      const choice = await ui.showErrorMessage(result.message, "Install");
+      if (choice !== "Install") return;
+      if (await runInstall()) await controller.retryLast();
+    },
 
     async installBrowser() {
       if (await runInstall()) ui.showInformationMessage("Chromium installed.");
@@ -211,10 +224,11 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
 
     async send(text) {
       const result = await controller.send(text);
-      if (result.ok || result.code !== "BROWSER_UNAVAILABLE") return;
+      if (result.ok || result.code !== "BROWSER_UNAVAILABLE") return result;
       const choice = await ui.showErrorMessage(result.message, "Install");
-      if (choice !== "Install") return;
+      if (choice !== "Install") return result;
       if (await runInstall()) await controller.retryLast();
+      return result;
     },
   };
 }

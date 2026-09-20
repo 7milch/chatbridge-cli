@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import type { CommandInfo } from "@chatbridge/core";
 import * as vscode from "vscode";
 import type { ChatViewBridge } from "./chat-view-bridge.js";
 import type { UiConfig } from "./protocol.js";
@@ -11,6 +12,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly title: string,
     private readonly bridge: ChatViewBridge,
     private readonly ui?: ResolvedUiConfig,
+    private readonly commands?: CommandInfo[],
   ) {}
 
   resolveWebviewView(view: vscode.WebviewView): void {
@@ -45,7 +47,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           }
         : rest;
     }
-    const sub = this.bridge.attach(view.webview, uiConfig);
+    const sub = this.bridge.attach(view.webview, uiConfig, this.commands);
     view.onDidDispose(() => sub.dispose());
   }
 }

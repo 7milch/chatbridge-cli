@@ -4,7 +4,9 @@ import {
   BlockedError,
   BrowserUnavailableError,
   LoginAbortedError,
+  type ProviderCommandResult,
   ResponseTimeoutError,
+  UrlHookError,
 } from "@chatbridge/core";
 import { MentionError } from "../mentions/expand-mentions.js";
 import type {
@@ -31,17 +33,35 @@ function tick() {
   return new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
+/** The nth entry of a list of deferreds, failing loudly when the code under
+ * test never created it (Biome forbids `!`, and `?.` would pass silently). */
+function nth<T>(list: readonly T[], i: number): T {
+  const entry = list[i];
+  if (entry === undefined) throw new Error(`no entry at index ${i}`);
+  return entry;
+}
+
 /** A fake session. `label`, when given, prefixes recorded calls so a test
  * over two sessions can tell which one was sent to. */
 function fakeSession(label = "") {
   const calls: string[] = [];
   const replies: Array<ReturnType<typeof deferred<string>>> = [];
+  const commands: Array<{ name: string; args: string }> = [];
+  const commandResults: Array<
+    ReturnType<typeof deferred<ProviderCommandResult>>
+  > = [];
   const state = { closed: 0, killed: 0, closeHangs: false };
   const session: ChatSessionLike = {
     async send(prompt) {
       calls.push(label ? `${label}:${prompt}` : prompt);
       const d = deferred<string>();
       replies.push(d);
+      return d.promise;
+    },
+    async runCommand(name, args) {
+      commands.push({ name, args });
+      const d = deferred<ProviderCommandResult>();
+      commandResults.push(d);
       return d.promise;
     },
     close() {
@@ -52,7 +72,7 @@ function fakeSession(label = "") {
       state.killed++;
     },
   };
-  return { session, calls, replies, state };
+  return { session, calls, replies, commands, commandResults, state };
 }
 
 /** For models that must never reopen: a reset would be a test bug. The
@@ -1713,4 +1733,155 @@ describe("/login", () => {
     expect(model.status).toBe("idle");
     expect(model.session).toBe(b.session);
   });
+});
+
+describe("provider commands", () => {
+  const commands = [
+    { name: "model", description: "Show the model" },
+    { name: "summarize", description: "Summarize" },
+  ];
+
+  test("/help lists the provider commands after the built-ins", async () => {
+    const model = await modelWith(fakeSession().session, { commands });
+    await model.submit("/help");
+    const text = model.messages.at(-1)?.text ?? "";
+    expect(text).toContain("/model");
+    expect(text).toContain("Summarize");
+    expect(text.indexOf("/login")).toBeLessThan(text.indexOf("/model"));
+  });
+
+  test("a built-in with arguments is refused with an error entry", async () => {
+    const s = fakeSession();
+    const model = await modelWith(s.session, { commands });
+    expect(await model.submit("/login now")).toBe(false);
+    expect(model.messages.at(-1)).toEqual({
+      role: "error",
+      text: "/login takes no arguments.",
+    });
+    expect(s.calls).toEqual([]);
+  });
+
+  test("show: user entry as typed, then a help-styled entry; nothing sent", async () => {
+    const s = fakeSession();
+    const model = await modelWith(s.session, { commands });
+    const statuses: string[] = [];
+    model.onChange = () => statuses.push(model.status);
+    const p = model.submit("/model");
+    await tick();
+    expect(model.status).toBe("busy");
+    expect(s.commands).toEqual([{ name: "model", args: "" }]);
+    nth(s.commandResults, 0).resolve({ kind: "show", text: "gpt-x" });
+    expect(await p).toBe(true);
+    expect(model.messages).toEqual([
+      { role: "user", text: "/model" },
+      { role: "help", text: "gpt-x" },
+    ]);
+    expect(model.status).toBe("idle");
+    expect(s.calls).toEqual([]);
+    expect(statuses.at(-1)).toBe("idle");
+  });
+
+  test("send: the expanded prompt goes to the service, the typed line stays in the history", async () => {
+    const s = fakeSession();
+    const model = await modelWith(s.session, { commands });
+    const p = model.submit("/summarize the doc");
+    await tick();
+    expect(s.commands).toEqual([{ name: "summarize", args: "the doc" }]);
+    nth(s.commandResults, 0).resolve({
+      kind: "send",
+      prompt: "Summarize: the doc",
+    });
+    await tick();
+    expect(s.calls).toEqual(["Summarize: the doc"]);
+    nth(s.replies, 0).resolve("done");
+    expect(await p).toBe(true);
+    expect(model.messages).toEqual([
+      { role: "user", text: "/summarize the doc" },
+      { role: "assistant", text: "done" },
+    ]);
+    expect(model.status).toBe("idle");
+  });
+
+  test("queued while a turn is in flight, then run in order", async () => {
+    const s = fakeSession();
+    const model = await modelWith(s.session, { commands });
+    const first = model.submit("hello");
+    await tick();
+    expect(await model.submit("/model")).toBe(true);
+    expect(model.queue).toEqual(["/model"]);
+    expect(s.commands).toEqual([]);
+    s.replies[0]?.resolve("hi");
+    await first;
+    await tick();
+    expect(s.commands).toEqual([{ name: "model", args: "" }]);
+    nth(s.commandResults, 0).resolve({ kind: "show", text: "m" });
+    await tick();
+    expect(model.messages.at(-1)).toEqual({ role: "help", text: "m" });
+  });
+
+  test("a timeout shows the error and stays idle; another error is fatal", async () => {
+    const s = fakeSession();
+    const model = await modelWith(s.session, { ...noReopen, commands });
+    let p = model.submit("/model");
+    await tick();
+    nth(s.commandResults, 0).reject(new ResponseTimeoutError("slow"));
+    await p;
+    expect(model.messages.at(-1)).toEqual({ role: "error", text: "slow" });
+    expect(model.status).toBe("idle");
+    p = model.submit("/model");
+    await tick();
+    nth(s.commandResults, 1).reject(new Error("page gone"));
+    await p;
+    expect(model.status).toBe("dead");
+    expect(model.messages.at(-1)).toEqual({ role: "error", text: "page gone" });
+  });
+
+  test("a `send` carries the held shell results, released with the reply", async () => {
+    const s = fakeSession();
+    const runner = fakeRunner();
+    const model = await modelWith(s.session, {
+      ...noReopen,
+      commands,
+      runCommand: runner.runCommand,
+      shell: { leadIn: "x", autoSend: false },
+    });
+    const shell = model.runShell("ls");
+    await tick();
+    runner.finish();
+    await shell;
+    expect(model.heldResults).toHaveLength(1);
+
+    const p = model.submit("/summarize x");
+    await tick();
+    nth(s.commandResults, 0).resolve({ kind: "send", prompt: "Summarize: x" });
+    await tick();
+    expect(s.calls[0]).toBe("Summarize: x\n\n### $ ls\n```\n```");
+    nth(s.replies, 0).resolve("ok");
+    await p;
+    expect(model.heldResults).toEqual([]);
+    expect(model.messages[0]?.held).toBe(false);
+  });
+
+  test("a session without runCommand reports the command as unavailable", async () => {
+    const s = fakeSession();
+    const { runCommand: _omit, ...withoutIt } = s.session;
+    const model = await modelWith(withoutIt as ChatSessionLike, { commands });
+    expect(await model.submit("/model")).toBe(false);
+    expect(model.messages.at(-1)?.role).toBe("error");
+  });
+});
+
+test("a UrlHookError is handled like a MentionError", async () => {
+  const { session, calls } = fakeSession();
+  const model = await modelWith(session, {
+    ...noReopen,
+    expand: async () => {
+      throw new UrlHookError(["https://w/x: 403"]);
+    },
+  });
+  expect(await model.submit("see https://w/x")).toBe(false);
+  expect(calls).toEqual([]);
+  expect(model.messages).toEqual([{ role: "error", text: "https://w/x: 403" }]);
+  expect(model.status).toBe("idle");
+  expect(model.fatal).toBeUndefined();
 });

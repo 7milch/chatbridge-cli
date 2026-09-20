@@ -213,6 +213,13 @@ chat.
   requirement). One-shot mode and `auth` keep working on Node >= 20.
 - A terminal is required; in pipes and scripts use `-p`.
 
+A provider can add its own commands (`/model`, `/summarize …`); `/help` lists
+them after the built-ins. Arguments are the rest of the line. A provider can
+also register URL hooks: a URL in your message that a hook recognises is
+fetched by the provider and attached like an `@file` mention (the history
+shows the hook's label; only the service sees the content). Neither is
+available in one-shot mode.
+
 ## VSCode extension
 
 `@chatbridge/vscode` ships the same chat as a sidebar view. A vendor
@@ -273,6 +280,52 @@ bot protection — stealth plugins,
 user-agent spoofing, attaching to a personal browser profile — is out of
 scope and will not be added. Public services are used here only as spike
 targets to validate the Provider contract (see `docs/spike-notes/`).
+
+## Provider extension points
+
+Besides the required page methods, a provider may ship:
+
+```ts
+import { defineProvider } from "@chatbridge/provider";
+
+export default defineProvider({
+  // ...name, chatUrl and the five page methods...
+  commands: [
+    {
+      name: "model",
+      description: "Show the selected model",
+      async run(page) {
+        return { kind: "show", text: await page.locator("#model").innerText() };
+      },
+    },
+    {
+      name: "summarize",
+      description: "Summarize the given text",
+      async run(_page, args) {
+        return { kind: "send", prompt: `Summarize in three bullets:\n\n${args}` };
+      },
+    },
+  ],
+  urlHooks: [
+    {
+      match: /^https:\/\/wiki\.example\.com\//,
+      async resolve(url) {
+        // Your code: a script, an API call, a PAT from the environment.
+        // The framework never fetches and never sees a credential.
+        const { title, body } = await fetchWikiPage(url);
+        return { label: `Wiki: ${title}`, content: body };
+      },
+    },
+  ],
+});
+```
+
+`defineProvider` rejects command names that are not lower-case letters, that
+collide with a built-in (`login`, `logout`, `new`, `reopen`, `help`), or that
+repeat. A `show` result is printed; a `send` result is sent as an ordinary
+turn while the history keeps the `/command` line you typed. A URL hook runs
+under the session timeout and its result is subject to the same size limits
+as `@file` attachments.
 
 ## License
 
