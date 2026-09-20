@@ -2150,3 +2150,131 @@ describe("idle close", () => {
     ]);
   });
 });
+
+/** Polls `predicate` every 5 ms until it holds, failing after 1 s with
+ * `label` so a hung expectation names itself instead of timing out blind. */
+async function waitFor(predicate: () => boolean, label = "condition") {
+  const deadline = Date.now() + 1_000;
+  while (!predicate()) {
+    if (Date.now() > deadline)
+      throw new Error(`timed out waiting for ${label}`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+describe("ChatModel: streaming", () => {
+  /** A session whose reply is a deferred and whose `onPartial` the test can
+   * fire by hand, so a partial lands at an exactly known moment. */
+  function streamingSession(format?: "markdown" | "text") {
+    const d = deferred<string>();
+    let emit: ((t: string) => void) | undefined;
+    const session: ChatSessionLike = {
+      responseFormat: format,
+      send: (_p, opts) => {
+        emit = opts?.onPartial;
+        return d.promise;
+      },
+      close: async () => {},
+      kill: async () => {},
+    };
+    return { session, d, emit: (t: string) => emit?.(t) };
+  }
+
+  test("partials update model.partial and never enter messages", async () => {
+    const s = streamingSession();
+    const model = await modelWith(s.session);
+    let changes = 0;
+    model.onChange = () => changes++;
+    void model.submit("hi");
+    await waitFor(() => model.status === "busy", "busy");
+    expect(model.partial).toBeUndefined();
+    const before = changes;
+    s.emit("He");
+    expect(model.partial).toBe("He");
+    expect(changes).toBe(before + 1);
+    expect(model.messages.map((m) => m.role)).toEqual(["user"]);
+    s.d.resolve("Hello");
+    await waitFor(() => model.status === "idle", "idle");
+    expect(model.partial).toBeUndefined();
+    expect(model.messages.at(-1)).toEqual({ role: "assistant", text: "Hello" });
+  });
+
+  test("a markdown session stamps format on the assistant message", async () => {
+    const s = streamingSession("markdown");
+    const model = await modelWith(s.session);
+    void model.submit("hi");
+    await waitFor(() => model.status === "busy", "busy");
+    s.d.resolve("# T");
+    await waitFor(() => model.status === "idle", "idle");
+    expect(model.messages.at(-1)).toEqual({
+      role: "assistant",
+      text: "# T",
+      format: "markdown",
+    });
+  });
+
+  test("a failed turn keeps the partial as an incomplete assistant message before the error", async () => {
+    const s = streamingSession("markdown");
+    const model = await modelWith(s.session);
+    void model.submit("hi");
+    await waitFor(() => model.status === "busy", "busy");
+    s.emit("half a rep");
+    s.d.reject(
+      new ResponseTimeoutError(
+        "Timed out during waitForResponse after 1000 ms.",
+      ),
+    );
+    await waitFor(() => model.status === "idle", "idle");
+    expect(model.partial).toBeUndefined();
+    expect(model.messages.slice(-2)).toEqual([
+      {
+        role: "assistant",
+        text: "half a rep",
+        format: "markdown",
+        incomplete: true,
+      },
+      {
+        role: "error",
+        text: "Timed out during waitForResponse after 1000 ms.",
+      },
+    ]);
+  });
+
+  test("a failed turn without a partial pushes only the error", async () => {
+    const s = streamingSession();
+    const model = await modelWith(s.session);
+    void model.submit("hi");
+    await waitFor(() => model.status === "busy", "busy");
+    s.d.reject(new ResponseTimeoutError("t"));
+    await waitFor(() => model.status === "idle", "idle");
+    expect(model.messages.map((m) => m.role)).toEqual(["user", "error"]);
+  });
+
+  test("a partial from a turn made stale by a reset is dropped", async () => {
+    const s = streamingSession();
+    const model = await modelWith(s.session, {
+      openSession: async () => streamingSession().session,
+    });
+    void model.submit("hi");
+    await waitFor(() => model.status === "busy", "busy");
+    await model.reset();
+    let changes = 0;
+    model.onChange = () => changes++;
+    s.emit("stale");
+    expect(model.partial).toBeUndefined();
+    expect(changes).toBe(0);
+  });
+
+  test("a reset clears the partial of the turn it interrupts", async () => {
+    const s = streamingSession();
+    const model = await modelWith(s.session, {
+      openSession: async () => streamingSession().session,
+    });
+    void model.submit("hi");
+    await waitFor(() => model.status === "busy", "busy");
+    s.emit("half");
+    expect(model.partial).toBe("half");
+    await model.reset();
+    expect(model.partial).toBeUndefined();
+  });
+});

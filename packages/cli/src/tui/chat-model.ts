@@ -9,6 +9,7 @@ import {
   type ParsedSlash,
   type ProviderCommandResult,
   ResponseTimeoutError,
+  type SendOptions,
   UrlHookError,
   closeOrKill,
   commandNamesOf,
@@ -39,7 +40,10 @@ import {
 
 /** What the model needs from a ChatSession; lets tests inject a fake. */
 export interface ChatSessionLike {
-  send(prompt: string): Promise<string>;
+  send(prompt: string, opts?: SendOptions): Promise<string>;
+  /** What the provider's replies are written in, so the history can pick a
+   * renderer. Optional so older fakes keep working; absent means "text". */
+  readonly responseFormat?: "markdown" | "text";
   /** Optional so older fakes keep working; the real ChatSession has it. */
   runCommand?(name: string, args: string): Promise<ProviderCommandResult>;
   close(): Promise<void>;
@@ -65,6 +69,13 @@ export interface Message {
   /** `shell` entries: the shell could not be started; outside a reset, the
    * error entry pushed right after it says why. */
   failed?: boolean;
+  /** `assistant` entries: render `text` as Markdown. Absent: verbatim. */
+  format?: "markdown";
+  /** `assistant` entries: the turn failed after this much had arrived. Kept
+   * because a timeout is often only the completion check failing, so the
+   * text on screen is usually the whole reply minus the last token. Skipped
+   * by `/copy`: half a reply is not what the user meant to copy. */
+  incomplete?: true;
 }
 /** opening: the first session is being opened; the UI is already up and
  * anything typed is queued. idle: accepting input. busy: a turn is in
@@ -137,6 +148,11 @@ export class ChatModel {
   /** The last fatal error; the reason the model is `dead`. Cleared by a
    * successful reset. Reported by the app when the user quits. */
   fatal: unknown = undefined;
+  /** The reply text so far of the turn in flight; undefined outside a turn
+   * and before its first partial. Deliberately not a message: nothing that
+   * reads `messages` (copying, a future transcript file) can then pick up
+   * half a reply. The view draws it as the pending row instead. */
+  partial: string | undefined;
   /** Results waiting for the next submit (autoSend: false). */
   readonly heldResults: ShellResult[] = [];
   /** Messages typed while a turn or a shell command was in flight (or the
@@ -575,14 +591,42 @@ export class ChatModel {
   ): Promise<void> {
     const session = this.requireSession();
     const generation = this.generation;
+    // Spread, not a plain field: a text session's assistant entries carry no
+    // `format` key at all.
+    const format =
+      session.responseFormat === "markdown"
+        ? { format: "markdown" as const }
+        : {};
     try {
-      const reply = await session.send(prompt);
+      const reply = await session.send(prompt, {
+        onPartial: (text) => {
+          if (generation !== this.generation) return; // stale: reset ran
+          this.partial = text;
+          // Every partial repaints: the pending row is drawn from this.
+          // Core already drops unchanged text, so there is no second guard.
+          this.onChange();
+        },
+      });
       if (generation !== this.generation) return; // stale: reset ran
       if (releasesHeld) this.releaseHeld();
-      this.messages.push({ role: "assistant", text: reply });
+      this.partial = undefined;
+      this.messages.push({ role: "assistant", text: reply, ...format });
       this.settle("idle");
     } catch (err) {
       if (generation !== this.generation) return; // stale: reset ran
+      // Whatever had arrived is kept as its own entry, before the error, so
+      // a timeout that was only the completion check failing does not throw
+      // the reply away. Read before clearing.
+      const partial = this.partial;
+      this.partial = undefined;
+      if (partial !== undefined) {
+        this.messages.push({
+          role: "assistant",
+          text: partial,
+          ...format,
+          incomplete: true,
+        });
+      }
       const message = err instanceof Error ? err.message : String(err);
       this.messages.push({ role: "error", text: message });
       // A timeout leaves the browser usable; anything else ends the session.
@@ -850,6 +894,9 @@ export class ChatModel {
     this.idleClosed = false;
     this.status = "resetting";
     this.generation++;
+    // The interrupted turn's partial belongs to a conversation that is about
+    // to be replaced; its own stale guard will not run until it settles.
+    this.partial = undefined;
     this.onChange();
     const old = this.current;
     // Undefined when the first open failed: there is nothing to close.
