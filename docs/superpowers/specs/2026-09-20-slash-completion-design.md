@@ -16,8 +16,11 @@ ordinary character.
 
 ## 1. Shared logic (core)
 
-`@chatbridge/core/slash-commands` gains two pure functions, used by both UIs so
-they cannot drift:
+`@chatbridge/core/slash-commands` gains these pure functions, used by both UIs
+so they cannot drift. A third, `commandWordAt(text, cursor): { word, end } |
+undefined`, returns the whole command word and its end offset; `slashPrefixAt`
+is defined on top of it, and both UIs use it to replace the word on accept and
+for the exact-match `Enter` rule.
 
 ```ts
 /** The command word being typed, without the slash, when `text` starts with

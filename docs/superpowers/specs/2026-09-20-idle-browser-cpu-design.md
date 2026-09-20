@@ -155,7 +155,9 @@ pushes nothing further.
 
 The extension gains one setting, `idleTimeoutMinutes` under the provider's
 configuration section (next to the existing timeout setting, same parsing
-rules with `0` allowed), declared through `manifest.ts`. Unset means the
+rules with `0` allowed). `manifest.ts` does not validate
+`contributes.configuration`, so the setting is read in `create-extension.ts`,
+documented in the README and declared in the example manifest. Unset means the
 provider default, then 24 h.
 
 ## 6. Documentation

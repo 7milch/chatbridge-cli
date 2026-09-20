@@ -31,7 +31,7 @@ under `contributes.menus["view/title"]` with `when: view == <id>.chat`:
 
 | Command | Group | Icon |
 |---|---|---|
-| `<id>.newChat` | `navigation@1` | `$(new-chat)`, fallback `$(add)` |
+| `<id>.newChat` | `navigation@1` | `$(add)` (what the dummy manifest already uses) |
 | `<id>.reopen` | `navigation@2` | `$(refresh)` |
 | `<id>.login` | `1_auth@1` (overflow `…`) | |
 | `<id>.logout` | `1_auth@2` | |
