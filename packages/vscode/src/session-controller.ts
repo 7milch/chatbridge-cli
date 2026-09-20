@@ -8,7 +8,7 @@ import {
   UrlHookError,
   closeOrKill,
   formatAttachment,
-  formatSize,
+  totalSizeProblem,
 } from "@chatbridge/core";
 import type { Message, QueueEntry, State, Status } from "./protocol.js";
 
@@ -31,6 +31,10 @@ export type SendResult =
 
 /** The separator pushed into the history by `reopen()`. */
 export const REOPENED_SEPARATOR = "reopened";
+
+/** Pushed when the idle timeout closed the browser; the next send reopens
+ * it lazily, so the user is told the conversation starts over. */
+export const IDLE_CLOSED_SEPARATOR = "closed after idle";
 
 /** Controller-internal queue entry: the attachments keep their content. */
 interface QueuedTurn {
@@ -60,8 +64,10 @@ export interface TakeBackResult {
 }
 
 export interface SessionControllerOptions {
-  /** Opens a ChatSession; called lazily on the first send after `closed`. */
-  openSession: () => Promise<ChatSessionLike>;
+  /** Opens a ChatSession; called lazily on the first send after `closed`.
+   * `onIdleExpired` is handed to the session so core can tell the
+   * controller it closed the browser after the idle timeout. */
+  openSession: (onIdleExpired: () => void) => Promise<ChatSessionLike>;
   /** How long newChat / discard / close wait before killing. Default 5 s. */
   closeTimeoutMs?: number;
   /** Called with the full state after every change. */
@@ -77,11 +83,25 @@ export interface SessionControllerOptions {
 
 export const CLOSE_TIMEOUT_MS = 5_000;
 
+/** Errors a turn can fail with without ending the session: the browser is
+ * still usable, so the controller returns to `idle` and drains its queue
+ * instead of going `dead` and dropping the browser. */
+export const NON_FATAL_CODES: ReadonlySet<string> = new Set([
+  "RESPONSE_TIMEOUT",
+  "COMMAND_UNAVAILABLE",
+]);
+
 const EMPTY: SendResult = {
   ok: false,
   code: "EMPTY",
   message: "Nothing to send.",
 };
+
+/** The stale-expansion refusal: the turn was claimed, then a reopen or a
+ * close took the state over. Nothing was sent, so it is refused like a
+ * hook refusal and the composer gets the text back. */
+const REOPENED_STEM = "Reopened while resolving URLs; message not sent";
+const REOPENED_MESSAGE = `${REOPENED_STEM}.`;
 
 /** Owns the history, the pending attachments and the ChatSession. No
  * vscode import: the extension wires it to the webview and the commands. */
@@ -160,10 +180,7 @@ export class SessionController {
     }
     const total = this.pending.reduce((n, p) => n + p.bytes, 0) + a.bytes;
     if (total > MAX_TOTAL_BYTES) {
-      return {
-        ok: false,
-        reason: `attachments total ${formatSize(total)} exceeds ${formatSize(MAX_TOTAL_BYTES).replace(".0", "")}`,
-      };
+      return { ok: false, reason: totalSizeProblem(total) };
     }
     this.pending.push(a);
     this.emit();
@@ -210,8 +227,12 @@ export class SessionController {
   }
 
   /** Pushes the user entry and runs the turn (or the command). Shared by
-   * send, runCommand and drain. */
-  private async startTurn(turn: QueuedTurn): Promise<SendResult> {
+   * send, runCommand and drain. `fromQueue` marks a turn `drain()` started:
+   * its result has no caller, so a refusal cannot reach the composer. */
+  private async startTurn(
+    turn: QueuedTurn,
+    fromQueue = false,
+  ): Promise<SendResult> {
     // URL expansion is a network wait; a reopen or a close during it makes
     // this turn stale, and it must not open a browser of its own.
     const generation = this.generation;
@@ -226,20 +247,28 @@ export class SessionController {
         const urls = await this.opts.expandUrls(turn.text);
         if (generation !== this.generation) {
           // Stale: the reopen/close owns the state now. The turn is not
-          // sent, but `send` already emptied the composer, so give the
-          // attachments back and leave the text in the history.
+          // sent, and its attachments go back to the composer either way.
+          // From the composer, the refusal below hands the text back, so
+          // the entry does not repeat it. From the queue there is no caller
+          // to refuse to, and a takeBack would overwrite whatever the user
+          // is typing now, so the text stays in the entry instead.
           this.expanding = false;
-          this.pending = [...turn.attachments, ...this.pending];
+          const dropped = this.restorePending(turn.attachments);
+          const note =
+            dropped === 0 ? "" : `\n${droppedAttachmentsLine(dropped)}`;
+          const head = fromQueue
+            ? `${REOPENED_STEM}: ${turn.text}`
+            : REOPENED_MESSAGE;
           this.messages.push({
             role: "error",
-            text: `Reopened while resolving URLs; message not sent: ${turn.text}`,
+            text: `${head}${note}`,
           });
           // Nothing else will run the entries queued behind this one. Only
           // from `idle`: a stale turn from `close()` must not open a browser
           // after deactivate.
           if (this.status === "idle") this.drain();
           this.emit();
-          return { ok: true };
+          return { ok: false, code: "REOPENED", message: REOPENED_MESSAGE };
         }
         attachments = [
           ...attachments,
@@ -258,8 +287,14 @@ export class SessionController {
         this.expanding = false;
         // The composer was emptied by `send`; give the attachments back so
         // the user only has to re-type the text.
-        this.pending = [...turn.attachments, ...this.pending];
-        this.push({ role: "error", text: message });
+        const dropped = this.restorePending(turn.attachments);
+        this.push({
+          role: "error",
+          text:
+            dropped === 0
+              ? message
+              : `${message}\n${droppedAttachmentsLine(dropped)}`,
+        });
         // Nothing else will run the entries that queued behind this one.
         this.drain();
         return { ok: false, code: "URL_HOOK", message };
@@ -316,7 +351,13 @@ export class SessionController {
       const session = await this.ensureSession(generation);
       if (session === undefined) return { ok: true }; // stale
       if (session.runCommand === undefined) {
-        throw new Error(`/${command.name} is not available in this session.`);
+        // Unreachable with the real ChatSession. A coded error keeps it out
+        // of `fail()`'s fatal branch: a session that cannot run a command is
+        // a caller bug, not a reason to close the user's browser.
+        throw new ChatBridgeError(
+          "COMMAND_UNAVAILABLE",
+          `/${command.name} is not available in this session.`,
+        );
       }
       if (this.status !== "busy") this.setStatus("busy");
       const result = await session.runCommand(command.name, command.args);
@@ -350,7 +391,7 @@ export class SessionController {
     generation: number,
   ): Promise<ChatSessionLike | undefined> {
     if (this.session !== undefined) return this.session;
-    const session = await this.trackOpen(this.opts.openSession());
+    const session = await this.trackOpen(this.open());
     // A reopen ran while we were opening: this browser is an orphan.
     // dropSession may have closed it already; close/kill are idempotent.
     if (generation !== this.generation) {
@@ -374,7 +415,35 @@ export class SessionController {
     // A URL_HOOK failure here pushes its error entry and drops the entry:
     // the queue is not a composer, so there is nowhere to hand the text
     // back to — the user reads the error and re-types.
-    void this.startTurn(next);
+    void this.startTurn(next, true);
+  }
+
+  /** Puts attachments back in front of whatever is pending, skipping the
+   * ones that no longer fit: `send` empties the composer before a turn's
+   * expansion runs, so the user can have dropped files in meanwhile, and
+   * forcing these back would leave a composer that refuses every further
+   * attachment. Returns how many were left out. `place` is "back" for
+   * `takeBack`, whose entries belong after what the user typed since. */
+  private restorePending(
+    list: readonly PendingAttachment[],
+    place: "front" | "back" = "front",
+  ): number {
+    let total = this.pending.reduce((n, p) => n + p.bytes, 0);
+    const kept: PendingAttachment[] = [];
+    let dropped = 0;
+    for (const a of list) {
+      if (total + a.bytes > MAX_TOTAL_BYTES) {
+        dropped++;
+        continue;
+      }
+      total += a.bytes;
+      kept.push(a);
+    }
+    this.pending =
+      place === "front"
+        ? [...kept, ...this.pending]
+        : [...this.pending, ...kept];
+    return dropped;
   }
 
   /** Empties the queue back into the composer: the entries are returned
@@ -382,18 +451,11 @@ export class SessionController {
   takeBack(): TakeBackResult {
     if (this.queue.length === 0) return { entries: [], droppedAttachments: 0 };
     const entries = this.queue.splice(0);
-    let total = this.pending.reduce((n, p) => n + p.bytes, 0);
-    let dropped = 0;
-    for (const e of entries) {
-      for (const a of e.attachments) {
-        if (total + a.bytes > MAX_TOTAL_BYTES) {
-          dropped++;
-          continue;
-        }
-        total += a.bytes;
-        this.pending.push(a);
-      }
-    }
+    // Oldest first, appended after what is already pending: the queue's
+    // order is the user's, and restorePending puts each batch in front of
+    // the batches still to come.
+    const restored = entries.flatMap((e) => e.attachments);
+    const dropped = this.restorePending(restored, "back");
     this.emit();
     return {
       entries: entries.map((e) => ({
@@ -473,7 +535,7 @@ export class SessionController {
     const { code, message } = this.pushError(err);
     // Show the error before `dropSession` (up to `closeTimeoutMs`) runs.
     this.emit();
-    if (code === "RESPONSE_TIMEOUT") {
+    if (NON_FATAL_CODES.has(code)) {
       this.status = "idle";
       this.drain();
       this.emit();
@@ -495,6 +557,34 @@ export class SessionController {
     } finally {
       if (this.opening === p) this.opening = undefined;
     }
+  }
+
+  /** One open, wired so this session's idle expiry reaches the controller.
+   * The callback closes over a holder because the session does not exist
+   * yet; comparing by identity later is what makes a stale session's
+   * expiry a no-op. */
+  private open(): Promise<ChatSessionLike> {
+    let opened: ChatSessionLike | undefined;
+    return this.opts
+      .openSession(() => {
+        if (opened !== undefined) this.idleExpired(opened);
+      })
+      .then((session) => {
+        opened = session;
+        return session;
+      });
+  }
+
+  /** Core closed `session`'s browser after the idle timeout. It is already
+   * closing, so the session is only forgotten here; the lazy open on the
+   * next send does the rest. */
+  private idleExpired(session: ChatSessionLike): void {
+    if (this.session !== session) return; // stale: a reopen replaced it
+    this.session = undefined;
+    // A fresh chat must not re-send a prompt from before the break.
+    this.lastPrompt = undefined;
+    this.messages.push({ role: "separator", text: IDLE_CLOSED_SEPARATOR });
+    this.setStatus("closed");
   }
 
   private async dropSession(): Promise<void> {
@@ -535,7 +625,7 @@ export class SessionController {
     this.setStatus("reopening");
     await this.dropSession();
     try {
-      const session = await this.trackOpen(this.opts.openSession());
+      const session = await this.trackOpen(this.open());
       // `close()` (deactivate) ran while the browser was opening: this one
       // is an orphan, and the controller is closed. dropSession may have
       // closed it already; close/kill are idempotent.
@@ -592,4 +682,14 @@ export class SessionController {
     if (this.status !== "dead") this.status = "closed";
     this.emit();
   }
+}
+
+/** Why attachments went missing, for the message the user reads (or hears):
+ * a restore that no longer fits under MAX_TOTAL_BYTES, and the same thing
+ * `takeBack` warns about in `create-extension.ts`. One helper so the two
+ * sites cannot drift, with a real plural — a screen reader reads
+ * "attachment(s)" out literally. Not exported from `index.ts`: internal. */
+export function droppedAttachmentsLine(dropped: number): string {
+  const noun = dropped === 1 ? "attachment" : "attachments";
+  return `${dropped} ${noun} left out: total size limit.`;
 }

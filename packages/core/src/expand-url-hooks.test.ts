@@ -32,6 +32,21 @@ describe("findUrls", () => {
   test("nothing without a scheme", () => {
     expect(findUrls("wiki.test/a and /usr/bin")).toEqual([]);
   });
+  test("keeps a ')' that closes a '(' inside the URL", () => {
+    expect(findUrls("see https://wiki.test/Foo_(bar) now")).toEqual([
+      "https://wiki.test/Foo_(bar)",
+    ]);
+    // The Markdown link around it is still the prose's, not the URL's.
+    expect(findUrls("[foo](https://wiki.test/Foo_(bar))")).toEqual([
+      "https://wiki.test/Foo_(bar)",
+    ]);
+  });
+  test("strips an unbalanced ')' and any punctuation behind it", () => {
+    expect(findUrls("(see https://wiki.test/a).")).toEqual([
+      "https://wiki.test/a",
+    ]);
+    expect(findUrls("https://wiki.test/a)),")).toEqual(["https://wiki.test/a"]);
+  });
 });
 
 describe("resolveUrlHooks", () => {

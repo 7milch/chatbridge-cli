@@ -143,8 +143,17 @@ ui: {
 Activation throws a message listing missing `contributes` IDs
 when the manifest and `id` disagree. Vendor extensions on
 `@chatbridge/vscode` >= 0.8.1 must also declare `<id>.reopen` (and should
-bind it to Ctrl+R); a manifest copied from an older example lacks it. Verify by hand: F5 in VSCode → Log in
-→ send → right-click a selection → send → New Chat → Log out.
+bind it to Ctrl+R); a manifest copied from an older example lacks it.
+
+From 0.9.1 the session actions also live in the view title bar. Those
+entries are recommended, not required: without them activation only logs a
+warning and the title bar stays empty. Copy the `commands` icons, the
+`<id>.help` command and the six `view/title` entries from
+"View title bar" in `packages/vscode/README.md` (the dummy extension's
+`package.json` is the working example).
+
+Verify by hand: F5 in VSCode → Log in → send → right-click a selection →
+send → New Chat → Log out.
 
 ### Building the `.vsix`
 
@@ -205,7 +214,25 @@ exactly one element on the observation date.
 | `waitForResponse` | Wait for the done signal, then for the count to exceed the recorded one, then read the newest message with `innerText` until two reads 500 ms apart agree. Never return an earlier turn. Done signal first: some services insert a placeholder turn that is removed before the real one. |
 | `detectBlock` (optional) | Called only after `isLoggedIn` returned false. Return a short description when the page is a bot challenge or an IdP refusal (title, a known interstitial element); return `undefined` for a normal logged-out page. Must not throw. |
 | `commands` (optional, framework ≥ 0.9.0) | `/name` commands for the TUI and VSCode: `{ name, description, run(page, args) }` returning `{ kind: "show", text }` or `{ kind: "send", prompt }`. Names are lower-case letters, never a built-in. Not available in one-shot mode. |
-| `urlHooks` (optional, framework ≥ 0.9.0) | `{ match: RegExp | (url) => boolean, resolve(url) => { label, content } }`. Fetching and credentials are the provider's (a script with a PAT is fine); the framework only appends the content as an attachment. Runs under the session timeout; `MAX_FILE_BYTES` / `MAX_TOTAL_BYTES` apply. |
+| `urlHooks` (optional, framework ≥ 0.9.0) | `{ match: RegExp | (url) => boolean, resolve(url) => { label, content } }`. Fetching and credentials are the provider's (a script with a PAT is fine); the framework only appends the content as an attachment. Runs under the session timeout; `MAX_FILE_BYTES` / `MAX_TOTAL_BYTES` apply. Trailing prose punctuation (`.,;:!?'"]>`) is trimmed off the URL before `match` runs; a `)` only when it does not close a `(` inside the URL. |
+
+Two more optional fields tune the framework's browser handling:
+
+- `browser: { reducedMotion: "reduce" | "no-preference" }` — emulated
+  `prefers-reduced-motion` for every context. Leave it at the default
+  `"reduce"`: an idle animating page burns CPU for the whole life of the
+  session. Write `waitForResponse` against DOM state (a class, a
+  `data-state`, the send button coming back), never against a running
+  animation, and the opt-out is never needed.
+- `idle: { timeoutMs }` — default idle lifetime of an interactive session
+  (24 h; `0` disables). After it the browser is closed and the UI reopens
+  it on the next prompt, as a new chat. The user's config key `idle`, the
+  `CHATBRIDGE_IDLE_TIMEOUT` environment variable and the VSCode
+  `idleTimeoutMinutes` setting override it. In a VSCode manifest, declare
+  `idleTimeoutMinutes` (and `timeoutSec`) with no `default`: a declared
+  `default` is what `workspace.getConfiguration().get()` returns when the
+  user has set nothing, so it silently overrides the provider's value.
+  Put the intended fallback in the setting's `description` instead.
 
 ## Traps seen in the wild
 

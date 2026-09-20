@@ -33,6 +33,7 @@ export const COMMAND_LIST = [
   "installBrowser",
   "reopen",
   "help",
+  "pickFiles",
 ] satisfies WebviewCommand[];
 const COMMANDS: ReadonlySet<string> = new Set(COMMAND_LIST);
 

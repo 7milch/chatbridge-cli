@@ -176,4 +176,33 @@ describe("loadConfig", () => {
     await expect(p).rejects.toBeInstanceOf(ChatBridgeError);
     await expect(p).rejects.toThrow(message);
   });
+
+  test("reads the idle section", async () => {
+    writeFileSync(setup(), JSON.stringify({ idle: { timeoutMin: 30 } }));
+    const cfg = await loadConfig({ configDir: "test-cli", baseDir });
+    expect(cfg.idle).toEqual({ timeoutMin: 30 });
+  });
+
+  test("idle.timeoutMin 0 is allowed: it disables the idle close", async () => {
+    writeFileSync(setup(), JSON.stringify({ idle: { timeoutMin: 0 } }));
+    const cfg = await loadConfig({ configDir: "test-cli", baseDir });
+    expect(cfg.idle).toEqual({ timeoutMin: 0 });
+  });
+
+  test.each([
+    [{ idle: 5 }, '"idle" must be an object'],
+    [
+      { idle: { timeoutMin: "30" } },
+      '"idle.timeoutMin" must be a non-negative number',
+    ],
+    [
+      { idle: { timeoutMin: -1 } },
+      '"idle.timeoutMin" must be a non-negative number',
+    ],
+  ])("rejects %j", async (doc, message) => {
+    writeFileSync(setup(), JSON.stringify(doc));
+    const p = loadConfig({ configDir: "test-cli", baseDir });
+    await expect(p).rejects.toBeInstanceOf(ChatBridgeError);
+    await expect(p).rejects.toThrow(message);
+  });
 });

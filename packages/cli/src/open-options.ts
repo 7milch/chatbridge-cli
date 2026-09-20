@@ -26,7 +26,9 @@ function envNumber(
   check: (n: number) => boolean,
   expected: string,
 ): number | undefined {
-  const raw = env[name];
+  // Trimmed first: Number(" ") is 0, so a blank value would pass for a
+  // variable whose range allows 0 instead of meaning "not set".
+  const raw = env[name]?.trim();
   if (raw === undefined || raw === "") return undefined;
   const n = Number(raw);
   if (!Number.isFinite(n) || !check(n)) {

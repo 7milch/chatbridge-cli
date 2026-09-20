@@ -8,6 +8,7 @@ import {
   BrowserRuntime,
   type LaunchOptions,
 } from "@chatbridge/runtime";
+import { closeOrKill } from "./close-session.js";
 import {
   AuthExpiredError,
   AuthRequiredError,
@@ -16,6 +17,12 @@ import {
   InvalidStateError,
   ResponseTimeoutError,
 } from "./errors.js";
+import {
+  DEFAULT_IDLE_TIMEOUT_MS,
+  type IdleOptions,
+  IdleWatch,
+  formatIdleDuration,
+} from "./idle-watch.js";
 import { launchRuntime } from "./launch-runtime.js";
 import { runStep } from "./run-step.js";
 
@@ -34,6 +41,10 @@ export interface OpenOptions {
   /** Re-runs of the whole phase after a retryable failure. */
   retries: number;
 }
+
+/** How long the idle close waits for a clean close before killing the
+ * browser. The same 5 s cap the UIs use for a reset. */
+export const IDLE_CLOSE_BUDGET_MS = 5_000;
 
 export interface ChatSessionOptions {
   provider: Provider;
@@ -55,6 +66,18 @@ export interface ChatSessionOptions {
    * runtime check for headed launches, and to "present" for headless
    * launches or when `launch` is injected. */
   missingBrowserExecutable?: () => string | undefined;
+  /** Resolved idle timeout. Absent: the provider's `idle.timeoutMs`, then
+   * 24 h. 0 disables the idle close entirely. Interactive callers only;
+   * one-shot mode never opens a session long enough to matter. */
+  idle?: IdleOptions;
+  /** Called synchronously when the idle period expires, before anything is
+   * awaited, so the UI has dropped its reference by the time the browser
+   * starts closing. */
+  onIdleExpired?: () => void;
+  /** Test-only: the clock the idle watch compares against. */
+  idleNow?: () => number;
+  /** Test-only: how often the idle watch checks its deadline. */
+  idleTickMs?: number;
 }
 
 /** The default missing-browser pre-check looks for the *headed*
@@ -77,6 +100,11 @@ export class ChatSession {
   private pending = false;
   private closed = false;
   private killed = false;
+  /** Undefined when the idle close is disabled (timeout 0). */
+  private idleWatch: IdleWatch | undefined;
+  /** The close in flight, so a second close joins it rather than
+   * returning while the first is still saving the auth state. */
+  private closing: Promise<void> | undefined;
 
   private constructor(
     private readonly rt: RuntimeLike,
@@ -84,6 +112,40 @@ export class ChatSession {
     private readonly timeoutMs: number,
     private readonly onProgress?: (message: string) => void,
   ) {}
+
+  /** Arms the idle close, unless the resolved timeout disables it. */
+  private startIdleWatch(opts: ChatSessionOptions): void {
+    const timeoutMs =
+      opts.idle?.timeoutMs ??
+      opts.provider.idle?.timeoutMs ??
+      DEFAULT_IDLE_TIMEOUT_MS;
+    if (timeoutMs <= 0) return;
+    this.idleWatch = new IdleWatch({
+      timeoutMs,
+      now: opts.idleNow,
+      tickMs: opts.idleTickMs,
+      onExpire: () => {
+        // Fires from a timer: there is no caller to reject, and the UI's
+        // callback is not ours to trust with an exception.
+        void this.expireIdle(timeoutMs, opts.onIdleExpired).catch(() => {});
+      },
+    });
+  }
+
+  /** The idle close. The UI is told first and synchronously, so it has
+   * dropped this session before anything awaits: from here `send` and
+   * `runCommand` reject as closed. A normal close runs first, to save the
+   * rotated auth state; a wedged page is killed after the budget. */
+  private async expireIdle(
+    timeoutMs: number,
+    onIdleExpired: (() => void) | undefined,
+  ): Promise<void> {
+    onIdleExpired?.();
+    this.onProgress?.(
+      `Closing the browser after ${formatIdleDuration(timeoutMs)} idle...`,
+    );
+    await closeOrKill(this, IDLE_CLOSE_BUDGET_MS);
+  }
 
   /** isLoggedIn → true: return. false: ask detectBlock (when the provider
    * has it); a description means BlockedError, otherwise AuthExpiredError.
@@ -150,7 +212,11 @@ export class ChatSession {
         // The opening phase set the page default to open.timeoutMs; turns
         // run under --timeout, so hand the page back to that budget.
         rt.page.setDefaultTimeout(timeoutMs);
-        return new ChatSession(rt, provider, timeoutMs, onProgress);
+        const session = new ChatSession(rt, provider, timeoutMs, onProgress);
+        // Only once the opening phase succeeded: a session that never
+        // opened has no browser to close.
+        session.startIdleWatch(opts);
+        return session;
       } catch (err) {
         if (attempt >= attempts || !isRetryableOpenError(err)) throw err;
         // The error is about to be swallowed by the next attempt; leave a
@@ -197,6 +263,7 @@ export class ChatSession {
       throw new InvalidStateError("A send is already in progress.");
     }
     this.pending = true;
+    this.idleWatch?.pause();
     try {
       this.onProgress?.("Sending prompt...");
       await runStep("sendMessage", this.timeoutMs, () =>
@@ -211,6 +278,7 @@ export class ChatSession {
       throw err;
     } finally {
       this.pending = false;
+      this.idleWatch?.resume();
     }
   }
 
@@ -230,6 +298,7 @@ export class ChatSession {
       throw new InvalidStateError(`Unknown provider command "/${name}".`);
     }
     this.pending = true;
+    this.idleWatch?.pause();
     try {
       this.onProgress?.(`Running /${name}...`);
       return await runStep(`command:${name}`, this.timeoutMs, () =>
@@ -240,6 +309,7 @@ export class ChatSession {
       throw err;
     } finally {
       this.pending = false;
+      this.idleWatch?.resume();
     }
   }
 
@@ -266,10 +336,23 @@ export class ChatSession {
   /** Closes the browser, first saving the current storage state when the page
    * is still logged in (services rotate tokens, so the state saved at login
    * goes stale). A lost login or a failed save is reported via onProgress and
-   * never blocks the close. Idempotent. */
+   * never blocks the close. Idempotent, and *joinable*: a caller that arrives
+   * while the idle close is still saving the auth state waits for it rather
+   * than exiting underneath it. */
   async close(): Promise<void> {
+    // Before the join: a kill leaves the earlier close parked forever on the
+    // hung page, and joining it would cost the caller another close budget.
+    if (this.killed) return;
+    if (this.closing !== undefined) return this.closing;
     if (this.closed) return;
     this.closed = true;
+    this.idleWatch?.stop();
+    const run = this.runClose();
+    this.closing = run;
+    return run;
+  }
+
+  private async runClose(): Promise<void> {
     try {
       const ok = await runStep("isLoggedIn", this.timeoutMs, () =>
         this.provider.isLoggedIn(this.rt.page),
@@ -301,6 +384,7 @@ export class ChatSession {
     if (this.killed) return;
     this.killed = true;
     this.closed = true;
+    this.idleWatch?.stop();
     await this.rt.kill();
   }
 }

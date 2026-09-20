@@ -12,9 +12,11 @@ import {
 } from "@chatbridge/core";
 import {
   type ChatSessionLike,
+  IDLE_CLOSED_SEPARATOR,
   REOPENED_SEPARATOR,
   SessionController,
   type SessionControllerOptions,
+  droppedAttachmentsLine,
 } from "./session-controller.js";
 
 function deferred<T>() {
@@ -102,6 +104,16 @@ function harness(opts: Partial<SessionControllerOptions> = {}): Harness {
 
 async function settle() {
   await new Promise((r) => setTimeout(r, 0));
+}
+
+/** Waits until `cond` holds, so a test observes a real state change instead
+ * of a fixed number of turns of the event loop. */
+async function waitFor(cond: () => boolean, tries = 100): Promise<void> {
+  for (let i = 0; i < tries; i++) {
+    if (cond()) return;
+    await settle();
+  }
+  throw new Error("waitFor: condition never became true");
 }
 
 describe("SessionController", () => {
@@ -935,6 +947,80 @@ describe("SessionController.runCommand", () => {
     expect((await p).ok).toBe(false);
     expect(h.controller.getState().status).toBe("dead");
   });
+
+  test("a session without runCommand refuses without killing the controller", async () => {
+    const h = harness();
+    // A session that cannot run commands at all, as an older or partial
+    // ChatSession implementation would be.
+    const plain: ChatSessionLike = {
+      async send() {
+        return "reply";
+      },
+      async close() {},
+      async kill() {},
+    };
+    h.controller = new SessionController({
+      openSession: async () => {
+        h.opens++;
+        return plain;
+      },
+      closeTimeoutMs: 20,
+      onChange: (s) => h.states.push(s.status),
+    });
+    const r = await h.controller.runCommand("model", "", "/model");
+    expect(r).toEqual({
+      ok: false,
+      code: "COMMAND_UNAVAILABLE",
+      message: "/model is not available in this session.",
+    });
+    const s = h.controller.getState();
+    expect(s.status).toBe("idle");
+    expect(s.lastError).toBeUndefined();
+    expect(s.messages).toEqual([
+      { role: "user", text: "/model", attachments: [] },
+      { role: "error", text: "/model is not available in this session." },
+    ]);
+    // The browser is still usable: an ordinary send goes through.
+    expect(await h.controller.send("hi")).toEqual({ ok: true });
+    expect(h.opens).toBe(1);
+  });
+
+  test("a queued turn still drains after an unavailable command", async () => {
+    const h = harness();
+    const plain: ChatSessionLike = {
+      async send(prompt) {
+        h.sent.push(prompt);
+        return "reply";
+      },
+      async close() {},
+      async kill() {},
+    };
+    h.controller = new SessionController({
+      openSession: async () => {
+        h.opens++;
+        return plain;
+      },
+      closeTimeoutMs: 20,
+      onChange: (s) => h.states.push(s.status),
+    });
+    const running = h.controller.runCommand("model", "", "/model");
+    expect(await h.controller.send("after")).toEqual({
+      ok: true,
+      queued: true,
+    });
+    await running;
+    // The drained turn is asynchronous: wait for its reply to land, not for
+    // a fixed number of microtasks.
+    await waitFor(() =>
+      h.controller
+        .getState()
+        .messages.some((m) => m.role === "assistant" && m.text === "reply"),
+    );
+    expect(h.sent).toEqual(["after"]);
+    const after = h.controller.getState();
+    expect(after.status).toBe("idle");
+    expect(after.queue).toEqual([]);
+  });
 });
 
 describe("URL hooks", () => {
@@ -1006,6 +1092,73 @@ describe("URL hooks", () => {
     expect(h.sent).toEqual([]);
   });
 
+  test("restoring attachments after a refusal respects the total limit", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const h = harness({
+      expandUrls: async () => {
+        await gate;
+        throw new UrlHookError(["https://w/x: 403"]);
+      },
+    });
+    expect(
+      h.controller.addAttachment({
+        path: "big.txt",
+        bytes: MAX_FILE_BYTES,
+        content: "b",
+      }),
+    ).toEqual({ ok: true });
+    const p = h.controller.send("https://w/x");
+    // `send` empties the composer synchronously, so these are the files the
+    // user dropped in while the hooks were still resolving. Five max-size
+    // files fit on their own, but not beside `big.txt`.
+    for (let i = 0; i < 5; i++) {
+      expect(
+        h.controller.addAttachment({
+          path: `n${i}.txt`,
+          bytes: MAX_FILE_BYTES,
+          content: "n",
+        }),
+      ).toEqual({ ok: true });
+    }
+    release();
+    expect((await p).ok).toBe(false);
+    const s = h.controller.getState();
+    // `big.txt` no longer fits; it is reported, not forced in.
+    expect(s.pendingAttachments.map((a) => a.path)).toEqual([
+      "n0.txt",
+      "n1.txt",
+      "n2.txt",
+      "n3.txt",
+      "n4.txt",
+    ]);
+    expect(s.messages).toEqual([
+      {
+        role: "error",
+        text: "https://w/x: 403\n1 attachment left out: total size limit.",
+      },
+    ]);
+    // The composer is usable again: it is under the limit.
+    expect(
+      h.controller.addAttachment({ path: "ok.txt", bytes: 5, content: "o" }),
+    ).toEqual({ ok: true });
+  });
+
+  test("a refusal with room to spare restores everything and says nothing extra", async () => {
+    const h = harness({
+      expandUrls: async () => {
+        throw new UrlHookError(["https://w/x: 403"]);
+      },
+    });
+    h.controller.addAttachment({ path: "a.txt", bytes: 1, content: "a" });
+    await h.controller.send("https://w/x");
+    const s = h.controller.getState();
+    expect(s.pendingAttachments).toEqual([{ path: "a.txt", bytes: 1 }]);
+    expect(s.messages).toEqual([{ role: "error", text: "https://w/x: 403" }]);
+  });
+
   test("a reopen during URL expansion recovers the turn instead of opening a second browser", async () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => {
@@ -1025,25 +1178,270 @@ describe("URL hooks", () => {
     await h.controller.reopen();
     expect(h.opens).toBe(1);
     release();
-    expect(await p).toEqual({ ok: true });
+    // Refused like a hook refusal, so the extension refills the composer
+    // rather than leaving the text only in the history.
+    expect(await p).toEqual({
+      ok: false,
+      code: "REOPENED",
+      message: "Reopened while resolving URLs; message not sent.",
+    });
     await settle();
     expect(h.opens).toBe(1);
     // The stale turn is not sent, but the one queued behind it is.
     expect(h.sent).toEqual(["b"]);
     const s = h.controller.getState();
     expect(s.status).toBe("busy");
-    // Its attachments come back to the composer and its text stays readable
-    // in the history, so nothing the user typed is lost.
+    // Its attachments come back to the composer and the refusal above hands
+    // the text back, so nothing the user typed is lost.
     expect(s.pendingAttachments).toEqual([{ path: "a.txt", bytes: 1 }]);
     expect(s.messages).toEqual([
       { role: "separator", text: REOPENED_SEPARATOR },
       {
         role: "error",
-        text: "Reopened while resolving URLs; message not sent: a",
+        text: "Reopened while resolving URLs; message not sent.",
       },
       { role: "user", text: "b", attachments: [] },
     ]);
     h.replies[0]?.resolve("ok");
     await settle();
+  });
+
+  test("a stale turn drained from the queue keeps its text in the history", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const h = harness({
+      // Only the queued turn's expansion is held open; the first one runs
+      // straight through so the queue gets a chance to drain.
+      expandUrls: async (text) => {
+        if (text === "b") await gate;
+        return [];
+      },
+    });
+    const first = h.controller.send("a");
+    await waitFor(() => h.sent.length === 1);
+    h.controller.addAttachment({ path: "b.txt", bytes: 1, content: "b" });
+    expect(await h.controller.send("b")).toEqual({ ok: true, queued: true });
+    // The composer is empty again, so "b" lives only in the queue entry.
+    expect(h.controller.getState().pendingAttachments).toEqual([]);
+    h.replies[0]?.resolve("1");
+    await first;
+    // "b" is drained and is now waiting on the gate inside its expansion.
+    await waitFor(() => h.controller.getState().queue.length === 0);
+    await h.controller.reopen();
+    release();
+    // `drain()` discards the result, so nothing refills the composer for a
+    // queued turn: the history entry is the only place the text can live.
+    await waitFor(() => h.controller.getState().messages.length === 4);
+    const s = h.controller.getState();
+    expect(s.messages).toEqual([
+      { role: "user", text: "a", attachments: [] },
+      { role: "assistant", text: "1" },
+      { role: "separator", text: REOPENED_SEPARATOR },
+      {
+        role: "error",
+        text: "Reopened while resolving URLs; message not sent: b",
+      },
+    ]);
+    // Its attachments still come back to the composer.
+    expect(s.pendingAttachments).toEqual([{ path: "b.txt", bytes: 1 }]);
+    expect(h.sent).toEqual(["a"]);
+    expect(s.queue).toEqual([]);
+    // The reopen's session is ready and nothing is left to run.
+    expect(s.status).toBe("idle");
+  });
+
+  test("a stale turn whose attachments no longer fit says how many were left out", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const h = harness({
+      expandUrls: async () => {
+        await gate;
+        return [];
+      },
+    });
+    expect(
+      h.controller.addAttachment({
+        path: "big.txt",
+        bytes: MAX_FILE_BYTES,
+        content: "b",
+      }),
+    ).toEqual({ ok: true });
+    const p = h.controller.send("a");
+    // `send` emptied the composer, so these are files dropped in while the
+    // hooks were still resolving. Five max-size files fit on their own, but
+    // not beside `big.txt`.
+    expect(MAX_FILE_BYTES * 6).toBeGreaterThan(MAX_TOTAL_BYTES);
+    for (let i = 0; i < 5; i++) {
+      expect(
+        h.controller.addAttachment({
+          path: `n${i}.txt`,
+          bytes: MAX_FILE_BYTES,
+          content: "n",
+        }),
+      ).toEqual({ ok: true });
+    }
+    await h.controller.reopen();
+    release();
+    expect(await p).toEqual({
+      ok: false,
+      code: "REOPENED",
+      message: "Reopened while resolving URLs; message not sent.",
+    });
+    await waitFor(() => h.controller.getState().messages.length === 2);
+    const s = h.controller.getState();
+    // `big.txt` no longer fits; it is reported, not forced in.
+    expect(s.pendingAttachments.map((a) => a.path)).toEqual([
+      "n0.txt",
+      "n1.txt",
+      "n2.txt",
+      "n3.txt",
+      "n4.txt",
+    ]);
+    expect(s.messages).toEqual([
+      { role: "separator", text: REOPENED_SEPARATOR },
+      {
+        role: "error",
+        text: "Reopened while resolving URLs; message not sent.\n1 attachment left out: total size limit.",
+      },
+    ]);
+  });
+});
+
+describe("idle close", () => {
+  /** A controller whose opens hand back each session's expiry callback. */
+  function idleHarness() {
+    const sessions: ChatSessionLike[] = [];
+    const expire: Array<() => void> = [];
+    const states: string[] = [];
+    const sent: string[] = [];
+    const replies: Array<ReturnType<typeof deferred<string>>> = [];
+    const closed = { count: 0 };
+    const controller = new SessionController({
+      closeTimeoutMs: 20,
+      onChange: (state) => states.push(state.status),
+      openSession: async (onIdleExpired) => {
+        expire.push(onIdleExpired);
+        const session: ChatSessionLike = {
+          async send(prompt) {
+            sent.push(prompt);
+            const d = deferred<string>();
+            replies.push(d);
+            return d.promise;
+          },
+          async close() {
+            closed.count++;
+          },
+          async kill() {},
+        };
+        sessions.push(session);
+        return session;
+      },
+    });
+    return { controller, sessions, expire, states, sent, replies, closed };
+  }
+
+  /** The nth entry, failing loudly when it was never created. */
+  function at<T>(list: readonly T[], i: number): T {
+    const entry = list[i];
+    if (entry === undefined) throw new Error(`no entry at index ${i}`);
+    return entry;
+  }
+
+  /** Waits for a real state change rather than a guessed number of ticks. */
+  async function waitFor(what: string, cond: () => boolean): Promise<void> {
+    for (let i = 0; i < 100 && !cond(); i++) await settle();
+    if (!cond()) throw new Error(`timed out waiting for ${what}`);
+  }
+
+  /** One completed turn: the session is open, idle, and one reply is in. */
+  async function firstTurn(h: ReturnType<typeof idleHarness>): Promise<void> {
+    void h.controller.send("one");
+    await waitFor("the first send", () => h.replies.length === 1);
+    at(h.replies, 0).resolve("reply");
+    await waitFor(
+      "the turn to finish",
+      () => h.controller.getState().status === "idle",
+    );
+  }
+
+  test("expiry: status closed, separator pushed, browser not closed again", async () => {
+    const h = idleHarness();
+    await firstTurn(h);
+    at(h.expire, 0)();
+    const state = h.controller.getState();
+    expect(state.status).toBe("closed");
+    expect(state.messages.at(-1)).toEqual({
+      role: "separator",
+      text: IDLE_CLOSED_SEPARATOR,
+    });
+    // Core is closing it; the controller must not close it a second time.
+    expect(h.closed.count).toBe(0);
+  });
+
+  test("the next send opens lazily and pushes nothing further", async () => {
+    const h = idleHarness();
+    await firstTurn(h);
+    at(h.expire, 0)();
+    const before = h.controller.getState().messages.length;
+    void h.controller.send("two");
+    await waitFor("the lazy reopen", () => h.sessions.length === 2);
+    await waitFor("the queued prompt", () => h.sent.length === 2);
+    expect(h.sent.at(-1)).toBe("two");
+    // user entry only: no extra separator for the lazy reopen.
+    expect(h.controller.getState().messages.length).toBe(before + 1);
+    at(h.replies, 1).resolve("reply two");
+    await settle();
+  });
+
+  test("a stale session's expiry is ignored", async () => {
+    const h = idleHarness();
+    await firstTurn(h);
+    await h.controller.reopen();
+    const status = h.controller.getState().status;
+    at(h.expire, 0)(); // the session the reopen already dropped
+    expect(h.controller.getState().status).toBe(status);
+    expect(
+      h.controller
+        .getState()
+        .messages.filter((m) => m.text === IDLE_CLOSED_SEPARATOR).length,
+    ).toBe(0);
+  });
+
+  test("retryLast after an idle close does not resend the old prompt", async () => {
+    const h = idleHarness();
+    await firstTurn(h);
+    at(h.expire, 0)();
+    expect(await h.controller.retryLast()).toEqual({
+      ok: false,
+      code: "EMPTY",
+      message: "Nothing to send.",
+    });
+    expect(h.sent).toEqual(["one"]);
+  });
+
+  test("an expiry after close() is ignored", async () => {
+    const h = idleHarness();
+    await firstTurn(h);
+    await h.controller.close();
+    const before = h.controller.getState().messages.length;
+    at(h.expire, 0)();
+    const state = h.controller.getState();
+    expect(state.status).toBe("closed");
+    expect(state.messages.length).toBe(before);
+  });
+});
+
+describe("droppedAttachmentsLine", () => {
+  test("has a real plural: a screen reader reads this sentence out", () => {
+    expect(droppedAttachmentsLine(1)).toBe(
+      "1 attachment left out: total size limit.",
+    );
+    expect(droppedAttachmentsLine(2)).toBe(
+      "2 attachments left out: total size limit.",
+    );
   });
 });

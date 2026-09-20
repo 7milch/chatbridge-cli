@@ -34,6 +34,11 @@ export interface VscodeUi {
   /** Opens the document behind an explorer Uri (or any Uri) read-only. */
   openDocument(uri: unknown): Promise<{ path: string; text: string }>;
   focusView(): void;
+  /** Native file picker for the composer's `+`. The URIs are returned as
+   * strings so they take the same path as a drop; empty when cancelled.
+   * Optional: a vendor's own VscodeUi written against 0.9.0 has none, and
+   * the `+` command is then a no-op. */
+  pickFiles?(): Promise<string[]>;
 }
 
 export function createVscodeUi(api: typeof vscode, id: string): VscodeUi {
@@ -91,5 +96,13 @@ export function createVscodeUi(api: typeof vscode, id: string): VscodeUi {
       return { path: relPath(doc.uri), text: doc.getText() };
     },
     focusView: () => void api.commands.executeCommand(`${id}.chat.focus`),
+    pickFiles: async () => {
+      const picked = await api.window.showOpenDialog({
+        canSelectMany: true,
+        canSelectFolders: false,
+        openLabel: "Attach",
+      });
+      return (picked ?? []).map((uri) => uri.toString());
+    },
   };
 }

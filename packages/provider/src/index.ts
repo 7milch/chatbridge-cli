@@ -10,6 +10,24 @@ export interface ProviderOpenDefaults {
   retries?: number;
 }
 
+/** Provider preferences for the browser context the runtime creates. */
+export interface ProviderBrowserDefaults {
+  /** Emulated `prefers-reduced-motion`. Defaults to "reduce": an idle
+   * headless page that keeps animating is rasterised on the CPU forever.
+   * Set "no-preference" only when the service misbehaves under reduced
+   * motion (an animation the completion detection keys on). */
+  reducedMotion?: "reduce" | "no-preference";
+}
+
+/** Provider default for the idle lifetime of an interactive session. */
+export interface ProviderIdleDefaults {
+  /** After this long without a turn the browser is closed and the UI
+   * reopens it on the next prompt. Built-in default 86 400 000 (24 h);
+   * 0 disables. Users override it via config.json, an env var, or the
+   * VSCode setting. */
+  timeoutMs?: number;
+}
+
 /** What a provider command hands back. `show`: the UI prints `text` in the
  * history. `send`: the UI sends `prompt` as an ordinary turn; the history
  * keeps the `/command` line the user typed, the service alone sees the
@@ -93,6 +111,11 @@ export interface Provider {
   /** Optional. A slow service may raise the opening timeout; a flaky one
    * may ask for retries. See ProviderOpenDefaults. */
   open?: ProviderOpenDefaults;
+  /** Optional. Browser context preferences; see ProviderBrowserDefaults. */
+  browser?: ProviderBrowserDefaults;
+  /** Optional. Idle lifetime of an interactive session; see
+   * ProviderIdleDefaults. */
+  idle?: ProviderIdleDefaults;
   /** Optional. `/commands` for the interactive UIs, listed by `/help` after
    * the built-ins. Validated by defineProvider. */
   commands?: ProviderCommand[];
@@ -131,6 +154,25 @@ export function defineProvider(provider: Provider): Provider {
         `URL hook RegExp ${h.match} must not use the g or y flag (it makes .test stateful).`,
       );
     }
+  }
+  const reducedMotion = provider.browser?.reducedMotion;
+  if (
+    reducedMotion !== undefined &&
+    reducedMotion !== "reduce" &&
+    reducedMotion !== "no-preference"
+  ) {
+    throw new Error(
+      `Provider browser.reducedMotion must be "reduce" or "no-preference", got ${JSON.stringify(reducedMotion)}.`,
+    );
+  }
+  const idleTimeout = provider.idle?.timeoutMs;
+  if (
+    idleTimeout !== undefined &&
+    (!Number.isFinite(idleTimeout) || idleTimeout < 0)
+  ) {
+    throw new Error(
+      `Provider idle.timeoutMs must be a non-negative finite number, got ${idleTimeout}.`,
+    );
   }
   return provider;
 }

@@ -132,4 +132,41 @@ describe("BrowserRuntime (headless Chromium on Bun)", () => {
     // close() after kill() must not throw either: teardown paths call it.
     await rt.close();
   }, 60_000);
+
+  test("contexts ask for reduced motion by default, and honour the opt-out", async () => {
+    const server = await startDummyChat(0);
+    cleanups.push(server.stop);
+    const provider = createDummyProvider(server.url);
+    const store = tempStore(provider.name);
+
+    // Default: a page that honours the media query stops animating, which
+    // is the whole point of the setting on a headless, software-rasterised
+    // browser.
+    const rt1 = await BrowserRuntime.launch({
+      headless: true,
+      provider,
+      authStore: store,
+    });
+    cleanups.push(() => rt1.close());
+    await rt1.page.goto(provider.chatUrl);
+    expect(
+      await rt1.page.evaluate(
+        () => matchMedia("(prefers-reduced-motion: reduce)").matches,
+      ),
+    ).toBe(true);
+    await rt1.close();
+
+    const rt2 = await BrowserRuntime.launch({
+      headless: true,
+      provider: { ...provider, browser: { reducedMotion: "no-preference" } },
+      authStore: store,
+    });
+    cleanups.push(() => rt2.close());
+    await rt2.page.goto(provider.chatUrl);
+    expect(
+      await rt2.page.evaluate(
+        () => matchMedia("(prefers-reduced-motion: reduce)").matches,
+      ),
+    ).toBe(false);
+  }, 60_000);
 });

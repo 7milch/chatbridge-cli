@@ -178,6 +178,12 @@ chat.
   1 MB per message, text files only, paths inside the working directory.
   Problems are shown as an error and nothing is sent; fix the message and
   press Enter again. One-shot mode (`-p`) sends the prompt verbatim.
+- Type **`/`** at the start of the input to see the commands: the built-ins
+  and any the provider adds, each with its description. **↑/↓** select,
+  **Tab** completes the word to `/name ` so you can type arguments, and
+  **Enter** completes too — unless what you typed is already the whole
+  command, in which case it runs. **Esc** closes the popup; accepting an
+  entry never runs it. `/` has no special meaning in shell mode.
 - Type **`!`** in an empty input to run a shell command (pasting text that
   starts with `!` works too). The prompt turns into `! `; **Enter** runs
   the command in the directory you started `chatbridge` in, with your own
@@ -259,6 +265,32 @@ needs; Chromium itself is downloaded by that button, never packaged. The
 example's own `package` script uses `--no-dependencies` and is only a CI
 smoke test. Full steps: `packages/vscode/README.md`.
 
+## Long-running sessions
+
+An open interactive session keeps a real browser running. That is not free:
+a headless Chromium on macOS rasterises in software and Playwright disables
+background throttling, so a chat page that keeps animating can hold a core
+busy for as long as the session stays open.
+
+Two things keep that in check:
+
+- Every browser context asks for `prefers-reduced-motion: reduce`, so pages
+  that honour the preference stop animating while you are not typing. A
+  provider that needs the animations can opt out with
+  `browser: { reducedMotion: "no-preference" }`.
+- A session that has seen no turn for 24 hours closes its browser (saving
+  the auth state first). The UI says so, and your next prompt reopens it —
+  as a new chat, since the service-side conversation is not restored.
+
+Change or disable the idle close, longest-winning-last:
+
+- `config.json`: `{ "idle": { "timeoutMin": 120 } }` — `0` disables it.
+- Environment: `CHATBRIDGE_IDLE_TIMEOUT=120` (minutes, `0` disables).
+- VSCode: the `<id>.idleTimeoutMinutes` setting.
+
+One-shot mode (`-p`) is unaffected: it closes the browser when the reply
+arrives.
+
 ## Authentication
 
 The framework never stores usernames or passwords. You log in yourself in a headful browser, and the resulting browser authentication state is saved and reused on subsequent runs.
@@ -325,7 +357,30 @@ collide with a built-in (`login`, `logout`, `new`, `reopen`, `help`), or that
 repeat. A `show` result is printed; a `send` result is sent as an ordinary
 turn while the history keeps the `/command` line you typed. A URL hook runs
 under the session timeout and its result is subject to the same size limits
-as `@file` attachments.
+as `@file` attachments. URLs are detected in the text as typed, and the
+punctuation prose puts after a link (`.,;:!?'"]>`) is trimmed off before
+`match` sees it; a `)` is trimmed only when it does not close a `(` from
+inside the URL, so `https://wiki.example.com/Foo_(bar)` arrives intact.
+
+A provider may also set two defaults for the framework's browser handling:
+
+```ts
+export default defineProvider({
+  // ...
+  // Emulated prefers-reduced-motion for every context (default "reduce").
+  browser: { reducedMotion: "no-preference" },
+  // Idle lifetime of an interactive session (default 24 h; 0 disables).
+  idle: { timeoutMs: 2 * 60 * 60 * 1000 },
+});
+```
+
+`reducedMotion` defaults to `"reduce"` because an idle animating page is
+rasterised on the CPU for as long as the session is open; opt out only when
+the service misbehaves without its animations — and prefer completion
+detection that keys on DOM state rather than on a running animation, which
+never needs the opt-out. The user's `idle` config key, the
+`CHATBRIDGE_IDLE_TIMEOUT` environment variable and the VSCode setting
+override `idle.timeoutMs`.
 
 ## License
 

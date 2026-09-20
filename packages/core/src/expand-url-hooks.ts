@@ -4,7 +4,7 @@ import {
   MAX_FILE_BYTES,
   MAX_TOTAL_BYTES,
   formatAttachment,
-  formatSize,
+  totalSizeProblem,
 } from "./attachment.js";
 
 /** Every problem found in one message, thrown together so the user fixes
@@ -40,14 +40,44 @@ export interface UrlHookOptions {
 }
 
 const URL_TOKEN = /https?:\/\/\S+/g;
-/** Prose and Markdown put these right after a link. */
-const TRAILING = /[)>.,;:'"!?\]]+$/;
+/** Prose and Markdown put these right after a link. `)` is not here: it
+ * needs the balance rule below. */
+const TRAILING = new Set([">", ".", ",", ";", ":", "'", '"', "!", "?", "]"]);
+
+function count(text: string, char: string): number {
+  let n = 0;
+  for (const c of text) if (c === char) n++;
+  return n;
+}
+
+/** Drops the punctuation prose puts after a link. A `)` is kept when the
+ * URL still has an unclosed `(` — `.../Foo_(bar)` is one URL, while the
+ * `)` of `[foo](https://x/)` belongs to the Markdown around it. */
+function trimTrailing(url: string): string {
+  let end = url.length;
+  while (end > 0) {
+    const ch = url[end - 1] as string;
+    if (TRAILING.has(ch)) {
+      end--;
+      continue;
+    }
+    if (ch === ")") {
+      const head = url.slice(0, end);
+      if (count(head, ")") > count(head, "(")) {
+        end--;
+        continue;
+      }
+    }
+    break;
+  }
+  return url.slice(0, end);
+}
 
 /** Every distinct URL in `text`, in first-occurrence order. */
 export function findUrls(text: string): string[] {
   const out: string[] = [];
   for (const m of text.matchAll(URL_TOKEN)) {
-    const url = m[0].replace(TRAILING, "");
+    const url = trimTrailing(m[0]);
     if (!out.includes(url)) out.push(url);
   }
   return out;
@@ -113,11 +143,7 @@ export async function resolveUrlHooks(
   }
   const total =
     (opts.alreadyBytes ?? 0) + resolved.reduce((n, r) => n + r.bytes, 0);
-  if (total > MAX_TOTAL_BYTES) {
-    problems.push(
-      `attachments total ${formatSize(total)} exceeds ${formatSize(MAX_TOTAL_BYTES).replace(".0", "")}`,
-    );
-  }
+  if (total > MAX_TOTAL_BYTES) problems.push(totalSizeProblem(total));
   if (problems.length > 0) throw new UrlHookError(problems);
   return resolved;
 }

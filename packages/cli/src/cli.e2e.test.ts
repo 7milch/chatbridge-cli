@@ -2,10 +2,17 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AuthStore, BrowserRuntime } from "@chatbridge/core";
+import {
+  AuthStore,
+  BrowserRuntime,
+  ChatSession,
+  commandInfoOf,
+} from "@chatbridge/core";
 import { createDummyProvider } from "@chatbridge/example-dummy-chat/provider";
 import { startDummyChat } from "@chatbridge/example-dummy-chat/server";
 import { createCli } from "./create-cli.js";
+import { ChatModel } from "./tui/chat-model.js";
+import { expandInput } from "./tui/expand-input.js";
 
 const cleanups: Array<() => unknown> = [];
 afterEach(async () => {
@@ -144,5 +151,104 @@ describe("createCli", () => {
     expect(chunks.join("")).toContain(
       'Blocked by "dummy-chat": challenge page. Try --headful.',
     );
+  }, 60_000);
+});
+
+describe("interactive model against the dummy chat", () => {
+  /** A ChatModel over a real ChatSession; no renderer — the model is the
+   * unit under test and its history is what the view would show. */
+  async function openModel(baseDir: string, serverUrl: string) {
+    const provider = await prepareAuth(baseDir, serverUrl);
+    const authStore = new AuthStore({
+      configDir: "test-cli",
+      providerName: provider.name,
+      baseDir,
+    });
+    const timeoutMs = 30_000;
+    const model = new ChatModel({
+      openSession: () =>
+        ChatSession.open({
+          provider,
+          authStore,
+          headless: true,
+          timeoutMs,
+        }),
+      login: async () => {},
+      clearAuth: async () => {},
+      commands: commandInfoOf(provider),
+      expand: (text) =>
+        expandInput(text, {
+          cwd: baseDir,
+          hooks: provider.urlHooks ?? [],
+          timeoutMs,
+        }),
+    });
+    cleanups.push(() => model.session?.close());
+    await model.ready;
+    expect(model.status).toBe("idle");
+    return { model, provider };
+  }
+
+  test("a provider `show` command reads the live page", async () => {
+    const server = await startDummyChat(0);
+    cleanups.push(server.stop);
+    const baseDir = setup();
+    const { model } = await openModel(baseDir, server.url);
+
+    expect(await model.submit("/title")).toBe(true);
+    expect(model.status).toBe("idle");
+    expect(model.messages.at(-2)).toEqual({ role: "user", text: "/title" });
+    // The command ran on the real page: this is the dummy chat's <title>.
+    expect(model.messages.at(-1)).toEqual({
+      role: "help",
+      text: "Dummy Chat",
+    });
+  }, 60_000);
+
+  test("a provider `send` command sends its prompt as a turn", async () => {
+    const server = await startDummyChat(0);
+    cleanups.push(server.stop);
+    const baseDir = setup();
+    const { model } = await openModel(baseDir, server.url);
+
+    expect(await model.submit("/shout hello")).toBe(true);
+    expect(model.status).toBe("idle");
+    // The history keeps the line as typed; the browser received the upper
+    // case prompt the command produced.
+    expect(model.messages.at(-2)).toEqual({
+      role: "user",
+      text: "/shout hello",
+    });
+    expect(model.messages.at(-1)?.role).toBe("assistant");
+    expect(model.messages.at(-1)?.text).toMatch(/^Echo: HELLO/);
+  }, 60_000);
+
+  test("a hooked URL becomes an attachment on the turn", async () => {
+    const server = await startDummyChat(0);
+    cleanups.push(server.stop);
+    const baseDir = setup();
+    const { model } = await openModel(baseDir, server.url);
+
+    expect(await model.submit(`read ${server.url}/login`)).toBe(true);
+    expect(model.status).toBe("idle");
+    const user = model.messages.at(-2);
+    expect(user?.role).toBe("user");
+    expect(user?.text).toBe(`read ${server.url}/login`);
+    expect(user?.attachments?.map((a) => a.path)).toEqual(["Dummy: /login"]);
+    expect((user?.attachments?.[0]?.bytes ?? 0) > 0).toBe(true);
+    expect(model.messages.at(-1)?.role).toBe("assistant");
+  }, 60_000);
+
+  test("a hook that fails refuses the turn and leaves the model idle", async () => {
+    const server = await startDummyChat(0);
+    cleanups.push(server.stop);
+    const baseDir = setup();
+    const { model } = await openModel(baseDir, server.url);
+
+    // submit() resolves false so the view refills the input box.
+    expect(await model.submit(`read ${server.url}/nope`)).toBe(false);
+    expect(model.status).toBe("idle");
+    expect(model.messages.at(-1)?.role).toBe("error");
+    expect(model.messages.at(-1)?.text).toMatch(/404 from dummy chat/);
   }, 60_000);
 });

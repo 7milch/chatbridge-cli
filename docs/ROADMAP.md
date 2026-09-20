@@ -224,6 +224,15 @@ provider and attached like an `@file` mention), both for the TUI and
 VSCode only (#83, #84). The framework never fetches and never sees a
 credential. Ships as v0.9.0.
 
+### 16. Idle browser CPU, VSCode chat view layout and `/` completion — done (issue #95, PR #101, 2026-09-20)
+
+Every browser context asks for `prefers-reduced-motion: reduce`, and an
+interactive session closes its browser after 24 h idle and reopens on the
+next prompt (#95). The VSCode chat view gets native title-bar actions, a
+one-box composer with a file picker and a `/` command menu (#97), and typing
+`/` completes commands in both UIs (#86). Also the eight v0.9.0 follow-ups
+(#87–#94). Ships on the 0.9.x line.
+
 ## Backlog
 
 Moved to GitHub. See the issues labelled

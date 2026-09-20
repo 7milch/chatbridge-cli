@@ -8,6 +8,7 @@ export {
 export {
   ChatSession,
   type ChatSessionOptions,
+  IDLE_CLOSE_BUDGET_MS,
   type OpenOptions,
   type RuntimeLike,
   isRetryableOpenError,
@@ -36,6 +37,7 @@ export {
   fenceFor,
   formatAttachment,
   formatSize,
+  totalSizeProblem,
 } from "./attachment.js";
 export {
   type ClosableSession,
@@ -43,6 +45,13 @@ export {
   closeOrKill,
   closeWithTimeout,
 } from "./close-session.js";
+export {
+  DEFAULT_IDLE_TIMEOUT_MS,
+  IdleWatch,
+  type IdleOptions,
+  type IdleWatchOptions,
+  formatIdleDuration,
+} from "./idle-watch.js";
 export {
   type CommandInfo,
   type ParsedSlash,

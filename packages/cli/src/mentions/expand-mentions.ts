@@ -6,6 +6,7 @@ import {
   MAX_TOTAL_BYTES,
   formatAttachment,
   formatSize,
+  totalSizeProblem,
 } from "@chatbridge/core";
 import { parseMentions } from "./parse-mentions.js";
 
@@ -96,11 +97,7 @@ export async function expandMentions(
     loaded.push(r.ok);
   }
   const total = loaded.reduce((n, f) => n + f.bytes, 0);
-  if (total > MAX_TOTAL_BYTES) {
-    problems.push(
-      `attachments total ${formatSize(total)} exceeds ${formatSize(MAX_TOTAL_BYTES).replace(".0", "")}`,
-    );
-  }
+  if (total > MAX_TOTAL_BYTES) problems.push(totalSizeProblem(total));
   if (problems.length > 0) throw new MentionError(problems);
 
   const sections = loaded.map((f) => formatAttachment(f.path, f.content));

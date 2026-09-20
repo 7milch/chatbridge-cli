@@ -27,7 +27,10 @@ export interface OneShotOptions {
 
 /** One-shot flow: one ChatSession turn, then close. */
 export async function runOneShot(opts: OneShotOptions): Promise<string> {
-  const session = await ChatSession.open(opts);
+  // No idle watch: the session lives for exactly one turn, so arming one
+  // would only cost a timer. `idle` is not part of OneShotOptions either,
+  // so nothing a caller passes is being overridden here.
+  const session = await ChatSession.open({ ...opts, idle: { timeoutMs: 0 } });
   try {
     return await session.send(opts.prompt);
   } finally {

@@ -7,6 +7,7 @@ import type {
 import type { AuthStore } from "@chatbridge/runtime";
 import {
   ChatSession,
+  IDLE_CLOSE_BUDGET_MS,
   type RuntimeLike,
   needsHeadedPreCheck,
 } from "./chat-session.js";
@@ -18,6 +19,7 @@ import {
   InvalidStateError,
   ResponseTimeoutError,
 } from "./errors.js";
+import { formatIdleDuration } from "./idle-watch.js";
 
 /** Deferred promise so a test can decide when waitForResponse resolves. */
 function deferred<T>() {
@@ -768,5 +770,192 @@ describe("ChatSession.runCommand", () => {
     await expect(s.runCommand("probe", "")).rejects.toBeInstanceOf(
       AuthExpiredError,
     );
+  });
+});
+
+/** A clock the test moves by hand, as in idle-watch.test.ts. */
+function clock(start = 1_000_000) {
+  let value = start;
+  return {
+    now: () => value,
+    advance(ms: number) {
+      value += ms;
+    },
+  };
+}
+
+async function waitFor(
+  cond: () => boolean,
+  what: string,
+  tries = 500,
+): Promise<void> {
+  for (let i = 0; i < tries; i++) {
+    if (cond()) return;
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+  throw new Error(`timed out waiting for ${what}`);
+}
+
+/** A few ticks of the 5 ms watch, so "did not expire" means something. */
+function ticks(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 40));
+}
+
+describe("ChatSession: idle close", () => {
+  /** A period that formats to a readable phrase: 1_000_000 ms is 16.7 min. */
+  const IDLE_MS = 1_000_000;
+
+  function idleOpts(
+    h: ReturnType<typeof harness>,
+    c: ReturnType<typeof clock>,
+  ) {
+    const events: string[] = [];
+    return {
+      events,
+      options: {
+        ...opts(h),
+        idle: { timeoutMs: IDLE_MS },
+        idleNow: c.now,
+        idleTickMs: 5,
+        onIdleExpired: () => events.push("expired"),
+        onProgress: (message: string) => events.push(message),
+      },
+    };
+  }
+
+  test("expiry: onIdleExpired, then progress, then a close that saves auth", async () => {
+    const h = harness();
+    const c = clock();
+    const { events, options } = idleOpts(h, c);
+    await ChatSession.open(options);
+    c.advance(IDLE_MS + 1);
+    await waitFor(() => h.closed === 1, "the idle close");
+    expect(events).toEqual([
+      "Opening browser...",
+      "expired",
+      `Closing the browser after ${formatIdleDuration(IDLE_MS)} idle...`,
+    ]);
+    expect(formatIdleDuration(IDLE_MS)).toBe("16.7 min");
+    expect(h.saved).toBe(1);
+    expect(h.killed).toBe(0);
+  });
+
+  test("a wedged page is killed after the close budget", async () => {
+    const h = harness();
+    const c = clock();
+    const { options } = idleOpts(h, c);
+    const session = await ChatSession.open(options);
+    // From here isLoggedIn never answers: close() parks on the hung page.
+    h.loginGate = new Promise<void>(() => {});
+    c.advance(IDLE_MS + 1);
+    // The kill only comes after the 5 s close budget.
+    await waitFor(() => h.killed === 1, "the fallback kill", 5000);
+    // The hung close is still parked; the session is closed either way.
+    await expect(session.send("hi")).rejects.toBeInstanceOf(InvalidStateError);
+  }, 20_000);
+
+  test("send after expiry rejects as closed", async () => {
+    const h = harness();
+    const c = clock();
+    const { options } = idleOpts(h, c);
+    const session = await ChatSession.open(options);
+    c.advance(IDLE_MS + 1);
+    await waitFor(() => h.closed === 1, "the idle close");
+    await expect(session.send("hi")).rejects.toBeInstanceOf(InvalidStateError);
+    await expect(session.runCommand("probe", "")).rejects.toBeInstanceOf(
+      InvalidStateError,
+    );
+  });
+
+  test("a pending send holds the clock; the period restarts after it", async () => {
+    const h = harness();
+    const c = clock();
+    const { options } = idleOpts(h, c);
+    const session = await ChatSession.open(options);
+    const pending = session.send("hi");
+    c.advance(10 * IDLE_MS);
+    await ticks();
+    expect(h.closed).toBe(0);
+    (await replyOf(h, 0)).resolve("ok");
+    expect(await pending).toBe("ok");
+    c.advance(IDLE_MS - 100);
+    await ticks();
+    expect(h.closed).toBe(0);
+    c.advance(200);
+    await waitFor(() => h.closed === 1, "expiry after the turn");
+    expect(h.saved).toBe(1);
+  });
+
+  test("a pending runCommand holds the clock too", async () => {
+    const h = harness();
+    const c = clock();
+    const { options } = idleOpts(h, c);
+    const session = await ChatSession.open(options);
+    const pending = session.runCommand("probe", "");
+    c.advance(10 * IDLE_MS);
+    await ticks();
+    expect(h.closed).toBe(0);
+    await pending;
+    c.advance(IDLE_MS + 1);
+    await waitFor(() => h.closed === 1, "expiry after the command");
+  });
+
+  test("timeoutMs 0 creates no watch", async () => {
+    const h = harness();
+    const c = clock();
+    const { options } = idleOpts(h, c);
+    await ChatSession.open({ ...options, idle: { timeoutMs: 0 } });
+    c.advance(10 * 86_400_000);
+    await ticks();
+    expect(h.closed).toBe(0);
+  });
+
+  test("close() during the idle close joins it instead of returning early", async () => {
+    const h = harness();
+    const c = clock();
+    const { events, options } = idleOpts(h, c);
+    const session = await ChatSession.open(options);
+    const gate = deferred<void>();
+    // isLoggedIn is held open, so the idle close is still saving state.
+    h.loginGate = gate.promise;
+    c.advance(IDLE_MS + 1);
+    await waitFor(() => events.length === 3, "the close to start");
+    expect(h.closed).toBe(0);
+    let joined = false;
+    const teardown = session.close().then(() => {
+      joined = true;
+    });
+    await ticks();
+    expect(joined).toBe(false);
+    gate.resolve();
+    await teardown;
+    expect(joined).toBe(true);
+    expect(h.closed).toBe(1);
+    expect(h.saved).toBe(1);
+  });
+
+  test("close() after a kill returns instead of joining the parked close", async () => {
+    const h = harness();
+    const c = clock();
+    const { options } = idleOpts(h, c);
+    const session = await ChatSession.open(options);
+    // From here isLoggedIn never answers: the first close parks on it.
+    h.loginGate = new Promise<void>(() => {});
+    const parked = session.close();
+    await ticks();
+    await session.kill();
+    // Bounded race: a close that joins the parked one never settles.
+    const late = await Promise.race([
+      session.close().then(() => "closed"),
+      new Promise((resolve) => setTimeout(() => resolve("hung"), 200)),
+    ]);
+    expect(late).toBe("closed");
+    expect(h.killed).toBe(1);
+    // The original close is still parked; nothing about it was awaited.
+    void parked.catch(() => {});
+  });
+
+  test("the close budget is 5 s", () => {
+    expect(IDLE_CLOSE_BUDGET_MS).toBe(5000);
   });
 });

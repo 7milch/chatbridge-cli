@@ -42,8 +42,12 @@ export type WebviewCommand =
   | "newChat"
   | "installBrowser"
   | "reopen"
-  /** Webview only: the host answers with a `help` history entry. */
-  | "help";
+  /** The host answers with a `help` history entry. Sent by the webview and
+   * by the `<id>.help` VS Code command. */
+  | "help"
+  /** Webview only: the composer's `+` opens the native file picker; the
+   * chosen files go through the same path as a drop. */
+  | "pickFiles";
 
 /** webview → host */
 export type ToHost =

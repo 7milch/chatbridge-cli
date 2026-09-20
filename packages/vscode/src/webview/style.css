@@ -1,3 +1,9 @@
+/* Several blocks below set an explicit `display`, which beats the UA
+   stylesheet's `[hidden]` rule; `hidden` is how every one of them is
+   shown and hidden, so it wins here once and for all. */
+[hidden] {
+  display: none !important;
+}
 body {
   margin: 0;
   display: flex;
@@ -60,11 +66,19 @@ body {
     transform: rotate(360deg);
   }
 }
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}
 #attachments {
-  padding: 0 8px;
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+  padding: 0 2px 5px;
+}
+#attachments:empty {
+  display: none;
 }
 .chip {
   background: var(--vscode-badge-background);
@@ -73,8 +87,7 @@ body {
   padding: 2px 8px;
   font-size: 90%;
 }
-.chip-remove,
-.action {
+.chip-remove {
   margin-left: 6px;
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
@@ -83,27 +96,188 @@ body {
   padding: 2px 8px;
   cursor: pointer;
 }
-#composer {
+/* The notice card's buttons: secondary unless they are the recovery the
+   cause calls for. */
+.action {
+  border: none;
+  border-radius: 3px;
+  padding: 3px 10px;
+  font: inherit;
+  cursor: pointer;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+}
+.action.primary {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+#notice {
+  flex: none;
+  margin: 0 8px 4px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 90%;
+  background: var(--vscode-inputValidation-errorBackground);
+  border: 1px solid
+    var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground));
+}
+#notice .notice-text {
+  color: var(--vscode-errorForeground);
+  margin-bottom: 6px;
+}
+#notice .notice-actions {
   display: flex;
-  align-items: flex-end;
   gap: 6px;
+  flex-wrap: wrap;
+}
+#composer {
+  /* Anchors #command-menu, which floats above the action row. */
+  position: relative;
   padding: 8px;
   border-top: 1px solid var(--vscode-panel-border);
 }
+/* The whole box reads as one input field: the textarea inside has no
+   border or background of its own. */
+#composer-box {
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+  border-radius: 6px;
+  padding: 6px;
+}
+#composer-box:focus-within {
+  border-color: var(--vscode-focusBorder);
+}
 #input {
-  flex: 1;
+  display: block;
+  width: 100%;
   resize: none;
-  /* `height = scrollHeight` and the row-based max-height are only exact
-     when padding and border are inside the box. */
+  border: none;
+  outline: none;
+  background: none;
+  /* `height = scrollHeight` and the row-based limits are only exact when
+     padding is inside the box. */
   box-sizing: border-box;
+  padding: 2px 4px;
   overflow-y: auto;
   line-height: 1.4;
-  /* 8 rows + padding: beyond this the textarea scrolls internally. */
-  max-height: calc(1.4em * 8 + 8px);
-  background: var(--vscode-input-background);
+  /* 2 rows minimum, 8 maximum; beyond that it scrolls internally. */
+  min-height: calc(1.4em * 2 + 4px);
+  max-height: calc(1.4em * 8 + 4px);
   color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border, transparent);
   font-family: inherit;
+  font-size: inherit;
+}
+#composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 4px;
+}
+.icon-button {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+}
+.icon-button:hover:not(:disabled),
+.icon-button[aria-expanded="true"] {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+}
+/* `#composer-box:focus-within` lights the whole box whichever control is
+   focused, and `#input` has no outline, so each button needs its own ring
+   for a keyboard user to tell them apart. */
+.icon-button:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+.icon-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+#composer-hint {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+  padding-right: 6px;
+  font-size: 90%;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Below this the row would wrap; the hint is the only optional part of it. */
+@media (max-width: 259px) {
+  #composer-hint {
+    display: none;
+  }
+}
+#command-menu {
+  position: absolute;
+  /* The action row is the box's last child, so anchoring to the form's
+     bottom keeps the popup above it however tall the input has grown. */
+  left: 8px;
+  right: 8px;
+  /* Clear of the action row: #composer's 8px padding + #composer-box's 1px
+     border and 6px padding + the row's 24px height + its 4px margin-top. */
+  bottom: 43px;
+  z-index: 5;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 6px;
+  font-size: 90%;
+  background: var(
+    --vscode-menu-background,
+    var(--vscode-quickInput-background, var(--vscode-editor-background))
+  );
+  color: var(--vscode-menu-foreground, var(--vscode-foreground));
+  border: 1px solid
+    var(--vscode-menu-border, var(--vscode-input-border, transparent));
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+.menu-header {
+  padding: 3px 10px 2px;
+  font-size: 85%;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--vscode-descriptionForeground);
+}
+.menu-item {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.menu-item.selected {
+  background: var(
+    --vscode-quickInputList-focusBackground,
+    var(--vscode-list-activeSelectionBackground)
+  );
+  color: var(
+    --vscode-quickInputList-focusForeground,
+    var(--vscode-list-activeSelectionForeground)
+  );
+}
+.menu-item .menu-name {
+  font-family: var(--vscode-editor-font-family);
+}
+.menu-item .menu-desc {
+  margin-left: auto;
+  padding-left: 12px;
+  opacity: 0.8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 #welcome {
   flex: 1;
@@ -114,10 +288,6 @@ body {
   padding: 16px 12px;
   text-align: center;
   opacity: 0.7;
-}
-/* `display: flex` above would otherwise beat the `hidden` attribute. */
-#welcome[hidden] {
-  display: none;
 }
 #banner {
   max-width: 100%;
@@ -133,15 +303,16 @@ body {
   font-size: 90%;
   opacity: 0.7;
 }
+/* The ID beats `.icon-button:hover`, so the vendor's colours survive a
+   hover. `.secondary` is the queueing state. */
 #send {
   background: var(--cb-send-bg, var(--vscode-button-background));
   color: var(--cb-send-fg, var(--vscode-button-foreground));
-  border: none;
-  border-radius: 3px;
-  padding: 0 12px;
-  cursor: pointer;
 }
-#send:disabled,
+#send.secondary {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+}
 #input:disabled {
   opacity: 0.5;
 }

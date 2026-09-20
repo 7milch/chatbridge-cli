@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { CommandInfo } from "@chatbridge/core/slash-commands";
 import type { StyledText } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { type Expansion, MentionError } from "../mentions/expand-mentions.js";
@@ -16,6 +17,7 @@ import {
   DEAD_GUIDE,
   GUIDE,
   HELD_GUIDE,
+  IDLE_CLOSED_GUIDE,
   LOGIN_STATUS,
   MAX_INPUT_ROWS,
   MAX_QUEUE_ROWS,
@@ -129,6 +131,7 @@ async function setup(
     /** Holds the first open open, so the model stays `opening`. */
     openGate?: Promise<void>;
     login?: ChatModelOptions["login"];
+    commands?: CommandInfo[];
   } = {},
 ) {
   const t = await createTestRenderer({
@@ -166,6 +169,7 @@ async function setup(
     index: FileIndex.fromPaths(
       opts.paths ?? ["src/chat-view.ts", "src/chat-model.ts", "README.md"],
     ),
+    commands: opts.commands ?? [],
   });
   teardown = () => {
     view.destroy();
@@ -712,6 +716,97 @@ describe("ChatView", () => {
     await t.mockInput.typeText("mail foo@example");
     await t.renderOnce();
     expect(t.captureCharFrame()).not.toContain("example.com");
+  });
+
+  test("typing / opens the popup with every command", async () => {
+    const t = await setup({
+      commands: [{ name: "model", description: "Show the model" }],
+    });
+    await t.mockInput.typeText("/");
+    await t.renderOnce();
+    const frame = t.captureCharFrame();
+    expect(frame).toContain("/login");
+    expect(frame).toContain("Start a new chat");
+    // The provider's commands come after the built-ins.
+    expect(frame).toContain("/model");
+    expect(frame.indexOf("/login")).toBeLessThan(frame.indexOf("/model"));
+  });
+
+  test("the typed prefix filters the commands", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("/re");
+    await t.renderOnce();
+    const frame = t.captureCharFrame();
+    expect(frame).toContain("/reopen");
+    expect(frame).not.toContain("/login");
+  });
+
+  test("tab completes the command word and leaves a space for arguments", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("/re");
+    t.mockInput.pressTab();
+    await t.renderOnce();
+    expect(t.view.inputText).toBe("/reopen ");
+    expect(t.model.messages).toEqual([]);
+    // The word is complete, so the popup is gone.
+    expect(t.captureCharFrame()).not.toContain("Reopen the browser");
+  });
+
+  test("down then enter completes without sending", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("/lo");
+    t.mockInput.pressArrow("down");
+    t.mockInput.pressEnter();
+    await t.renderOnce();
+    expect(t.view.inputText).toBe("/logout ");
+    expect(t.model.messages).toEqual([]);
+  });
+
+  test("enter runs the command when the typed word is already complete", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("/help");
+    await t.renderOnce();
+    expect(t.captureCharFrame()).toContain("List these commands");
+    t.mockInput.pressEnter();
+    for (let i = 0; i < 100 && t.model.messages.length === 0; i++) {
+      await sleep(20);
+      await t.renderOnce();
+    }
+    expect(t.model.messages[0]?.role).toBe("help");
+    expect(t.view.inputText).toBe("");
+  });
+
+  test("escape closes the command popup and keeps the text", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("/ne");
+    await t.renderOnce();
+    expect(t.captureCharFrame()).toContain("Start a new chat");
+    const frame = await t.escapePopup("Start a new chat");
+    expect(frame).toContain("/ne");
+  });
+
+  test("no command popup when the slash is not the first character", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("see /ne");
+    await t.renderOnce();
+    expect(t.captureCharFrame()).not.toContain("Start a new chat");
+  });
+
+  test("no command popup in shell mode", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("!");
+    await t.renderOnce();
+    expect(t.view.shellMode).toBe(true);
+    await t.mockInput.typeText("/ne");
+    await t.renderOnce();
+    expect(t.captureCharFrame()).not.toContain("Start a new chat");
+  });
+
+  test("an unknown prefix shows nothing", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("/zz");
+    await t.renderOnce();
+    expect(t.captureCharFrame()).not.toContain(POPUP_HINT);
   });
 
   test("attachment lines are rendered under the user message", async () => {
@@ -1316,6 +1411,18 @@ describe("ChatView shell mode", () => {
     expect(idleGuide(false, 0, 1)).toBe(QUEUE_GUIDE);
     expect(idleGuide(false, 2, 1)).toBe(`📎 2 held · ${QUEUE_GUIDE}`);
     expect(idleGuide(true, 0, 1)).toBe(SHELL_GUIDE);
+  });
+
+  test("after an idle close the guide says the next prompt reopens", () => {
+    expect(idleGuide(false, 0, 0, true)).toBe(IDLE_CLOSED_GUIDE);
+    expect([...IDLE_CLOSED_GUIDE].length).toBeLessThanOrEqual(78);
+    // Shell mode and a waiting queue keep their own guides.
+    expect(idleGuide(true, 0, 0, true)).toBe(SHELL_GUIDE);
+    expect(idleGuide(false, 0, 2, true)).toBe(QUEUE_GUIDE);
+    // The idle close outranks a held result, which keeps its counter prefix.
+    expect(idleGuide(false, 2, 0, true)).toBe(
+      `\ud83d\udcce 2 held \u00b7 ${IDLE_CLOSED_GUIDE}`,
+    );
   });
 
   test("a shell that cannot start is marked on its entry and explained after it", async () => {

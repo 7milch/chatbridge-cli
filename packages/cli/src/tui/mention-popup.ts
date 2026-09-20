@@ -9,15 +9,23 @@ const INDENT = "  ";
  * character on an 80/40-column terminal; one cell keeps it whole. */
 const HINT_INDENT = " ";
 
-/** Candidate list for an `@` mention, drawn inline below the input (the
+/** Candidate list for an `@` mention or a `/` command, drawn inline below
+ * the input (the
  * parent's next child after the input, before the status row). Hidden it
  * takes no rows. Purely presentational: the view decides what the keys do.
  * Rows are created once and re-labelled, so show/hide never churns
  * renderables. */
+/** One popup row. `value` is what accepting inserts — the path of a mention,
+ * the name of a command — and `label` is what the row draws. */
+export interface PopupRow {
+  value: string;
+  label: string;
+}
+
 export class MentionPopup {
   private readonly box: BoxRenderable;
   private readonly rows: TextRenderable[] = [];
-  private candidates: string[] = [];
+  private candidates: PopupRow[] = [];
   private index = 0;
 
   constructor(
@@ -53,11 +61,11 @@ export class MentionPopup {
   }
 
   get selected(): string | undefined {
-    return this.candidates[this.index];
+    return this.candidates[this.index]?.value;
   }
 
   /** Replaces the list and selects the first row. Empty list hides. */
-  show(candidates: string[]): void {
+  show(candidates: PopupRow[]): void {
     this.candidates = candidates.slice(0, MAX_ROWS);
     this.index = 0;
     if (this.candidates.length === 0) {
@@ -89,18 +97,22 @@ export class MentionPopup {
   private paint(): void {
     const width = Math.max(1, this.renderer.terminalWidth - INDENT.length);
     this.rows.forEach((row, i) => {
-      const label = this.candidates[i];
-      if (label === undefined) {
+      const item = this.candidates[i];
+      if (item === undefined) {
         row.visible = false;
         return;
       }
       row.visible = true;
-      const text = label.slice(0, width);
+      const text = item.label.slice(0, width);
       if (i === this.index) {
         row.content = styled(theme.selected(`${INDENT}${text}`));
         return;
       }
-      const slash = text.lastIndexOf("/");
+      // Dims the directory part of a mention path. A command label starts
+      // with the slash of `/name` and is drawn plain: dimming there would
+      // grey the command itself. Mention paths are relative, so they never
+      // start with "/" and keep exactly this dimming.
+      const slash = text.startsWith("/") ? -1 : text.lastIndexOf("/");
       row.content =
         slash === -1
           ? styled(`${INDENT}${text}`)

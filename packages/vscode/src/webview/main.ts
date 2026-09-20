@@ -11,6 +11,21 @@ import type {
   ToWebview,
   UiConfig,
 } from "../protocol.js";
+import {
+  CommandMenuModel,
+  TYPING_MENU_OWNER_ATTRS,
+  buildSections,
+  buttonMenuAction,
+  replaceCommandWord,
+  typingMenuAction,
+  typingMenuPrefix,
+} from "./command-menu.js";
+import {
+  hintText,
+  isActive,
+  noticeFor,
+  sendButtonState,
+} from "./view-state.js";
 
 declare function acquireVsCodeApi(): { postMessage(m: ToHost): void };
 const vscode = acquireVsCodeApi();
@@ -27,6 +42,13 @@ const banner = document.getElementById("banner") as HTMLImageElement;
 const footer = document.getElementById("footer") as HTMLElement;
 const queue = document.getElementById("queue") as HTMLElement;
 const inlineError = document.getElementById("inline-error") as HTMLElement;
+const notice = document.getElementById("notice") as HTMLElement;
+const attachButton = document.getElementById("attach") as HTMLButtonElement;
+const commandsButton = document.getElementById("commands") as HTMLButtonElement;
+const commandMenu = document.getElementById("command-menu") as HTMLElement;
+const hint = document.getElementById("composer-hint") as HTMLElement;
+const sendIcon = sendButton.querySelector(".icon-send") as SVGElement;
+const queueIcon = sendButton.querySelector(".icon-queue") as SVGElement;
 
 /** Grows the composer with its content (wrapped lines included, via
  * scrollHeight) and shrinks it back; CSS max-height caps it at 8 rows. The
@@ -35,15 +57,18 @@ function fitComposer(): void {
   const atBottom =
     history.scrollHeight - history.scrollTop - history.clientHeight < 2;
   input.style.height = "auto";
-  // #input is box-sizing: border-box with a 1px border, so scrollHeight alone
-  // is 2px short of the border-inclusive height and leaves a scrollbar.
-  input.style.height = `${input.scrollHeight + input.offsetHeight - input.clientHeight}px`;
+  // The textarea has no border of its own any more (the box around it
+  // draws one), so scrollHeight is the exact content height; the CSS
+  // min-height keeps it at two rows and max-height caps it at eight.
+  input.style.height = `${input.scrollHeight}px`;
   if (atBottom) history.scrollTop = history.scrollHeight;
 }
 
 let config: UiConfig = {};
 /** The provider's command names, from the `config` message. */
 let commandNames: ReadonlySet<string> = new Set();
+/** The same commands, in order, for the `/` menu. */
+let providerCommands: readonly CommandInfo[] = [];
 let lastState: State | undefined;
 /** The last `progress` line, so a re-render keeps it instead of falling
  * back to the generic waiting text. Cleared when the status leaves the
@@ -53,6 +78,7 @@ let lastProgress: string | undefined;
 function applyConfig(c: UiConfig & { commands?: CommandInfo[] }): void {
   config = c;
   commandNames = new Set((c.commands ?? []).map((x) => x.name));
+  providerCommands = c.commands ?? [];
   if (c.sendButton?.background) {
     sendButton.style.setProperty("--cb-send-bg", c.sendButton.background);
   }
@@ -130,53 +156,66 @@ function waitingText(status: Status): string {
 
 function renderStatus(s: State): void {
   status.replaceChildren();
+  // Only progress lives here now; a dead session is the notice card's job.
+  if (!isActive(s.status)) {
+    status.hidden = true;
+    return;
+  }
   status.hidden = false;
-  if (
-    s.status === "busy" ||
-    s.status === "opening" ||
-    s.status === "reopening"
-  ) {
-    status.appendChild(el("span", "spinner"));
-    const queued = s.queue.length > 0 ? ` \u00b7 ${s.queue.length} queued` : "";
-    status.appendChild(
-      el(
-        "span",
-        "progress-text",
-        `${lastProgress ?? waitingText(s.status)}${queued}`,
+  status.appendChild(el("span", "spinner"));
+  const queued = s.queue.length > 0 ? ` \u00b7 ${s.queue.length} queued` : "";
+  status.appendChild(
+    el(
+      "span",
+      "progress-text",
+      `${lastProgress ?? waitingText(s.status)}${queued}`,
+    ),
+  );
+}
+
+/** What `renderNotice` last painted, serialized. The card carries
+ * `role="alert"`, so rebuilding an unchanged one would re-announce it and
+ * destroy the focus on a recovery button the user is tabbing through. */
+let lastNoticeKey: string | undefined;
+
+function renderNotice(s: State): void {
+  const info = noticeFor(s);
+  const key = info === undefined ? undefined : JSON.stringify(info);
+  if (key === lastNoticeKey) return;
+  lastNoticeKey = key;
+  notice.replaceChildren();
+  notice.hidden = info === undefined;
+  if (!info) return;
+  notice.appendChild(el("div", "notice-text", info.text));
+  const actions = el("div", "notice-actions");
+  for (const b of info.buttons) {
+    actions.appendChild(
+      button(
+        b.label,
+        () => vscode.postMessage({ type: "command", name: b.command }),
+        b.primary ? "action primary" : "action",
       ),
     );
-    return;
   }
-  if (s.status === "dead") {
-    const auth =
-      s.lastError === "AUTH_REQUIRED" || s.lastError === "AUTH_EXPIRED";
-    status.appendChild(
-      el(
-        "span",
-        "progress-text",
-        auth ? "Not logged in." : "The chat stopped.",
-      ),
-    );
-    if (auth) {
-      status.appendChild(
-        button("Log in", () =>
-          vscode.postMessage({ type: "command", name: "login" }),
-        ),
-      );
-    }
-    status.appendChild(
-      button("Reopen", () =>
-        vscode.postMessage({ type: "command", name: "reopen" }),
-      ),
-    );
-    status.appendChild(
-      button("New chat", () =>
-        vscode.postMessage({ type: "command", name: "newChat" }),
-      ),
-    );
-    return;
-  }
-  status.hidden = true;
+  notice.appendChild(actions);
+}
+
+/** `hidden` is an HTMLElement property; on an SVG element assigning it only
+ * makes an expando, so the attribute the CSS matches must be set directly. */
+function showIcon(icon: SVGElement, show: boolean): void {
+  if (show) icon.removeAttribute("hidden");
+  else icon.setAttribute("hidden", "");
+}
+
+function renderComposer(s: State): void {
+  const send = sendButtonState(s, input.value.trim() === "");
+  showIcon(sendIcon, send.icon === "send");
+  showIcon(queueIcon, send.icon === "queue");
+  sendButton.disabled = send.disabled;
+  sendButton.classList.toggle("secondary", send.secondary);
+  sendButton.setAttribute("aria-label", send.label);
+  sendButton.title = send.title;
+  hint.textContent = hintText(s.status);
 }
 
 function renderQueue(s: State): void {
@@ -215,12 +254,13 @@ function renderAttachments(s: State): void {
 }
 
 function render(s: State): void {
-  const active =
-    s.status === "busy" || s.status === "opening" || s.status === "reopening";
-  if (!active) lastProgress = undefined;
+  // A status without a spinner ends the phase the progress line belonged to,
+  // so the next opening/busy/reopening starts from its own default text.
+  if (!isActive(s.status)) lastProgress = undefined;
   history.replaceChildren(...s.messages.map(renderMessage));
   history.scrollTop = history.scrollHeight;
   renderStatus(s);
+  renderNotice(s);
   renderQueue(s);
   renderAttachments(s);
   // The welcome block takes over the history's space while it is shown, so
@@ -231,8 +271,7 @@ function render(s: State): void {
   // The composer stays usable while a turn is in flight: what is typed then
   // is queued instead of sent.
   input.disabled = false;
-  sendButton.disabled = false;
-  sendButton.textContent = active ? "Queue" : "Send";
+  renderComposer(s);
   // Only when the status changed, and only when nothing else holds focus:
   // a render must not steal it from a selection in the history or from the
   // status and queue buttons.
@@ -252,6 +291,15 @@ function showInlineError(text: string | undefined): void {
   inlineError.hidden = text === undefined;
 }
 
+/** Empties the composer after a send. Setting `.value` fires no `input`
+ * event, so the resize and the send button's state are refreshed here —
+ * otherwise the button stays enabled over an empty box. */
+function clearInput(): void {
+  input.value = "";
+  fitComposer();
+  if (lastState) renderComposer(lastState);
+}
+
 function submit(): void {
   const text = input.value;
   if (text.trim() === "" && attachments.childElementCount === 0) return;
@@ -266,8 +314,7 @@ function submit(): void {
   }
   showInlineError(undefined);
   if (slash) {
-    input.value = "";
-    fitComposer();
+    clearInput();
     if ("custom" in slash) {
       vscode.postMessage({
         type: "customCommand",
@@ -282,8 +329,7 @@ function submit(): void {
     return;
   }
   vscode.postMessage({ type: "send", text });
-  input.value = "";
-  fitComposer();
+  clearInput();
 }
 
 form.addEventListener("submit", (e) => {
@@ -311,6 +357,15 @@ input.addEventListener("keydown", (e) => {
 input.addEventListener("input", () => {
   showInlineError(undefined);
   fitComposer();
+  if (lastState) renderComposer(lastState);
+  refreshTypingMenu();
+});
+
+// The native picker, not a hidden <input type=file>: the host must read the
+// files anyway (the webview has no filesystem access) and the size limit
+// and error report are then shared with drag and drop.
+attachButton.addEventListener("click", () => {
+  vscode.postMessage({ type: "command", name: "pickFiles" });
 });
 
 // Observed with VSCode 1.138 (explorer item, Shift held): `text/uri-list` =
@@ -422,7 +477,11 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
     const { type: _type, ...rest } = m;
     applyConfig(rest);
   } else if (m.type === "progress") {
-    lastProgress = m.text;
+    // The idle close reports "Closing the browser after ... idle..." *after*
+    // its `closed` frame, so a line that arrives outside a spinner phase must
+    // not be cached: it would surface under the next `opening`.
+    lastProgress =
+      lastState && !isActive(lastState.status) ? undefined : m.text;
     const t = status.querySelector(".progress-text");
     if (t) t.textContent = m.text;
   } else if (m.type === "pasteResult") {
@@ -436,8 +495,261 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
     // Setting the value fires no `input` event, so clear the error here.
     showInlineError(undefined);
     fitComposer();
+    if (lastState) renderComposer(lastState);
     input.focus();
   }
+});
+
+// --- `/` command menu -------------------------------------------------
+// The model is shared with the typed-`/` completion (#86); everything
+// below is only the DOM around it.
+let menu: CommandMenuModel | undefined;
+/** The focused element an open menu belongs to. It carries `aria-expanded`
+ * and `aria-activedescendant`, and its keys — and the popup's — are the only
+ * ones the menu may take. Today only the `/` button opens the menu; #86
+ * opens the same one from `#input`, which then owns both, so the owner is a
+ * variable rather than hard-wired into each of these functions. */
+let menuOwner: HTMLElement = commandsButton;
+/** The composer text an Escape dismissed the typing menu over. Without it the
+ * next caret event would reopen the menu over the same text and Escape would
+ * be useless; any edit clears it. */
+let dismissedText: string | undefined;
+
+/** The owner's state while the menu is open. On the textarea the combobox
+ * attributes (TYPING_MENU_OWNER_ATTRS) are added and removed with the menu —
+ * `#commands` carries its own in the HTML, so there only `aria-expanded`
+ * flips. */
+function setOwnerExpanded(open: boolean): void {
+  if (menuOwner === input) {
+    for (const [name, value] of TYPING_MENU_OWNER_ATTRS) {
+      if (open) input.setAttribute(name, value);
+      else input.removeAttribute(name);
+    }
+  } else {
+    menuOwner.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+  if (!open) menuOwner.removeAttribute("aria-activedescendant");
+}
+
+function paintSelection(): void {
+  const selectedId =
+    menu && menu.selectedIndex >= 0
+      ? `command-option-${menu.selectedIndex}`
+      : "";
+  // Array.from, not for...of: the webview tsconfig's lib has no DOM.Iterable,
+  // so a NodeList is not iterable there.
+  for (const node of Array.from(commandMenu.querySelectorAll(".menu-item"))) {
+    const on = node.id === selectedId;
+    node.classList.toggle("selected", on);
+    node.setAttribute("aria-selected", String(on));
+  }
+  if (selectedId) {
+    menuOwner.setAttribute("aria-activedescendant", selectedId);
+    document.getElementById(selectedId)?.scrollIntoView({ block: "nearest" });
+  } else {
+    menuOwner.removeAttribute("aria-activedescendant");
+  }
+}
+
+/** `focusTarget` is only ever given when the user's own gesture asks for the
+ * move — choosing an entry, or Escape. A menu dismissed by a click or a Tab
+ * elsewhere must not pull focus back. */
+function closeMenu(focusTarget?: HTMLElement): void {
+  if (!menu) return;
+  menu = undefined;
+  commandMenu.hidden = true;
+  commandMenu.replaceChildren();
+  setOwnerExpanded(false);
+  focusTarget?.focus();
+}
+
+function chooseCommand(index: number): void {
+  const picked = menu?.items[index];
+  if (!picked) return;
+  // `replaceCommandWord` falls back to `insertCommand` when nothing under the
+  // cursor is a command word, which is the button's case; a half-typed `/lo`
+  // is replaced rather than left in front of the chosen command.
+  const { text, cursor } = replaceCommandWord(
+    input.value,
+    input.selectionStart ?? 0,
+    picked.name,
+  );
+  closeMenu();
+  input.value = text;
+  input.focus();
+  input.setSelectionRange(cursor, cursor);
+  // Setting `value` fires no `input` event; that listener is what clears
+  // the inline error, resizes the box and re-enables the send button.
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+/** Builds and shows the menu. With a `prefix` the list is filtered to the
+ * command word being typed and the textarea stays focused and owns the menu;
+ * without one it is the button's full menu. */
+function openMenu(prefix?: string): void {
+  // The display name is only in the document title (buildHtml puts it
+  // there); the protocol carries no provider name.
+  const sections = buildSections(document.title, providerCommands, prefix);
+  // Only the typing menu can come up empty: nothing matches what was typed,
+  // so there is nothing to offer and any menu already up is dismissed.
+  if (sections.length === 0) {
+    closeMenu();
+    return;
+  }
+  menu = new CommandMenuModel(sections);
+  const owner = prefix === undefined ? commandsButton : input;
+  if (owner !== menuOwner) {
+    // Hand the ARIA state over rather than leaving it stale on the old owner.
+    setOwnerExpanded(false);
+    menuOwner = owner;
+  }
+  commandMenu.replaceChildren();
+  let index = 0;
+  for (const section of menu.sections) {
+    const group = el("div", "menu-group");
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-label", section.title);
+    const header = el("div", "menu-header", section.title);
+    header.setAttribute("aria-hidden", "true");
+    group.appendChild(header);
+    for (const item of section.items) {
+      const i = index++;
+      const node = el("div", "menu-item");
+      node.id = `command-option-${i}`;
+      node.setAttribute("role", "option");
+      node.appendChild(el("span", "menu-name", `/${item.name}`));
+      node.appendChild(el("span", "menu-desc", item.description));
+      // `mousedown`, not `click`: the button's own blur must not close the
+      // menu before the choice lands.
+      node.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        chooseCommand(i);
+      });
+      group.appendChild(node);
+    }
+    commandMenu.appendChild(group);
+  }
+  commandMenu.hidden = false;
+  setOwnerExpanded(true);
+  paintSelection();
+  // Focus stays on the owner: on the button that is what makes
+  // `aria-activedescendant` announce the active option while the composer's
+  // own Enter, arrows and IME are left untouched, and in typing mode it means
+  // the caret never leaves the textarea at all.
+  if (menuOwner === commandsButton) menuOwner.focus();
+}
+
+commandsButton.addEventListener("click", () => {
+  // A typing menu is already gone by now: the click's `mousedown` is outside
+  // its owner and the popup, so the listener below closed it. Pressing the
+  // button therefore swaps a filtered menu for the full one, which is what it
+  // says it does.
+  if (menu) closeMenu(input);
+  else openMenu();
+});
+
+/** Opens, updates or closes the menu for the `/` word being typed. */
+function refreshTypingMenu(): void {
+  if (input.value !== dismissedText) dismissedText = undefined;
+  const prefix = typingMenuPrefix(
+    input.value,
+    input.selectionStart ?? 0,
+    dismissedText,
+  );
+  if (prefix === undefined) {
+    // A menu the button opened is the button's business; only the typing one
+    // follows the caret. Closing must not move the focus or the caret.
+    if (menuOwner === input) closeMenu();
+    return;
+  }
+  openMenu(prefix);
+}
+
+// A click or an arrow key inside the word changes what is being completed,
+// and neither fires `input`; `selectionchange` covers both.
+document.addEventListener("selectionchange", () => {
+  if (document.activeElement === input) refreshTypingMenu();
+});
+
+/** Menu keys are only the ones pressed on the owner or inside the popup.
+ * The listener is document-wide, so without this an Enter on the focused
+ * send button would be swallowed and insert a command. */
+function isMenuKeyEvent(target: EventTarget | null): boolean {
+  const node = target as Node | null;
+  return (
+    node !== null && (menuOwner.contains(node) || commandMenu.contains(node))
+  );
+}
+
+// Registered on the document in the capture phase so the arrows and Enter
+// reach the menu before anything else claims them. `buttonMenuAction` decides
+// what is the menu's; everything else falls through untouched.
+document.addEventListener(
+  "keydown",
+  (e) => {
+    if (!menu || !isMenuKeyEvent(e.target)) return;
+    if (menuOwner === input) {
+      const action = typingMenuAction(
+        e,
+        input.value,
+        input.selectionStart ?? 0,
+        menu.selected,
+      );
+      if (action === "pass") return;
+      if (action === "submit") {
+        // Nothing left to complete: the key falls through untouched to the
+        // composer's own handler, whose Enter branch sends.
+        closeMenu();
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      if (action === "up" || action === "down") {
+        menu.move(action === "down" ? 1 : -1);
+        paintSelection();
+      } else if (action === "accept") {
+        chooseCommand(menu.selectedIndex);
+      } else {
+        // Escape. Focus and caret stay where they are, and the text is
+        // remembered so the next caret event does not reopen the menu over it.
+        dismissedText = input.value;
+        closeMenu();
+      }
+      return;
+    }
+    const action = buttonMenuAction(e);
+    if (action === "pass") return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (action === "up" || action === "down") {
+      menu.move(action === "down" ? 1 : -1);
+      paintSelection();
+    } else if (action === "choose") {
+      chooseCommand(menu.selectedIndex);
+    } else {
+      closeMenu(input);
+    }
+  },
+  true,
+);
+
+// Tab (or any other focus move) out of the owner and the popup leaves the
+// menu behind, still claiming `aria-expanded="true"`. Close it, and let the
+// focus go where it was headed.
+document.addEventListener("focusout", (e) => {
+  if (!menu) return;
+  const next = e.relatedTarget as Node | null;
+  if (next !== null && isMenuKeyEvent(next)) return;
+  closeMenu();
+});
+
+document.addEventListener("mousedown", (e) => {
+  if (!menu) return;
+  if (isMenuKeyEvent(e.target)) return;
+  // A click elsewhere in the view dismisses it without stealing focus.
+  // `focusout` would catch most of these, but not a click on a part of the
+  // view that takes no focus at all.
+  closeMenu();
 });
 
 fitComposer();

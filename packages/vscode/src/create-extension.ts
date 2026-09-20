@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
   ChatSession,
+  DEFAULT_IDLE_TIMEOUT_MS,
   type Provider,
   commandInfoOf,
   createAuthStore,
@@ -13,9 +14,17 @@ import { ChatViewBridge } from "./chat-view-bridge.js";
 import { ChatViewProvider } from "./chat-view-provider.js";
 import { type CommandHandlers, createCommands } from "./commands.js";
 import { installBrowser } from "./install-browser.js";
-import { COMMAND_NAMES, missingContributions } from "./manifest.js";
-import { SessionController } from "./session-controller.js";
-import { parseTimeoutSec } from "./timeout-setting.js";
+import {
+  COMMAND_NAMES,
+  missingContributions,
+  recommendedContributions,
+} from "./manifest.js";
+import { onSendResult } from "./send-result.js";
+import {
+  SessionController,
+  droppedAttachmentsLine,
+} from "./session-controller.js";
+import { parseIdleTimeoutMin, parseTimeoutSec } from "./timeout-setting.js";
 import { type ExtensionUiOptions, resolveUiConfig } from "./ui-config.js";
 import { createVscodeUi } from "./vscode-ui.js";
 
@@ -65,6 +74,18 @@ export function createExtension(opts: CreateExtensionOptions) {
         `${opts.displayName}: package.json lacks contributes entries for "${opts.id}": ${missing.join(", ")}`,
       );
     }
+    // Not fatal: an extension whose manifest predates the title-bar actions
+    // still gets the composer, the `/` menu and the notice card, and the
+    // `/` menu reaches every action the title bar would show.
+    const recommended = recommendedContributions(
+      context.extension.packageJSON,
+      opts.id,
+    );
+    if (recommended.length > 0) {
+      console.warn(
+        `${opts.displayName}: package.json lacks recommended contributes entries for "${opts.id}" (the view title bar stays empty): ${recommended.join(", ")}`,
+      );
+    }
     const uiConfig = resolveUiConfig(
       opts.ui,
       context.extensionPath,
@@ -87,13 +108,11 @@ export function createExtension(opts: CreateExtensionOptions) {
       () => (controller as SessionController).getState(),
       {
         send: (text) =>
-          void handlers.send(text).then((r) => {
-            // The webview empties the composer as it posts `send`; a hook
-            // refusal sends nothing, so give the text back to be fixed.
-            if (!r.ok && r.code === "URL_HOOK") {
-              bridge.pushTookBack([{ text, attachments: [] }]);
-            }
-          }),
+          void handlers
+            .send(text)
+            .then((r) =>
+              onSendResult(r, text, (entries) => bridge.pushTookBack(entries)),
+            ),
         removeAttachment: (i) => controller?.removeAttachment(i),
         takeBack: () => {
           const r = controller?.takeBack();
@@ -104,7 +123,7 @@ export function createExtension(opts: CreateExtensionOptions) {
           bridge.pushTookBack(r.entries);
           if (r.droppedAttachments > 0) {
             void vscode.window.showWarningMessage(
-              `${r.droppedAttachments} attachment(s) left out: total size limit.`,
+              droppedAttachmentsLine(r.droppedAttachments),
             );
           }
         },
@@ -118,6 +137,7 @@ export function createExtension(opts: CreateExtensionOptions) {
     );
 
     let warnedTimeout = false;
+    let warnedIdle = false;
     function settings() {
       const cfg = vscode.workspace.getConfiguration(opts.id);
       const fallbackMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -131,9 +151,23 @@ export function createExtension(opts: CreateExtensionOptions) {
           `${opts.displayName}: "${opts.id}.timeoutSec" must be a positive number; using ${fallbackMs / 1000} s.`,
         );
       }
+      // Unset means the provider's own default, then 24 h.
+      const idleFallbackMs =
+        opts.provider.idle?.timeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+      const idle = parseIdleTimeoutMin(
+        cfg.get<unknown>("idleTimeoutMinutes"),
+        idleFallbackMs,
+      );
+      if (idle.invalid && !warnedIdle) {
+        warnedIdle = true;
+        void vscode.window.showWarningMessage(
+          `${opts.displayName}: "${opts.id}.idleTimeoutMinutes" must be a non-negative number (0 disables); using ${idleFallbackMs / 60_000} minutes.`,
+        );
+      }
       return {
         headless: cfg.get<boolean>("headless", opts.headless ?? true),
         timeoutMs,
+        idle: { timeoutMs: idle.timeoutMs },
       };
     }
 
@@ -144,12 +178,13 @@ export function createExtension(opts: CreateExtensionOptions) {
     }
 
     controller = new SessionController({
-      openSession: () =>
+      openSession: (onIdleExpired) =>
         ChatSession.open({
           provider: opts.provider,
           authStore,
           ...settings(),
           onProgress: progress,
+          onIdleExpired,
         }),
       expandUrls: (text) =>
         resolveUrlHooks(text, opts.provider.urlHooks ?? [], {
@@ -214,6 +249,14 @@ export function createExtension(opts: CreateExtensionOptions) {
         ),
       );
     }
+    // Registered whether or not the manifest declares it (see
+    // OPTIONAL_COMMAND_NAMES): an undeclared command is still callable, it
+    // just does not appear in the palette or the title bar.
+    context.subscriptions.push(
+      vscode.commands.registerCommand(`${opts.id}.help`, () =>
+        handlers.helpInView(),
+      ),
+    );
     return { controller, handlers };
   }
 

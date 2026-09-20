@@ -88,6 +88,9 @@ export const SEPARATOR_TEXT = "reopened";
 /** `/new` marks the history with this instead of SEPARATOR_TEXT: the
  * browser is replaced either way, but the user asked for a fresh chat. */
 export const NEW_CHAT_SEPARATOR = "new chat";
+/** The separator of the reopen a queued prompt triggers after an idle
+ * close: it tells the user the service-side conversation is a new chat. */
+export const IDLE_SEPARATOR = "reopened after idle";
 /** Remedies for the two failures a user can fix from inside the TUI. */
 export const AUTH_HINT = "Type /login to log in.";
 export const INSTALL_HINT = "Run: npx playwright install chromium";
@@ -96,8 +99,13 @@ export interface ChatModelOptions {
   /** Opens a session: called once by the constructor and by every reset.
    * The UI is up before it resolves, so an opening failure is an error
    * entry in the history rather than a crash before the first frame.
-   * `report` paints the status row while the open runs (retry attempts). */
-  openSession: (report: (message: string) => void) => Promise<ChatSessionLike>;
+   * `report` paints the status row while the open runs (retry attempts);
+   * `onIdleExpired` is handed to the session so core can tell the model
+   * that it closed the browser after the idle timeout. */
+  openSession: (
+    report: (message: string) => void,
+    onIdleExpired: () => void,
+  ) => Promise<ChatSessionLike>;
   /** `/login`: the headful login; resolves when the auth state is saved. */
   login: (opts: {
     signal: AbortSignal;
@@ -144,6 +152,9 @@ export class ChatModel {
   /** The last progress line from the running open (or reopen), for the
    * status row. Undefined once the open settles, either way. */
   openProgress: string | undefined;
+  /** True once the idle timeout closed the browser and no session has
+   * replaced it. The next prompt reopens; the view says so. */
+  idleClosed = false;
   /** Where a turn that ended while `/login` was running left the model.
    * The login owns the status meanwhile, so the turn records its outcome
    * here and runLogin restores it instead of the status it captured. */
@@ -166,6 +177,7 @@ export class ChatModel {
   private running: RunningCommand | undefined;
   private readonly openSession: (
     report: (message: string) => void,
+    onIdleExpired: () => void,
   ) => Promise<ChatSessionLike>;
   private readonly login: ChatModelOptions["login"];
   private readonly clearAuth: () => Promise<void>;
@@ -212,7 +224,7 @@ export class ChatModel {
     const generation = this.generation;
     let session: ChatSessionLike;
     try {
-      session = await this.openSession((message) => {
+      session = await this.open((message) => {
         this.openProgress = message;
         this.onChange();
       });
@@ -233,6 +245,36 @@ export class ChatModel {
     this.current = session;
     this.status = "idle";
     this.drain();
+    this.onChange();
+  }
+
+  /** One open, wired so this session's idle expiry reaches the model. The
+   * callback closes over a holder rather than the session itself: the
+   * session does not exist when the callback is built, and comparing by
+   * identity later is what makes a stale session's expiry a no-op. */
+  private async open(
+    report: (message: string) => void,
+  ): Promise<ChatSessionLike> {
+    const holder: { opened?: ChatSessionLike } = {};
+    const session = await this.openSession(report, () => {
+      if (holder.opened !== undefined) this.idleExpired(holder.opened);
+    });
+    // Both assignments must stay synchronous after this await: an expiry
+    // that fires between `holder.opened` and the caller's `this.current`
+    // would find a session identity that does not match and be dropped,
+    // leaving the model holding a browser core has already closed.
+    holder.opened = session;
+    return session;
+  }
+
+  /** Core has closed `session`'s browser after the idle timeout. The
+   * session is gone but the model stays usable: the status is untouched
+   * (it is `idle`, since a turn would have held the watch paused), and the
+   * next prompt reopens through the ordinary reset path. */
+  private idleExpired(session: ChatSessionLike): void {
+    if (this.current !== session) return; // stale: a reset replaced it
+    this.current = undefined;
+    this.idleClosed = true;
     this.onChange();
   }
 
@@ -282,6 +324,15 @@ export class ChatModel {
       this.onChange();
       return true;
     }
+    // The idle close took the browser; queue the line and reopen. The
+    // reset's drain sends it once the new session is up — a provider
+    // `/command` included, which needs the page just as much.
+    if (this.idleClosed) {
+      this.queue.push(prompt);
+      this.onChange();
+      void this.reset(IDLE_SEPARATOR);
+      return true;
+    }
     return slash
       ? this.runCustom(slash.custom, slash.args, prompt, false)
       : this.runTurn(prompt, false);
@@ -313,6 +364,15 @@ export class ChatModel {
   /** Sends the oldest queued entry as the next turn, if any. Called at every
    * transition to idle that may continue the conversation. */
   private drain(): void {
+    // The idle close left no session to send to, and a line can reach the
+    // queue without passing submit()'s guard — typed while a shell command
+    // or a `/login` was in flight. Reopen instead; the reset's own drain
+    // delivers the queue, held shell results and all. Checked before the
+    // shift, so nothing is dequeued and lost on the way.
+    if (this.idleClosed) {
+      if (this.queue.length > 0) void this.reset(IDLE_SEPARATOR);
+      return;
+    }
     const next = this.queue.shift();
     if (next === undefined) return;
     // A queued entry is always a message or a provider command: built-ins
@@ -366,6 +426,20 @@ export class ChatModel {
       this.onChange();
       return false;
     }
+    // The idle watch is only paused inside session.send(), so the expiry can
+    // land while the expansion above is running (file reads and URL hooks
+    // take up to `timeoutMs` each). The session is gone by now, so send the
+    // line the way one typed after the close is sent: back to the front of
+    // the queue, and let drain() reopen and re-run it. Nothing is pushed to
+    // the history yet, so the re-run produces exactly one user entry.
+    if (this.idleClosed) {
+      this.queue.unshift(prompt);
+      // settle(), not a bare status assignment: a `/login` started during
+      // the expansion owns the status, and its own reset drains the queue.
+      this.settle("idle");
+      this.onChange();
+      return true;
+    }
     const message: Message = { role: "user", text: prompt };
     if (expansion.attachments.length > 0) {
       message.attachments = expansion.attachments;
@@ -386,8 +460,10 @@ export class ChatModel {
   async runShell(command: string): Promise<boolean> {
     const cmd = command.trim();
     if (!cmd || this.status !== "idle") return false;
-    // Only to fail loudly if `idle` ever stops implying an open session.
-    this.requireSession();
+    // Only to fail loudly if `idle` ever stops implying an open session —
+    // except after an idle close, which deliberately leaves none and which
+    // a shell command does not need.
+    if (!this.idleClosed) this.requireSession();
     this.status = "running";
     const entry: Message = {
       role: "shell",
@@ -453,7 +529,10 @@ export class ChatModel {
     // browser: auto-sending now would push the result into the old session
     // behind the user's back. Hold it like autoSend: false does, so it
     // goes out with the next message after the post-login reset.
-    if (!this.shell.autoSend || this.isLoggingIn) {
+    // An idle close leaves no session to auto-send to; holding the result
+    // is what `/login` does in the same spot, and the next message — which
+    // reopens — carries it out.
+    if (!this.shell.autoSend || this.isLoggingIn || this.idleClosed) {
       this.heldResults.push(result);
       entry.held = true;
       // The result is held before draining, so a queued message carries it
@@ -757,6 +836,8 @@ export class ChatModel {
 
   private async runReset(separator: string): Promise<void> {
     this.stopShell();
+    // Whatever the reason for the reset, the idle close is behind us.
+    this.idleClosed = false;
     this.status = "resetting";
     this.generation++;
     this.onChange();
@@ -765,7 +846,7 @@ export class ChatModel {
     if (old !== undefined) await closeOrKill(old, this.closeTimeoutMs);
     this.current = undefined;
     try {
-      this.current = await this.openSession((message) => {
+      this.current = await this.open((message) => {
         this.openProgress = message;
         this.onChange();
       });
