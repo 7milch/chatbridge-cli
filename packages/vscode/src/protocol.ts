@@ -43,7 +43,10 @@ export type WebviewCommand =
   | "installBrowser"
   | "reopen"
   /** Webview only: the host answers with a `help` history entry. */
-  | "help";
+  | "help"
+  /** Webview only: the composer's `+` opens the native file picker; the
+   * chosen files go through the same path as a drop. */
+  | "pickFiles";
 
 /** webview → host */
 export type ToHost =

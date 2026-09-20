@@ -13,6 +13,8 @@ interface Fake {
   log: string[];
   editor: EditorSnapshot | undefined;
   errorChoice: string | undefined;
+  /** What the fake file picker returns; `[]` is a cancelled dialog. */
+  picked: string[];
   controller: Pick<
     SessionController,
     | "send"
@@ -41,6 +43,7 @@ function fake(): Fake {
     sendResults: [],
     cleared: 0,
     busy: false,
+    picked: [],
   } as unknown as Fake;
   f.ui = {
     showErrorMessage: async (m, ...items) => {
@@ -67,6 +70,10 @@ function fake(): Fake {
       return { path: `doc:${raw}`, text: "DOC" };
     },
     focusView: () => f.log.push("focus"),
+    pickFiles: async () => {
+      f.log.push("pickFiles");
+      return f.picked;
+    },
   };
   f.controller = {
     send: async (t) => {
@@ -508,5 +515,39 @@ describe("commands", () => {
     const f = fake();
     await commands(f).attachUris(["file:///w/a", "file:///w/a"]);
     expect(f.log.filter((l) => l.startsWith("attach:"))).toHaveLength(1);
+  });
+
+  test("pickFiles attaches every picked URI through attachUris", async () => {
+    const f = fake();
+    f.picked = ["file:///a.ts", "file:///b.ts"];
+    await commands(f).pickFiles();
+    expect(f.log).toEqual([
+      "pickFiles",
+      "attach:doc:file:///a.ts:3",
+      "focus",
+      "attach:doc:file:///b.ts:3",
+      "focus",
+    ]);
+  });
+
+  test("a cancelled file picker does nothing", async () => {
+    const f = fake();
+    await commands(f).pickFiles();
+    expect(f.log).toEqual(["pickFiles"]);
+  });
+
+  test("pickFiles reports what it could not read, like a drop does", async () => {
+    const f = fake();
+    f.picked = ["file:///dir"];
+    await commands(f).pickFiles();
+    expect(f.log).toEqual(["pickFiles", "warn:Skipped: file:///dir"]);
+  });
+
+  test("helpInView focuses the view before listing the commands", () => {
+    const f = fake();
+    commands(f).helpInView();
+    expect(f.log).toHaveLength(2);
+    expect(f.log[0]).toBe("focus");
+    expect(f.log[1] ?? "").toStartWith("help:");
   });
 });

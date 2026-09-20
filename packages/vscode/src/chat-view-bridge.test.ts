@@ -275,6 +275,7 @@ describe("ChatViewBridge", () => {
       installBrowser: true,
       reopen: true,
       help: true,
+      pickFiles: true,
     };
     expect(new Set(COMMAND_LIST)).toEqual(
       new Set(Object.keys(_all) as WebviewCommand[]),

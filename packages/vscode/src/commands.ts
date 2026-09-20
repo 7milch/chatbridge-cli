@@ -37,6 +37,12 @@ export interface CommandHandlers {
   send(text: string): Promise<SendResult>;
   /** Files dropped on the webview; unreadable URIs are reported together. */
   attachUris(uris: string[]): Promise<void>;
+  /** The composer's `+`: the native picker feeds `attachUris`, so the size
+   * limit and the error report are shared with drag and drop. */
+  pickFiles(): Promise<void>;
+  /** The title bar's Help entry: focus the view, then push the same
+   * listing the webview's `/help` produces. */
+  helpInView(): void;
   /** A paste into the input box; true when it became a selection chip. */
   pasted(text: string): boolean;
 }
@@ -98,6 +104,25 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
     }
   }
 
+  function help(): void {
+    controller.pushHelp(helpText(deps.commands ?? []));
+  }
+
+  async function attachUris(uris: string[]): Promise<void> {
+    const skipped: string[] = [];
+    for (const raw of new Set(uris)) {
+      try {
+        const doc = await ui.openDocument(ui.parseUri(raw));
+        attach(doc.path, doc.text);
+      } catch {
+        skipped.push(raw);
+      }
+    }
+    if (skipped.length > 0) {
+      ui.showWarningMessage(`Skipped: ${skipped.join(", ")}`);
+    }
+  }
+
   return {
     async login() {
       if (isBusy()) {
@@ -155,7 +180,14 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
 
     reopen: () => controller.reopen(),
 
-    help: () => controller.pushHelp(helpText(deps.commands ?? [])),
+    help,
+
+    helpInView() {
+      // The title bar can be clicked while the view is collapsed or another
+      // view is showing; the listing is only useful once it is visible.
+      ui.focusView();
+      help();
+    },
 
     async customCommand(name, args, text) {
       const result = await controller.runCommand(name, args, text);
@@ -198,19 +230,13 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
 
     focus: () => ui.focusView(),
 
-    async attachUris(uris) {
-      const skipped: string[] = [];
-      for (const raw of new Set(uris)) {
-        try {
-          const doc = await ui.openDocument(ui.parseUri(raw));
-          attach(doc.path, doc.text);
-        } catch {
-          skipped.push(raw);
-        }
-      }
-      if (skipped.length > 0) {
-        ui.showWarningMessage(`Skipped: ${skipped.join(", ")}`);
-      }
+    attachUris,
+
+    async pickFiles() {
+      const uris = await ui.pickFiles();
+      // Cancelling is not an error and must not clear anything.
+      if (uris.length === 0) return;
+      await attachUris(uris);
     },
 
     pasted(text) {

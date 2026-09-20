@@ -247,6 +247,14 @@ export function createExtension(opts: CreateExtensionOptions) {
         ),
       );
     }
+    // Registered whether or not the manifest declares it (see
+    // OPTIONAL_COMMAND_NAMES): an undeclared command is still callable, it
+    // just does not appear in the palette or the title bar.
+    context.subscriptions.push(
+      vscode.commands.registerCommand(`${opts.id}.help`, () =>
+        handlers.helpInView(),
+      ),
+    );
     return { controller, handlers };
   }
 
