@@ -32,6 +32,34 @@ async function waitFor(
   return frame;
 }
 
+/** The row showing `needle`, once it has stopped moving: the same row in
+ * three consecutive frames. A mouse drag needs this — a row index read
+ * while the history is still growing is stale by the time the drag runs,
+ * and the selection spans a relayout instead of the text. */
+async function settledRowOf(
+  t: Awaited<ReturnType<typeof createTestRenderer>>,
+  needle: string,
+): Promise<number> {
+  const rowOf = () =>
+    t
+      .captureCharFrame()
+      .split("\n")
+      .findIndex((l) => l.includes(needle));
+  let stable = 0;
+  let row = rowOf();
+  for (let i = 0; i < 60 && stable < 3; i++) {
+    await new Promise((r) => setTimeout(r, 20));
+    await t.renderOnce();
+    const next = rowOf();
+    stable = next === row && next > -1 ? stable + 1 : 0;
+    row = next;
+  }
+  if (stable < 3) {
+    throw new Error(`row of ${JSON.stringify(needle)} never settled`);
+  }
+  return row;
+}
+
 describe("waitForQuit", () => {
   test("resolves when the renderer is destroyed from outside", async () => {
     // OpenTUI's own SIGINT/SIGTERM/SIGHUP handlers destroy the renderer
@@ -549,18 +577,15 @@ describe("runInteractive", () => {
     await t.mockInput.typeText("hi");
     t.mockInput.pressEnter();
     await waitFor(t, "Echo: hi");
-    // A mouse drag is what this is in real life, but runInteractive calls
-    // renderer.start() and the live loop repaints between the press and the
-    // release, so the mock mouse's anchor and focus land on different rows
-    // and the selection comes back empty (verified A/B: the same drag in
-    // chat-view.test.ts, on a renderer that was never started, selects the
-    // reply). The renderer's "selection" event is the next thing down that
-    // path, and only the view listens for it: this proves runInteractive
-    // handed `copy` to ChatView and not just to the model.
-    (t.renderer as unknown as { emit(e: string, v: unknown): void }).emit(
-      "selection",
-      { getSelectedText: () => "Echo: hi" },
-    );
+    // The first frame that shows the reply is not its final position: the
+    // history is still growing under it. Dragging on that row selects
+    // across a relayout and comes back empty, so wait for the row to hold
+    // still before reading it.
+    const y = await settledRowOf(t, "Echo: hi");
+    // The real mouse path: only the view listens for the renderer's
+    // selection, so a copy here proves runInteractive handed `copy` to
+    // ChatView and not just to the model.
+    await t.mockMouse.drag(0, y, 8, y);
     await waitFor(t, "copied");
     expect(copied).toEqual(["Echo: hi"]);
     t.mockInput.pressKey("c", { ctrl: true });

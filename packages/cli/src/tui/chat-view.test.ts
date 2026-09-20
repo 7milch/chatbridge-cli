@@ -2241,9 +2241,10 @@ describe("ChatView: input focus", () => {
     }
   }
 
-  /** Pages the history until `text` shows, or gives up at the end of the
-   * history — more presses than there are pages, so it also exercises a
-   * PgUp at the very top and a PgDn at the very bottom. */
+  /** Presses `key` eight times — more than there are pages in a history of
+   * eight exchanges — so the view ends up at that end of the history and
+   * the surplus presses exercise a PgUp at the very top and a PgDn at the
+   * very bottom. Asserts `text` is on screen afterwards. */
   async function pageTo(
     t: Awaited<ReturnType<typeof setup>>,
     key: string,
@@ -2287,14 +2288,25 @@ describe("ChatView: input focus", () => {
 
   test("PgUp/PgDn are ignored once the view is torn down", async () => {
     const t = await setup({ delayMs: 10 });
-    await t.mockInput.typeText("hi");
-    t.mockInput.pressEnter();
-    await t.frameWith("Echo: hi");
+    await fillHistory(t);
+    const before = t.captureCharFrame();
     t.view.destroy();
-    // No write may reach the renderables after destroy().
+    // The renderables outlive destroy() — the renderer is still up — so the
+    // frame is what shows whether the keys did anything. PgUp is the
+    // discriminating one: the history is stuck at the bottom, so a live
+    // view would scroll away from `before`, while PgDn there is a no-op
+    // either way.
     expect(() => {
       t.mockInput.pressKey(PAGE_UP);
       t.mockInput.pressKey(PAGE_DOWN);
     }).not.toThrow();
+    await sleep(20);
+    await t.renderOnce();
+    expect(t.captureCharFrame()).toBe(before);
+    // And once more with PgUp alone, which no longer cancels out.
+    t.mockInput.pressKey(PAGE_UP);
+    await sleep(20);
+    await t.renderOnce();
+    expect(t.captureCharFrame()).toBe(before);
   });
 });
