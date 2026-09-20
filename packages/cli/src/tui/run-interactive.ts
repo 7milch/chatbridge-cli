@@ -163,6 +163,7 @@ export async function runInteractive(
   let view: ChatView | undefined;
   let model: ChatModel | undefined;
   try {
+    const commands = commandInfoOf(opts.provider);
     model = new ChatModel({
       openSession:
         opts.createSession ??
@@ -188,7 +189,7 @@ export async function runInteractive(
           })),
       clearAuth: () => opts.authStore.clear(),
       shell: opts.shell,
-      commands: commandInfoOf(opts.provider),
+      commands,
       expand: async (text) => {
         const cwd = process.cwd();
         const mentions = await expandMentions(text, cwd);
@@ -222,6 +223,7 @@ export async function runInteractive(
       }),
       spinner: resolveSpinner(opts.spinner),
       index,
+      commands,
     });
     const quit = waitForQuit(renderer, model);
     uiUp = true;

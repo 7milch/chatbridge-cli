@@ -1,4 +1,10 @@
 import {
+  type CommandInfo,
+  commandWordAt,
+  matchCommands,
+  slashPrefixAt,
+} from "@chatbridge/core/slash-commands";
+import {
   BoxRenderable,
   type CliRenderer,
   type KeyEvent,
@@ -12,7 +18,7 @@ import type { FileIndex } from "../mentions/file-index.js";
 import { mentionAtCursor } from "../mentions/parse-mentions.js";
 import { truncatedNote } from "../shell/format-result.js";
 import type { ChatModel, Message, Role } from "./chat-model.js";
-import { MAX_ROWS, MentionPopup } from "./mention-popup.js";
+import { MAX_ROWS, MentionPopup, type PopupRow } from "./mention-popup.js";
 import type { ResolvedSpinner } from "./spinner.js";
 import { MUTED_COLOR, type Styler, colored, styled, theme } from "./theme.js";
 
@@ -98,6 +104,16 @@ function shellFooter(message: Message): string {
   return parts.join(" · ");
 }
 
+/** `/name  description` rows for the popup, aligned the way `/help` is. */
+function commandRows(commands: readonly CommandInfo[]): PopupRow[] {
+  if (commands.length === 0) return [];
+  const width = Math.max(...commands.map((c) => c.name.length)) + 1;
+  return commands.map((c) => ({
+    value: c.name,
+    label: `/${c.name.padEnd(width)} ${c.description}`,
+  }));
+}
+
 export interface ChatViewOptions {
   title: string;
   providerName: string;
@@ -111,6 +127,8 @@ export interface ChatViewOptions {
   spinner: ResolvedSpinner;
   /** Candidates for `@` mentions. */
   index: FileIndex;
+  /** The provider's commands; the `/` popup lists them after the built-ins. */
+  commands?: readonly CommandInfo[];
 }
 
 /** KeyHandler's `on` is typed through a generic EventEmitter that does not
@@ -146,6 +164,7 @@ export class ChatView {
   private readonly queueRows: TextRenderable[] = [];
   private readonly popup: MentionPopup;
   private readonly index: FileIndex;
+  private readonly commands: readonly CommandInfo[];
   private readonly onKeypress: (key: KeyEvent) => void;
   private rendered = 0;
   /** Shell entries already drawn; their output and footer are refreshed
@@ -176,6 +195,7 @@ export class ChatView {
   ) {
     this.budgetSec = Math.round(opts.timeoutMs / 1000);
     this.index = opts.index;
+    this.commands = opts.commands ?? [];
     this.spinnerSpec = opts.spinner;
     this.frameStyler =
       opts.spinner.frameColor === undefined
@@ -563,6 +583,12 @@ export class ChatView {
       case "return":
       case "kpenter":
         if (key.shift || key.ctrl) return;
+        // Returning without preventDefault leaves the key to the textarea,
+        // whose `return` binding submits.
+        if (key.name !== "tab" && this.commandIsComplete()) {
+          this.popup.hide();
+          return;
+        }
         this.acceptSelection();
         break;
       case "escape":
@@ -643,39 +669,69 @@ export class ChatView {
     this.input.height = Math.min(MAX_INPUT_ROWS, Math.max(1, rows));
   }
 
-  /** Reads the textarea and shows or hides the popup accordingly. No
-   * popup in shell mode: `@` is an ordinary character there. */
+  /** True when the command word is already the selected command, so there is
+   * nothing left to complete and Enter should send instead — `/new⏎` stays
+   * one keystroke. */
+  private commandIsComplete(): boolean {
+    const word = commandWordAt(this.input.plainText, this.input.cursorOffset);
+    return word !== undefined && word.word === this.popup.selected;
+  }
+
+  /** Reads the textarea and shows or hides the popup accordingly. The
+   * leading `/` word wins over a mention, and the two cannot both apply: a
+   * mention needs an `@` word under the cursor. No popup in shell mode: `@`
+   * and `/` are ordinary characters there. */
   private refreshPopup(): void {
     if (this.torn) return;
     if (this.shell) {
       this.popup.hide();
       return;
     }
-    const mention = mentionAtCursor(
-      this.input.plainText,
-      this.input.cursorOffset,
-    );
+    const text = this.input.plainText;
+    const cursor = this.input.cursorOffset;
+    const prefix = slashPrefixAt(text, cursor);
+    if (prefix !== undefined) {
+      this.popup.show(commandRows(matchCommands(prefix, this.commands)));
+      return;
+    }
+    const mention = mentionAtCursor(text, cursor);
     if (!mention) {
       this.popup.hide();
       return;
     }
-    this.popup.show(this.index.search(mention.path, MAX_ROWS));
+    this.popup.show(
+      this.index
+        .search(mention.path, MAX_ROWS)
+        .map((path) => ({ value: path, label: path })),
+    );
   }
 
-  /** Replaces the mention under the cursor with `@<path> ` and puts the
-   * cursor after it. `insertText` on a selection replaces the selection. */
+  /** Replaces what is under the cursor with the selection followed by a
+   * space, and puts the cursor after it: `/name ` for a command, `@<path> `
+   * for a mention. `insertText` on a selection replaces the selection.
+   * Accepting a command never runs it. */
   private acceptSelection(): void {
-    const path = this.popup.selected;
-    const mention = mentionAtCursor(
-      this.input.plainText,
-      this.input.cursorOffset,
-    );
-    if (path === undefined || !mention) {
+    const value = this.popup.selected;
+    if (value === undefined) {
+      this.popup.hide();
+      return;
+    }
+    const text = this.input.plainText;
+    const cursor = this.input.cursorOffset;
+    const word = commandWordAt(text, cursor);
+    if (word) {
+      this.input.setSelection(0, word.end);
+      this.input.insertText(`/${value} `);
+      this.popup.hide();
+      return;
+    }
+    const mention = mentionAtCursor(text, cursor);
+    if (!mention) {
       this.popup.hide();
       return;
     }
     this.input.setSelection(mention.start, mention.end);
-    this.input.insertText(`@${path} `);
+    this.input.insertText(`@${value} `);
     this.popup.hide();
   }
 

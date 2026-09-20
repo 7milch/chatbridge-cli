@@ -3,6 +3,10 @@ import { BoxRenderable, TextRenderable } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { MAX_ROWS, MentionPopup, POPUP_HINT } from "./mention-popup.js";
 
+/** Mention rows: the path is both the value and the label. */
+const paths = (...list: string[]) =>
+  list.map((value) => ({ value, label: value }));
+
 let teardown: (() => void) | undefined;
 afterEach(() => {
   teardown?.();
@@ -47,7 +51,7 @@ describe("MentionPopup", () => {
 
   test("show lists candidates between the input and the status row", async () => {
     const t = await setup();
-    t.popup.show(["src/a.ts", "src/b.ts"]);
+    t.popup.show(paths("src/a.ts", "src/b.ts"));
     await t.renderOnce();
     expect(t.popup.visible).toBe(true);
     expect(t.popup.selected).toBe("src/a.ts");
@@ -62,7 +66,7 @@ describe("MentionPopup", () => {
 
   test("move wraps in both directions", async () => {
     const t = await setup();
-    t.popup.show(["a", "b", "c"]);
+    t.popup.show(paths("a", "b", "c"));
     t.popup.move(1);
     expect(t.popup.selected).toBe("b");
     t.popup.move(1);
@@ -74,9 +78,9 @@ describe("MentionPopup", () => {
 
   test("show resets the selection and hides on an empty list", async () => {
     const t = await setup();
-    t.popup.show(["a", "b"]);
+    t.popup.show(paths("a", "b"));
     t.popup.move(1);
-    t.popup.show(["x", "y"]);
+    t.popup.show(paths("x", "y"));
     expect(t.popup.selected).toBe("x");
     t.popup.show([]);
     expect(t.popup.visible).toBe(false);
@@ -87,7 +91,7 @@ describe("MentionPopup", () => {
 
   test("hide removes the rows and the hint", async () => {
     const t = await setup();
-    t.popup.show(["src/a.ts"]);
+    t.popup.show(paths("src/a.ts"));
     await t.renderOnce();
     expect(t.captureCharFrame()).toContain("src/a.ts");
     t.popup.hide();
@@ -99,7 +103,7 @@ describe("MentionPopup", () => {
   test("shows at most MAX_ROWS candidates", async () => {
     const t = await setup();
     const many = Array.from({ length: 12 }, (_, i) => `file-${i}.ts`);
-    t.popup.show(many);
+    t.popup.show(paths(...many));
     await t.renderOnce();
     const frame = t.captureCharFrame();
     expect(MAX_ROWS).toBe(8);
@@ -109,11 +113,36 @@ describe("MentionPopup", () => {
 
   test("long candidates are truncated to the terminal width", async () => {
     const t = await setup();
-    t.popup.show(["x".repeat(100)]);
+    t.popup.show(paths("x".repeat(100)));
     await t.renderOnce();
     for (const row of t.captureCharFrame().split("\n")) {
       expect(row.length).toBeLessThanOrEqual(40);
     }
     expect(t.captureCharFrame()).toContain(`  ${"x".repeat(38)}`);
+  });
+
+  test("a row's label is drawn and its value is what is selected", async () => {
+    const t = await setup();
+    t.popup.show([
+      { value: "new", label: "/new     Start a new chat" },
+      { value: "help", label: "/help    List these commands" },
+    ]);
+    await t.renderOnce();
+    expect(t.popup.selected).toBe("new");
+    expect(t.captureCharFrame()).toContain("/new     Start a new chat");
+    t.popup.move(1);
+    expect(t.popup.selected).toBe("help");
+  });
+
+  test("a slash inside a description does not dim the row", async () => {
+    const t = await setup();
+    t.popup.show([
+      { value: "new", label: "/new     Start a new chat" },
+      { value: "reopen", label: "/reopen  Also Ctrl/R" },
+    ]);
+    // The second row is the unselected one, which is the styling branch that
+    // dims a path's directory part.
+    await t.renderOnce();
+    expect(t.captureCharFrame()).toContain("/reopen  Also Ctrl/R");
   });
 });

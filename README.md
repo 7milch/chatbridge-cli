@@ -178,6 +178,12 @@ chat.
   1 MB per message, text files only, paths inside the working directory.
   Problems are shown as an error and nothing is sent; fix the message and
   press Enter again. One-shot mode (`-p`) sends the prompt verbatim.
+- Type **`/`** at the start of the input to see the commands: the built-ins
+  and any the provider adds, each with its description. **↑/↓** select,
+  **Tab** completes the word to `/name ` so you can type arguments, and
+  **Enter** completes too — unless what you typed is already the whole
+  command, in which case it runs. **Esc** closes the popup; accepting an
+  entry never runs it. `/` has no special meaning in shell mode.
 - Type **`!`** in an empty input to run a shell command (pasting text that
   starts with `!` works too). The prompt turns into `! `; **Enter** runs
   the command in the directory you started `chatbridge` in, with your own
