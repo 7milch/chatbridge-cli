@@ -815,7 +815,7 @@ describe("ChatSession: idle close", () => {
       options: {
         ...opts(h),
         idle: { timeoutMs: IDLE_MS },
-        now: c.now,
+        idleNow: c.now,
         idleTickMs: 5,
         onIdleExpired: () => events.push("expired"),
         onProgress: (message: string) => events.push(message),

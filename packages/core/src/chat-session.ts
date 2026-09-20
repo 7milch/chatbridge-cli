@@ -75,7 +75,7 @@ export interface ChatSessionOptions {
    * starts closing. */
   onIdleExpired?: () => void;
   /** Test-only: the clock the idle watch compares against. */
-  now?: () => number;
+  idleNow?: () => number;
   /** Test-only: how often the idle watch checks its deadline. */
   idleTickMs?: number;
 }
@@ -122,7 +122,7 @@ export class ChatSession {
     if (timeoutMs <= 0) return;
     this.idleWatch = new IdleWatch({
       timeoutMs,
-      now: opts.now,
+      now: opts.idleNow,
       tickMs: opts.idleTickMs,
       onExpire: () => {
         // Fires from a timer: there is no caller to reject, and the UI's
