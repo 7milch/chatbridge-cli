@@ -108,11 +108,11 @@ export class MentionPopup {
         row.content = styled(theme.selected(`${INDENT}${text}`));
         return;
       }
-      // Dims the directory part of a mention path. A command row is
-      // `/name  description`, so only the part before the first space is
-      // considered: a slash inside a description must not dim half the row.
-      const head = text.includes(" ") ? text.slice(0, text.indexOf(" ")) : text;
-      const slash = head.lastIndexOf("/");
+      // Dims the directory part of a mention path. A command label starts
+      // with the slash of `/name` and is drawn plain: dimming there would
+      // grey the command itself. Mention paths are relative, so they never
+      // start with "/" and keep exactly this dimming.
+      const slash = text.startsWith("/") ? -1 : text.lastIndexOf("/");
       row.content =
         slash === -1
           ? styled(`${INDENT}${text}`)

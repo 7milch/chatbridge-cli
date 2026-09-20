@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { BoxRenderable, TextRenderable } from "@opentui/core";
+import {
+  BoxRenderable,
+  type Renderable,
+  TextAttributes,
+  TextRenderable,
+} from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { MAX_ROWS, MentionPopup, POPUP_HINT } from "./mention-popup.js";
 
@@ -35,7 +40,22 @@ async function setup() {
   };
   await t.renderOnce();
   const rows = () => t.captureCharFrame().split("\n");
-  return { ...t, popup, rows };
+  /** The styled chunks of popup row `i`, as plain `{ text, dim }` pairs.
+   * `captureCharFrame` drops all styling, so the dimming of a row can only
+   * be asserted on the renderable's own content. */
+  const chunks = (i: number): Array<{ text: string; dim: boolean }> => {
+    const box = root
+      .getChildren()
+      .find((r: Renderable) => r.id === "mention-popup");
+    if (!box) throw new Error("no mention-popup box");
+    const row = box.getChildren()[i];
+    if (!(row instanceof TextRenderable)) throw new Error(`no row ${i}`);
+    return row.content.chunks.map((c) => ({
+      text: c.text,
+      dim: ((c.attributes ?? 0) & TextAttributes.DIM) !== 0,
+    }));
+  };
+  return { ...t, popup, rows, chunks };
 }
 
 describe("MentionPopup", () => {
@@ -134,15 +154,41 @@ describe("MentionPopup", () => {
     expect(t.popup.selected).toBe("help");
   });
 
-  test("a slash inside a description does not dim the row", async () => {
+  test("a command row is never dimmed, whatever its description holds", async () => {
     const t = await setup();
     t.popup.show([
       { value: "new", label: "/new     Start a new chat" },
       { value: "reopen", label: "/reopen  Also Ctrl/R" },
     ]);
-    // The second row is the unselected one, which is the styling branch that
-    // dims a path's directory part.
+    // Row 1 is the unselected one, which is the branch that dims a path's
+    // directory part. A `/` inside the description must not grey the row up
+    // to it, so the whole label is one undimmed chunk after the indent.
     await t.renderOnce();
+    expect(t.chunks(1)).toEqual([
+      { text: "  /reopen  Also Ctrl/R", dim: false },
+    ]);
     expect(t.captureCharFrame()).toContain("/reopen  Also Ctrl/R");
+  });
+
+  test("an unselected mention path keeps its directory part dimmed", async () => {
+    const t = await setup();
+    t.popup.show(paths("a.ts", "src/tui/chat-view.ts"));
+    await t.renderOnce();
+    expect(t.chunks(1)).toEqual([
+      { text: "  ", dim: false },
+      { text: "src/tui/", dim: true },
+      { text: "chat-view.ts", dim: false },
+    ]);
+  });
+
+  test("a directory with a space in it is still dimmed whole", async () => {
+    const t = await setup();
+    t.popup.show(paths("a.ts", "src/a b/c.ts"));
+    await t.renderOnce();
+    expect(t.chunks(1)).toEqual([
+      { text: "  ", dim: false },
+      { text: "src/a b/", dim: true },
+      { text: "c.ts", dim: false },
+    ]);
   });
 });
