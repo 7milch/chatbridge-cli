@@ -501,7 +501,13 @@ export class ChatView {
    * (a plain click) is not a copy. */
   private onSelection(selection: TextSelection | null): void {
     if (this.torn || this.copy === undefined) return;
-    const text = selection?.getSelectedText() ?? "";
+    let text = "";
+    try {
+      text = selection?.getSelectedText() ?? "";
+    } catch {
+      // A selection that cannot report itself is no selection.
+      return;
+    }
     if (text.trim() === "") return;
     void this.copy(text)
       .catch(() => false)

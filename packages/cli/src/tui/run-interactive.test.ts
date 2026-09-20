@@ -626,6 +626,7 @@ describe("runInteractive", () => {
   test("a wedged idle close is given up on after the teardown budget", async () => {
     const t = await createTestRenderer({ width: 80, height: 20 });
     let expire: ((closing: Promise<void>) => void) | undefined;
+    let closes = 0;
     const exits: Array<number | undefined> = [];
     const errs: string[] = [];
     const realExit = process.exit;
@@ -642,15 +643,25 @@ describe("runInteractive", () => {
         ...sessionOpts().opts,
         createSession: async (_report, onIdleExpired) => {
           expire = onIdleExpired;
-          return idleSession();
+          return {
+            ...idleSession(),
+            close: async () => {
+              closes++;
+            },
+          };
         },
         createRenderer: async () => t.renderer,
         index: FileIndex.fromPaths([]),
       });
       await waitFor(t, "Ctrl+R reopen");
       expire?.(new Promise<void>(() => {})); // the close never settles
+      // A reopen after the idle expiry: the session the model holds now is
+      // live, and the wedged idle close must not stop teardown closing it.
+      t.mockInput.pressKey("r", { ctrl: true });
+      await waitFor(t, "── reopened ──");
       t.mockInput.pressKey("c", { ctrl: true });
       await run;
+      expect(closes).toBeGreaterThan(0);
     } finally {
       process.exit = realExit;
       process.stderr.write = realWrite;

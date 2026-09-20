@@ -77,7 +77,9 @@ export const { activate, deactivate } = createExtension({
 - **`/` commands** — `/login`, `/logout`, `/new`, `/reopen`, `/copy`,
   `/help`, the same table the TUI uses, plus whatever the provider adds.
   `/copy` copies the last complete reply's text to the editor clipboard,
-  with an information message for feedback (a warning if the write fails). Type `/` in the
+  with an information message for feedback (a warning if the write fails).
+
+  Type `/` in the
   composer and the menu opens, filtered as you type: **↑/↓** select, **Tab**
   completes the word to `/name ` so arguments can follow, **Enter**
   completes too — unless what you typed is already the whole command, in

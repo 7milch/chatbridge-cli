@@ -271,10 +271,14 @@ export async function runInteractive(
     const idleSettled = await settleReset(model?.idleClosing);
     // The model may still hold no session: the open above failed.
     const open = model?.session;
-    const closed =
+    // The session the model holds now is closed on its own account: an idle
+    // close that never settled belongs to a session the model let go of, and
+    // short-circuiting on it would leave this browser running and its auth
+    // state unsaved. The hard exit below still covers either failure.
+    const sessionClosed =
       settled &&
-      idleSettled &&
       (open === undefined || (await closeWithTimeout(open, CLOSE_TIMEOUT_MS)));
+    const closed = sessionClosed && idleSettled;
     view?.destroy();
     renderer.destroy();
     // The terminal is ours again: anything the teardown reported can be

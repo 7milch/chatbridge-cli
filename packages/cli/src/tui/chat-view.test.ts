@@ -1991,27 +1991,32 @@ describe("ChatView: the /copy notice", () => {
   });
 
   test("destroy() clears the notice timer", async () => {
-    const t = await setup({ copy: async () => true, noticeMs: 10_000 });
+    // A window far shorter than the sleep below, so a timer that survived
+    // destroy() would certainly have fired by the time we look.
+    const t = await setup({ copy: async () => true, noticeMs: 20 });
     await t.model.submit("hello");
     await t.model.submit("/copy");
-    await t.frameWith(COPIED_NOTICE);
+    // The paint that schedules the timer; frameWith would race the window.
+    await t.renderOnce();
+    expect(t.model.notice).toBe(COPIED_NOTICE);
     t.view.destroy();
     // A leaked timer would clear the notice and repaint a destroyed view.
-    await sleep(30);
+    await sleep(200);
     expect(t.model.notice).toBe(COPIED_NOTICE);
   });
 
   test("a second identical notice gets its own full window", async () => {
-    const t = await setup({ copy: async () => true, noticeMs: 200 });
+    const t = await setup({ copy: async () => true, noticeMs: 600 });
     await t.model.submit("hello");
     await t.model.submit("/copy");
     await t.frameWith(COPIED_NOTICE);
     // Most of the first window is gone; a fresh notify() with the same text
-    // must restart the clock rather than inherit what is left of it.
-    await sleep(160);
+    // must restart the clock rather than inherit what is left of it. The
+    // margins are wide so a slow machine cannot decide the outcome.
+    await sleep(450);
     t.model.notify(COPIED_NOTICE);
     await t.renderOnce();
-    await sleep(100);
+    await sleep(300);
     await t.renderOnce();
     expect(t.model.notice).toBe(COPIED_NOTICE);
     expect(t.captureCharFrame()).toContain(COPIED_NOTICE);
@@ -2161,6 +2166,32 @@ describe("ChatView: select to copy", () => {
     const frame = await t.frameWith("Echo: hi");
     const y = rowOf(frame, "Echo: hi");
     await t.mockMouse.click(0, y);
+    await t.renderOnce();
+    expect(copied).toEqual([]);
+    expect(t.model.notice).toBeUndefined();
+  });
+
+  test("a selection that cannot report its text is treated as empty", async () => {
+    const copied: string[] = [];
+    const t = await setup({
+      delayMs: 10,
+      copy: async (x) => {
+        copied.push(x);
+        return true;
+      },
+    });
+    // Straight at the emitter: a throw from the renderer's selection object
+    // must not come back out of the handler.
+    const emitter = t.renderer as unknown as {
+      emit(event: string, payload: unknown): void;
+    };
+    expect(() =>
+      emitter.emit("selection", {
+        getSelectedText() {
+          throw new Error("no selection");
+        },
+      }),
+    ).not.toThrow();
     await t.renderOnce();
     expect(copied).toEqual([]);
     expect(t.model.notice).toBeUndefined();
