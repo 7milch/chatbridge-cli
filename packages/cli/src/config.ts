@@ -14,6 +14,9 @@ export interface CliConfig {
   /** Opening-phase overrides; each key is optional and wins over the
    * provider's `open` defaults. Seconds, like --timeout. */
   open?: { timeoutSec?: number; retries?: number };
+  /** Idle-close override; minutes of inactivity before the interactive
+   * session's browser is closed. 0 disables it. */
+  idle?: { timeoutMin?: number };
 }
 
 export interface ConfigLocation {
@@ -68,7 +71,7 @@ export async function loadConfig(
   if (typeof doc !== "object" || doc === null || Array.isArray(doc)) {
     throw invalid(file, "top level must be a JSON object");
   }
-  const { defaultProvider, shell, open } = doc as Record<string, unknown>;
+  const { defaultProvider, shell, open, idle } = doc as Record<string, unknown>;
   const cfg: CliConfig = {};
   if (defaultProvider !== undefined && !opts.providerPinned) {
     if (typeof defaultProvider !== "string") {
@@ -123,6 +126,26 @@ export async function loadConfig(
       out.retries = retries as number;
     }
     cfg.open = out;
+  }
+  if (idle !== undefined) {
+    if (typeof idle !== "object" || idle === null || Array.isArray(idle)) {
+      throw invalid(file, '"idle" must be an object');
+    }
+    const { timeoutMin } = idle as Record<string, unknown>;
+    const out: NonNullable<CliConfig["idle"]> = {};
+    if (timeoutMin !== undefined) {
+      // 0 is meaningful here, unlike open.timeoutSec: it turns the idle
+      // close off.
+      if (
+        typeof timeoutMin !== "number" ||
+        !Number.isFinite(timeoutMin) ||
+        timeoutMin < 0
+      ) {
+        throw invalid(file, '"idle.timeoutMin" must be a non-negative number');
+      }
+      out.timeoutMin = timeoutMin;
+    }
+    cfg.idle = out;
   }
   return cfg;
 }
