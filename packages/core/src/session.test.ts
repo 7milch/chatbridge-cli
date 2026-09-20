@@ -1,9 +1,13 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import type { Page, Provider } from "@chatbridge/provider";
 import type { AuthStore } from "@chatbridge/runtime";
-import type { RuntimeLike } from "./chat-session.js";
+import {
+  ChatSession,
+  type ChatSessionOptions,
+  type RuntimeLike,
+} from "./chat-session.js";
 import { LoginAbortedError } from "./errors.js";
-import { runLogin } from "./session.js";
+import { runLogin, runOneShot } from "./session.js";
 
 interface Fake {
   rt: RuntimeLike & { saved: number; closed: number; killed: number };
@@ -124,5 +128,37 @@ describe("runLogin", () => {
       runLogin(opts(f, { signal: ac.signal })),
     ).rejects.toBeInstanceOf(LoginAbortedError);
     expect(f.launches).toBe(0);
+  });
+});
+
+describe("runOneShot", () => {
+  /** The static is stubbed rather than a browser faked: what this test is
+   * about is the options one-shot hands to ChatSession.open. */
+  const realOpen = ChatSession.open;
+  afterEach(() => {
+    (ChatSession as { open: typeof realOpen }).open = realOpen;
+  });
+
+  test("disables the idle close, whatever the provider asks for", async () => {
+    let seen: ChatSessionOptions | undefined;
+    (ChatSession as { open: unknown }).open = async (o: ChatSessionOptions) => {
+      seen = o;
+      return {
+        send: async (prompt: string) => `reply:${prompt}`,
+        close: async () => {},
+      } as unknown as ChatSession;
+    };
+    const f = fake();
+    const reply = await runOneShot({
+      provider: { ...f.provider, idle: { timeoutMs: 60_000 } } as Provider,
+      authStore: {} as AuthStore,
+      prompt: "hi",
+      headless: true,
+      timeoutMs: 1_000,
+    });
+    expect(reply).toBe("reply:hi");
+    // 0 means "arm no watch": a one-shot session closes its browser as soon
+    // as the reply arrives, so a timer would only outlive the process.
+    expect(seen?.idle).toEqual({ timeoutMs: 0 });
   });
 });
