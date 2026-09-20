@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { fenceFor, formatAttachment, formatSize } from "./attachment.js";
+import {
+  fenceFor,
+  formatAttachment,
+  formatSize,
+  totalSizeProblem,
+} from "./attachment.js";
 
 describe("fenceFor", () => {
   test("three backticks when the content has none", () => {
@@ -37,5 +42,18 @@ describe("formatSize", () => {
     expect(formatSize(512)).toBe("512 B");
     expect(formatSize(2048)).toBe("2.0 KB");
     expect(formatSize(3 * 1024 * 1024)).toBe("3.0 MB");
+  });
+});
+
+describe("totalSizeProblem", () => {
+  test("names the total and the limit, with no trailing .0 on the limit", () => {
+    expect(totalSizeProblem(2 * 1024 * 1024)).toBe(
+      "attachments total 2.0 MB exceeds 1 MB",
+    );
+  });
+  test("uses formatSize for the total, whatever its unit", () => {
+    expect(totalSizeProblem(1536)).toBe(
+      "attachments total 1.5 KB exceeds 1 MB",
+    );
   });
 });

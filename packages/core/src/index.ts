@@ -37,6 +37,7 @@ export {
   fenceFor,
   formatAttachment,
   formatSize,
+  totalSizeProblem,
 } from "./attachment.js";
 export {
   type ClosableSession,

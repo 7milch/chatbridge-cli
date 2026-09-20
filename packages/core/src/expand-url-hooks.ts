@@ -4,7 +4,7 @@ import {
   MAX_FILE_BYTES,
   MAX_TOTAL_BYTES,
   formatAttachment,
-  formatSize,
+  totalSizeProblem,
 } from "./attachment.js";
 
 /** Every problem found in one message, thrown together so the user fixes
@@ -143,11 +143,7 @@ export async function resolveUrlHooks(
   }
   const total =
     (opts.alreadyBytes ?? 0) + resolved.reduce((n, r) => n + r.bytes, 0);
-  if (total > MAX_TOTAL_BYTES) {
-    problems.push(
-      `attachments total ${formatSize(total)} exceeds ${formatSize(MAX_TOTAL_BYTES).replace(".0", "")}`,
-    );
-  }
+  if (total > MAX_TOTAL_BYTES) problems.push(totalSizeProblem(total));
   if (problems.length > 0) throw new UrlHookError(problems);
   return resolved;
 }

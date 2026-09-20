@@ -8,7 +8,7 @@ import {
   UrlHookError,
   closeOrKill,
   formatAttachment,
-  formatSize,
+  totalSizeProblem,
 } from "@chatbridge/core";
 import type { Message, QueueEntry, State, Status } from "./protocol.js";
 
@@ -166,10 +166,7 @@ export class SessionController {
     }
     const total = this.pending.reduce((n, p) => n + p.bytes, 0) + a.bytes;
     if (total > MAX_TOTAL_BYTES) {
-      return {
-        ok: false,
-        reason: `attachments total ${formatSize(total)} exceeds ${formatSize(MAX_TOTAL_BYTES).replace(".0", "")}`,
-      };
+      return { ok: false, reason: totalSizeProblem(total) };
     }
     this.pending.push(a);
     this.emit();

@@ -44,6 +44,15 @@ export function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** The refusal line when a message carries too much. Shared: the TUI's
+ * `@file` mentions, the URL hooks and the VSCode composer must refuse in
+ * the same words, and one helper makes that a property of the code rather
+ * than of three copies of the same template. */
+export function totalSizeProblem(totalBytes: number): string {
+  const limit = formatSize(MAX_TOTAL_BYTES).replace(".0", "");
+  return `attachments total ${formatSize(totalBytes)} exceeds ${limit}`;
+}
+
 function languageOf(path: string): string {
   const file = path.replace(/:L\d+-L\d+$/, "");
   const dot = file.lastIndexOf(".");
