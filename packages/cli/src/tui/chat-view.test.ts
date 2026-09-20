@@ -16,6 +16,7 @@ import {
   DEAD_GUIDE,
   GUIDE,
   HELD_GUIDE,
+  IDLE_CLOSED_GUIDE,
   LOGIN_STATUS,
   MAX_INPUT_ROWS,
   MAX_QUEUE_ROWS,
@@ -1316,6 +1317,18 @@ describe("ChatView shell mode", () => {
     expect(idleGuide(false, 0, 1)).toBe(QUEUE_GUIDE);
     expect(idleGuide(false, 2, 1)).toBe(`📎 2 held · ${QUEUE_GUIDE}`);
     expect(idleGuide(true, 0, 1)).toBe(SHELL_GUIDE);
+  });
+
+  test("after an idle close the guide says the next prompt reopens", () => {
+    expect(idleGuide(false, 0, 0, true)).toBe(IDLE_CLOSED_GUIDE);
+    expect([...IDLE_CLOSED_GUIDE].length).toBeLessThanOrEqual(78);
+    // Shell mode and a waiting queue keep their own guides.
+    expect(idleGuide(true, 0, 0, true)).toBe(SHELL_GUIDE);
+    expect(idleGuide(false, 0, 2, true)).toBe(QUEUE_GUIDE);
+    // The idle close outranks a held result, which keeps its counter prefix.
+    expect(idleGuide(false, 2, 0, true)).toBe(
+      `\ud83d\udcce 2 held \u00b7 ${IDLE_CLOSED_GUIDE}`,
+    );
   });
 
   test("a shell that cannot start is marked on its entry and explained after it", async () => {

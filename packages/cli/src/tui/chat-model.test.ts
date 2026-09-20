@@ -14,7 +14,13 @@ import type {
   RunningCommand,
   ShellResult,
 } from "../shell/run-command.js";
-import { ChatModel, type ChatSessionLike } from "./chat-model.js";
+import {
+  ChatModel,
+  type ChatModelOptions,
+  type ChatSessionLike,
+  IDLE_SEPARATOR,
+  NEW_CHAT_SEPARATOR,
+} from "./chat-model.js";
 import { modelWith } from "./test-helpers.js";
 
 function deferred<T>() {
@@ -1884,4 +1890,121 @@ test("a UrlHookError is handled like a MentionError", async () => {
   expect(model.messages).toEqual([{ role: "error", text: "https://w/x: 403" }]);
   expect(model.status).toBe("idle");
   expect(model.fatal).toBeUndefined();
+});
+
+describe("idle close", () => {
+  /** A model whose opens hand back the idle-expiry callback of each session,
+   * so the test can fire an expiry exactly as core would. */
+  async function idleHarness(opts: Partial<ChatModelOptions> = {}) {
+    const sessions = [fakeSession("a"), fakeSession("b")];
+    const expire: Array<() => void> = [];
+    let n = 0;
+    const model = new ChatModel({
+      login: async () => {},
+      clearAuth: async () => {},
+      closeTimeoutMs: 20,
+      commands: [{ name: "model", description: "Show the model" }],
+      ...opts,
+      openSession: async (_report, onIdleExpired) => {
+        expire.push(onIdleExpired);
+        const s = sessions[n++];
+        if (s === undefined) throw new Error("no session queued");
+        return s.session;
+      },
+    });
+    await model.ready;
+    return { model, sessions, expire };
+  }
+
+  test("expiry drops the session and the next prompt reopens and sends", async () => {
+    const h = await idleHarness();
+    nth(h.expire, 0)();
+    expect(h.model.idleClosed).toBe(true);
+    expect(h.model.session).toBeUndefined();
+    expect(h.model.status).toBe("idle");
+    // Core closed the browser already; the model must not close it again.
+    expect(nth(h.sessions, 0).state.closed).toBe(0);
+
+    expect(await h.model.submit("hello")).toBe(true);
+    await h.model.pendingReset;
+    await tick();
+    expect(h.model.idleClosed).toBe(false);
+    expect(h.model.session).toBe(nth(h.sessions, 1).session);
+    expect(
+      h.model.messages.some(
+        (m) => m.role === "separator" && m.text === IDLE_SEPARATOR,
+      ),
+    ).toBe(true);
+    expect(nth(h.sessions, 1).calls).toEqual(["b:hello"]);
+    // The old session is still not touched by the model.
+    expect(nth(h.sessions, 0).state.closed).toBe(0);
+    expect(nth(h.sessions, 0).state.killed).toBe(0);
+  });
+
+  test("a stale session's expiry is ignored", async () => {
+    const h = await idleHarness();
+    await h.model.reset();
+    expect(h.model.session).toBe(nth(h.sessions, 1).session);
+    nth(h.expire, 0)(); // the session the reset already closed
+    expect(h.model.idleClosed).toBe(false);
+    expect(h.model.session).toBe(nth(h.sessions, 1).session);
+  });
+
+  test("/new clears the flag", async () => {
+    const h = await idleHarness();
+    nth(h.expire, 0)();
+    expect(await h.model.submit("/new")).toBe(true);
+    expect(h.model.idleClosed).toBe(false);
+    expect(h.model.session).toBe(nth(h.sessions, 1).session);
+    expect(h.model.messages.at(-1)).toEqual({
+      role: "separator",
+      text: NEW_CHAT_SEPARATOR,
+    });
+  });
+
+  test("Ctrl+R (reset) clears the flag", async () => {
+    const h = await idleHarness();
+    nth(h.expire, 0)();
+    await h.model.reset();
+    expect(h.model.idleClosed).toBe(false);
+    expect(h.model.session).toBe(nth(h.sessions, 1).session);
+  });
+
+  test("a provider /command typed while idle-closed reopens first", async () => {
+    const h = await idleHarness();
+    nth(h.expire, 0)();
+    expect(await h.model.submit("/model now")).toBe(true);
+    // Nothing ran against a closed session.
+    expect(nth(h.sessions, 0).commands).toEqual([]);
+    await h.model.pendingReset;
+    await tick();
+    expect(h.model.idleClosed).toBe(false);
+    expect(nth(h.sessions, 1).commands).toEqual([
+      { name: "model", args: "now" },
+    ]);
+  });
+
+  test("a shell command run while idle-closed holds its result", async () => {
+    const runner = fakeRunner();
+    const h = await idleHarness({ runCommand: runner.runCommand });
+    nth(h.expire, 0)();
+    // requireSession() would throw; the idle close deliberately leaves none,
+    // and a shell command does not need one.
+    const p = h.model.runShell("echo hi");
+    await tick();
+    expect(h.model.status).toBe("running");
+    runner.emit("hi\n");
+    runner.finish();
+    expect(await p).toBe(true);
+    // There is no session to auto-send to, so the result waits like
+    // autoSend: false — no InvalidStateError, nothing lost.
+    expect(h.model.status).toBe("idle");
+    expect(h.model.heldResults.length).toBe(1);
+    expect(h.model.idleClosed).toBe(true);
+
+    expect(await h.model.submit("look")).toBe(true);
+    await h.model.pendingReset;
+    await tick();
+    expect(nth(h.sessions, 1).calls[0]).toContain("hi\n");
+  });
 });

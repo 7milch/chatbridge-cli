@@ -40,7 +40,7 @@ export interface InteractiveOptions extends ChatSessionOptions {
   /** Test-only: replaces the working-directory index. */
   index?: FileIndex;
   /** Test-only: replaces ChatSession.open. */
-  createSession?: () => Promise<ChatSessionLike>;
+  createSession?: ChatModelOptions["openSession"];
   /** Test-only: replaces runLogin. */
   login?: ChatModelOptions["login"];
 }
@@ -166,11 +166,17 @@ export async function runInteractive(
     model = new ChatModel({
       openSession:
         opts.createSession ??
-        ((report) =>
+        ((report, onIdleExpired) =>
           // Opening messages paint the live status row; everything the
-          // session reports later (from close()) keeps going to the
-          // buffering onProgress above.
-          ChatSession.open({ ...sessionOpts, onOpenProgress: report })),
+          // session reports later (from close(), including the idle one)
+          // keeps going to the buffering onProgress above. Each session
+          // gets its own expiry callback, so the model can tell a stale
+          // session's expiry from the current one's.
+          ChatSession.open({
+            ...sessionOpts,
+            onOpenProgress: report,
+            onIdleExpired,
+          })),
       login:
         opts.login ??
         (({ signal, onProgress: report }) =>

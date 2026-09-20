@@ -9,6 +9,7 @@ import {
 } from "@chatbridge/core";
 import { type CliConfig, configPath, loadConfig } from "./config.js";
 import { describeError, exitCodeFor } from "./exit-codes.js";
+import { resolveIdleOptions } from "./idle-options.js";
 import { resolveOpenOptions } from "./open-options.js";
 import { resolveProvider } from "./resolve-provider.js";
 import { type ShellConfig, resolveShellConfig } from "./shell/shell-config.js";
@@ -256,6 +257,9 @@ export function createCli(opts: CreateCliOptions) {
         });
         const provider = await getProvider(values.provider, config);
         const open = resolveOpenOptions({ provider, config, env: process.env });
+        // Interactive only: one-shot never keeps a browser open long
+        // enough for the idle close to mean anything.
+        const idle = resolveIdleOptions({ provider, config, env: process.env });
         const authStore = createAuthStore({
           configDir,
           providerName: provider.name,
@@ -274,6 +278,7 @@ export function createCli(opts: CreateCliOptions) {
           headless: !values.headful,
           timeoutMs,
           open,
+          idle,
           onProgress: progress,
         });
         return result.fatal === undefined ? 0 : reportError(result.fatal);

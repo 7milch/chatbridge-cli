@@ -31,6 +31,11 @@ export const HELD_GUIDE =
 export const DEAD_GUIDE = "Ctrl+R reopen · /login · Ctrl+C quit";
 /** Idle or dead guide while queued entries are waiting. */
 export const QUEUE_GUIDE = "Up take back · Ctrl+R reopen · Ctrl+C quit";
+
+/** Shown after the idle close took the browser; there is nothing to do
+ * about it, so the guide is the explanation. */
+export const IDLE_CLOSED_GUIDE =
+  "Browser closed after being idle · your next prompt reopens it";
 /** Rows the queue list may take; a longer queue ends with a "+N more" row. */
 export const MAX_QUEUE_ROWS = 5;
 export const RESETTING_STATUS = "Reopening browser...";
@@ -62,14 +67,17 @@ export function idleGuide(
   shellMode: boolean,
   held: number,
   queued: number,
+  idleClosed = false,
 ): string {
   const base = shellMode
     ? SHELL_GUIDE
     : queued > 0
       ? QUEUE_GUIDE
-      : held > 0
-        ? HELD_GUIDE
-        : GUIDE;
+      : idleClosed
+        ? IDLE_CLOSED_GUIDE
+        : held > 0
+          ? HELD_GUIDE
+          : GUIDE;
   return held === 0 ? base : `📎 ${held} held · ${base}`;
 }
 
@@ -403,7 +411,12 @@ export class ChatView {
         this.stopSpinner();
         this.status.content = styled(
           theme.muted(
-            idleGuide(this.shell, this.model.heldResults.length, this.queued),
+            idleGuide(
+              this.shell,
+              this.model.heldResults.length,
+              this.queued,
+              this.model.idleClosed,
+            ),
           ),
         );
     }
