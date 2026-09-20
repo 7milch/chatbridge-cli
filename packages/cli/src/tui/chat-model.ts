@@ -259,6 +259,10 @@ export class ChatModel {
     const session = await this.openSession(report, () => {
       if (holder.opened !== undefined) this.idleExpired(holder.opened);
     });
+    // Both assignments must stay synchronous after this await: an expiry
+    // that fires between `holder.opened` and the caller's `this.current`
+    // would find a session identity that does not match and be dropped,
+    // leaving the model holding a browser core has already closed.
     holder.opened = session;
     return session;
   }
@@ -421,6 +425,20 @@ export class ChatModel {
       }
       this.onChange();
       return false;
+    }
+    // The idle watch is only paused inside session.send(), so the expiry can
+    // land while the expansion above is running (file reads and URL hooks
+    // take up to `timeoutMs` each). The session is gone by now, so send the
+    // line the way one typed after the close is sent: back to the front of
+    // the queue, and let drain() reopen and re-run it. Nothing is pushed to
+    // the history yet, so the re-run produces exactly one user entry.
+    if (this.idleClosed) {
+      this.queue.unshift(prompt);
+      // settle(), not a bare status assignment: a `/login` started during
+      // the expansion owns the status, and its own reset drains the queue.
+      this.settle("idle");
+      this.onChange();
+      return true;
     }
     const message: Message = { role: "user", text: prompt };
     if (expansion.attachments.length > 0) {

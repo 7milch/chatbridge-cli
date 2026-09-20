@@ -2060,4 +2060,62 @@ describe("idle close", () => {
     expect(h.model.idleClosed).toBe(false);
     expect(nth(h.sessions, 1).calls).toEqual(["b:later"]);
   });
+
+  test("an expiry during prompt expansion re-queues the prompt and reopens", async () => {
+    const gate = deferred<void>();
+    let gated = true;
+    const runner = fakeRunner();
+    const h = await idleHarness({
+      runCommand: runner.runCommand,
+      shell: { leadIn: "check", autoSend: false },
+      expand: async (text) => {
+        if (gated) {
+          gated = false;
+          await gate.promise;
+        }
+        return { prompt: text, attachments: [] };
+      },
+    });
+    // A held shell result waiting to ride out with the next message.
+    const shell = h.model.runShell("echo hi");
+    await tick();
+    runner.emit("hi\n");
+    runner.finish();
+    expect(await shell).toBe(true);
+    expect(h.model.heldResults.length).toBe(1);
+
+    const rejections: unknown[] = [];
+    const submitted = h.model.submit("hello").catch((err: unknown) => {
+      rejections.push(err);
+      return false;
+    });
+    await tick();
+    expect(h.model.status).toBe("busy");
+    // The idle watch is only paused inside session.send(), so it can expire
+    // while the expansion (file reads, URL hooks) is still running.
+    nth(h.expire, 0)();
+    expect(h.model.idleClosed).toBe(true);
+    gate.resolve();
+    expect(await submitted).toBe(true);
+    expect(rejections).toEqual([]);
+
+    await h.model.pendingReset;
+    await tick();
+    expect(h.model.idleClosed).toBe(false);
+    expect(h.model.status).toBe("busy"); // the reopened turn is in flight
+    expect(h.model.queue).toEqual([]);
+    expect(
+      h.model.messages.some(
+        (m) => m.role === "separator" && m.text === IDLE_SEPARATOR,
+      ),
+    ).toBe(true);
+    // Sent exactly once, and the user entry is in the history exactly once.
+    expect(nth(h.sessions, 1).calls.length).toBe(1);
+    const sent = nth(h.sessions, 1).calls[0] ?? "";
+    expect(sent).toStartWith("b:hello");
+    expect(sent).toContain("hi\n");
+    expect(h.model.messages.filter((m) => m.role === "user")).toEqual([
+      { role: "user", text: "hello" },
+    ]);
+  });
 });
