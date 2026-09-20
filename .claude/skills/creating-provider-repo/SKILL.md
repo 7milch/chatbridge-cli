@@ -207,6 +207,20 @@ exactly one element on the observation date.
 | `commands` (optional, framework ≥ 0.9.0) | `/name` commands for the TUI and VSCode: `{ name, description, run(page, args) }` returning `{ kind: "show", text }` or `{ kind: "send", prompt }`. Names are lower-case letters, never a built-in. Not available in one-shot mode. |
 | `urlHooks` (optional, framework ≥ 0.9.0) | `{ match: RegExp | (url) => boolean, resolve(url) => { label, content } }`. Fetching and credentials are the provider's (a script with a PAT is fine); the framework only appends the content as an attachment. Runs under the session timeout; `MAX_FILE_BYTES` / `MAX_TOTAL_BYTES` apply. |
 
+Two more optional fields tune the framework's browser handling:
+
+- `browser: { reducedMotion: "reduce" | "no-preference" }` — emulated
+  `prefers-reduced-motion` for every context. Leave it at the default
+  `"reduce"`: an idle animating page burns CPU for the whole life of the
+  session. Write `waitForResponse` against DOM state (a class, a
+  `data-state`, the send button coming back), never against a running
+  animation, and the opt-out is never needed.
+- `idle: { timeoutMs }` — default idle lifetime of an interactive session
+  (24 h; `0` disables). After it the browser is closed and the UI reopens
+  it on the next prompt, as a new chat. The user's config key `idle`, the
+  `CHATBRIDGE_IDLE_TIMEOUT` environment variable and the VSCode
+  `idleTimeoutMinutes` setting override it.
+
 ## Traps seen in the wild
 
 | Symptom | Cause | Fix |

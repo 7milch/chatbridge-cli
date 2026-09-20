@@ -259,6 +259,32 @@ needs; Chromium itself is downloaded by that button, never packaged. The
 example's own `package` script uses `--no-dependencies` and is only a CI
 smoke test. Full steps: `packages/vscode/README.md`.
 
+## Long-running sessions
+
+An open interactive session keeps a real browser running. That is not free:
+a headless Chromium on macOS rasterises in software and Playwright disables
+background throttling, so a chat page that keeps animating can hold a core
+busy for as long as the session stays open.
+
+Two things keep that in check:
+
+- Every browser context asks for `prefers-reduced-motion: reduce`, so pages
+  that honour the preference stop animating while you are not typing. A
+  provider that needs the animations can opt out with
+  `browser: { reducedMotion: "no-preference" }`.
+- A session that has seen no turn for 24 hours closes its browser (saving
+  the auth state first). The UI says so, and your next prompt reopens it —
+  as a new chat, since the service-side conversation is not restored.
+
+Change or disable the idle close, longest-winning-last:
+
+- `config.json`: `{ "idle": { "timeoutMin": 120 } }` — `0` disables it.
+- Environment: `CHATBRIDGE_IDLE_TIMEOUT=120` (minutes, `0` disables).
+- VSCode: the `<id>.idleTimeoutMinutes` setting.
+
+One-shot mode (`-p`) is unaffected: it closes the browser when the reply
+arrives.
+
 ## Authentication
 
 The framework never stores usernames or passwords. You log in yourself in a headful browser, and the resulting browser authentication state is saved and reused on subsequent runs.
@@ -326,6 +352,26 @@ repeat. A `show` result is printed; a `send` result is sent as an ordinary
 turn while the history keeps the `/command` line you typed. A URL hook runs
 under the session timeout and its result is subject to the same size limits
 as `@file` attachments.
+
+A provider may also set two defaults for the framework's browser handling:
+
+```ts
+export default defineProvider({
+  // ...
+  // Emulated prefers-reduced-motion for every context (default "reduce").
+  browser: { reducedMotion: "no-preference" },
+  // Idle lifetime of an interactive session (default 24 h; 0 disables).
+  idle: { timeoutMs: 2 * 60 * 60 * 1000 },
+});
+```
+
+`reducedMotion` defaults to `"reduce"` because an idle animating page is
+rasterised on the CPU for as long as the session is open; opt out only when
+the service misbehaves without its animations — and prefer completion
+detection that keys on DOM state rather than on a running animation, which
+never needs the opt-out. The user's `idle` config key, the
+`CHATBRIDGE_IDLE_TIMEOUT` environment variable and the VSCode setting
+override `idle.timeoutMs`.
 
 ## License
 

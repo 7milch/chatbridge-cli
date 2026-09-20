@@ -30,6 +30,11 @@ export const { activate, deactivate } = createExtension({
   resolvable from the extension's own `node_modules`.
 - `timeoutMs` — per-step timeout default, in milliseconds (default
   `120000`). The user's `<id>.timeoutSec` setting overrides it.
+- The idle close has no `createExtension` option: it comes from the
+  provider's `idle.timeoutMs` (default 24 h), and the user's
+  `<id>.idleTimeoutMinutes` setting overrides it (`0` disables). When it
+  fires, the chat view shows a `closed after idle` separator and the next
+  message reopens the browser as a new chat.
 - `headless` — whether sessions launch a headless browser (default `true`).
   The user's `<id>.headless` setting overrides it.
 - `ui` — optional vendor branding, all fields plain text (no HTML, no
@@ -88,7 +93,7 @@ The vendor's `package.json` must contribute, with `<id>` replaced by the
 - Commands `<id>.login`, `<id>.logout`, `<id>.newChat`, `<id>.reopen`,
   `<id>.installBrowser`, `<id>.sendSelection`, `<id>.sendFile`, `<id>.focus`
 - Settings `<id>.headless` (boolean), `<id>.timeoutSec` (number) and
-  `<id>.idleTimeoutMinutes` (number)
+  `<id>.idleTimeoutMinutes` (number; `0` disables the idle close)
 
 Activation checks exactly three things and throws a message listing every
 missing ID:
