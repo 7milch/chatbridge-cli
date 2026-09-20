@@ -235,6 +235,30 @@ async function setup(
     }
     throw new Error(`no frame contained ${JSON.stringify(text)}`);
   }
+  /** Like `frameWith`, but also waits for `without` to be gone. OpenTUI's
+   * MarkdownRenderable conceals markup asynchronously (tree-sitter parsing
+   * settles over several render passes), so the first frame containing
+   * `text` can still show raw `##`/`**`/`` ``` `` for a beat, especially on a
+   * slower CI runner; poll until both conditions hold before asserting. */
+  async function settledFrame(
+    text: string,
+    without: string[],
+    tries = 250,
+  ): Promise<string> {
+    let last = "";
+    for (let i = 0; i < tries; i++) {
+      await sleep(20);
+      await t.renderOnce();
+      const f = t.captureCharFrame();
+      last = f;
+      if (f.includes(text) && without.every((w) => !f.includes(w))) return f;
+    }
+    throw new Error(
+      `no settled frame contained ${JSON.stringify(text)} without ${JSON.stringify(
+        without,
+      )}; last frame:\n${last}`,
+    );
+  }
   /** A lone ESC byte is held by the input parser until it can rule out an
    * escape sequence, so the key lands some time after the press. Waits for
    * the effect — `candidate` gone from the frame — instead of a fixed delay. */
@@ -250,7 +274,7 @@ async function setup(
       `popup still showed ${JSON.stringify(candidate)} after Escape`,
     );
   }
-  return { ...t, model, view, frameWith, escapePopup };
+  return { ...t, model, view, frameWith, settledFrame, escapePopup };
 }
 
 describe("ChatView", () => {
@@ -1855,8 +1879,9 @@ describe("ChatView: markdown", () => {
     await t.mockInput.typeText("hi");
     t.mockInput.pressEnter();
     // The prose block only paints once the asynchronous tree-sitter parse
-    // lands, so poll on it rather than on the code block, which paints first.
-    const frame = await t.frameWith("bold item");
+    // lands, so wait for it settled (text present, markers gone) rather
+    // than asserting on the first frame that merely has the text.
+    const frame = await t.settledFrame("bold item", ["##", "**", "```"]);
     expect(frame).toContain("Title");
     expect(frame).toContain("const a = 1;");
     // Concealment is asynchronous; the markers are gone once it lands.
@@ -1902,7 +1927,10 @@ describe("ChatView: markdown", () => {
     s.emit("## Title\n\n- a");
     await t.frameWith("Title");
     s.resolve("## Title\n\n- **done**");
-    const done = await t.frameWith("done");
+    // Concealment lands over several render passes; wait for it to settle
+    // before asserting no raw markup remains, or a slower CI runner can
+    // catch the frame mid-conceal (heading still raw, list already done).
+    const done = await t.settledFrame("done", ["##", "**"]);
     // Promoted in place: one heading, no leftover syntax, no pending row.
     expect(done.split("Title").length - 1).toBe(1);
     expect(done).not.toContain("##");
@@ -1922,7 +1950,9 @@ describe("ChatView: markdown", () => {
     await t.frameWith("Half");
     s.reject(new ResponseTimeoutError("Timed out."));
     await t.frameWith("Timed out.");
-    const frame = await t.frameWith("Half");
+    // Concealment of the already-streamed heading markup is asynchronous;
+    // wait for it to settle before asserting the raw "## Half" is gone.
+    const frame = await t.settledFrame("Half", ["## Half"]);
     expect(frame).toContain("Timed out.");
     expect(frame).not.toContain("## Half");
     expect(frame).toContain(INCOMPLETE_NOTE);
