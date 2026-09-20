@@ -862,6 +862,15 @@ export class ChatView {
       void this.model.reset();
       return;
     }
+    // The history never takes focus (the renderer runs with autoFocus off),
+    // so nothing else claims these keys; they page it from wherever the
+    // cursor is. A popup does not use them either, so it stays open.
+    if (key.name === "pageup" || key.name === "pagedown") {
+      key.preventDefault();
+      const page = Math.max(1, this.history.height - 1);
+      this.history.scrollBy(key.name === "pageup" ? -page : page);
+      return;
+    }
     if (this.shell && this.input.plainText === "") {
       const exits =
         key.name === "escape" ||

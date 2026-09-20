@@ -47,6 +47,20 @@ export interface InteractiveOptions extends ChatSessionOptions {
   copy?: ChatModelOptions["copy"];
 }
 
+/**
+ * The renderer options the TUI runs under. `autoFocus: false` is what keeps
+ * the text cursor in the chat input: with it on, OpenTUI's left-mousedown
+ * handler focuses the first focusable ancestor of whatever was clicked, so
+ * a click on the history would take focus off the textarea and typing would
+ * stop reaching it. Wheel scrolling and mouse selection do not go through
+ * the focus path, so they are unaffected. Exported so the view's tests can
+ * build their renderer the same way; they would otherwise prove nothing.
+ */
+export const RENDERER_OPTIONS = {
+  exitOnCtrlC: false,
+  autoFocus: false,
+} as const;
+
 const CLOSE_TIMEOUT_MS = 5_000;
 const CLOSING_STATUS = "Closing browser...";
 
@@ -161,7 +175,7 @@ export async function runInteractive(
   const sessionOpts: InteractiveOptions = { ...opts, onProgress };
   const index = opts.index ?? (await FileIndex.build({ cwd: process.cwd() }));
   const renderer = await (
-    opts.createRenderer ?? (() => createCliRenderer({ exitOnCtrlC: false }))
+    opts.createRenderer ?? (() => createCliRenderer({ ...RENDERER_OPTIONS }))
   )();
   let view: ChatView | undefined;
   let model: ChatModel | undefined;

@@ -37,11 +37,17 @@ import {
   idleGuide,
 } from "./chat-view.js";
 import { POPUP_HINT } from "./mention-popup.js";
+import { RENDERER_OPTIONS } from "./run-interactive.js";
 import { type ResolvedSpinner, resolveSpinner } from "./spinner.js";
 import { modelWith } from "./test-helpers.js";
 import { styled, theme } from "./theme.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** The mock keyboard has no page keys; these are the sequences a legacy
+ * terminal sends, which OpenTUI's parser reports as `pageup`/`pagedown`. */
+const PAGE_UP = "\u001b[5~";
+const PAGE_DOWN = "\u001b[6~";
 
 function echoSession(delayMs: number): ChatSessionLike {
   return {
@@ -174,6 +180,9 @@ async function setup(
     width: opts.width ?? 80,
     height: 20,
     kittyKeyboard: opts.kittyKeyboard ?? false,
+    // Production's setting: without it a click would steal focus here but
+    // not in the real TUI, and the focus tests below would prove nothing.
+    autoFocus: RENDERER_OPTIONS.autoFocus,
   });
   const model = await modelWith(
     opts.session ?? echoSession(opts.delayMs ?? 100),
@@ -2189,5 +2198,103 @@ describe("ChatView: select to copy", () => {
     t.view.destroy();
     await t.mockMouse.drag(0, y, 8, y);
     expect(copied).toEqual([]);
+  });
+});
+
+describe("ChatView: input focus", () => {
+  /** The renderer option is what keeps focus put; production and the tests
+   * must agree on it, so `setup()` above reads it from the same constant
+   * run-interactive.ts passes to createCliRenderer. */
+  test("the production renderer options turn autoFocus off", () => {
+    expect(RENDERER_OPTIONS.autoFocus).toBe(false);
+  });
+
+  test("typing still reaches the input after clicking the history", async () => {
+    const t = await setup({ delayMs: 10 });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("Echo: hi");
+    const y = frame.split("\n").findIndex((l) => l.includes("Echo: hi"));
+    await t.mockMouse.click(2, y);
+    await t.renderOnce();
+    await t.mockInput.typeText("again");
+    expect(t.view.inputText).toBe("again");
+  });
+
+  test("clicking the header or the status line does not steal focus", async () => {
+    const t = await setup({ delayMs: 10 });
+    const lastRow = t.captureCharFrame().split("\n").length - 1;
+    await t.mockMouse.click(2, 0);
+    await t.renderOnce();
+    await t.mockMouse.click(2, lastRow);
+    await t.renderOnce();
+    await t.mockInput.typeText("still typing");
+    expect(t.view.inputText).toBe("still typing");
+  });
+
+  /** Eight exchanges: far more than the 20-row viewport holds. */
+  async function fillHistory(t: Awaited<ReturnType<typeof setup>>) {
+    for (let i = 0; i < 8; i++) {
+      await t.mockInput.typeText(`line${i}`);
+      t.mockInput.pressEnter();
+      await t.frameWith(`Echo: line${i}`);
+    }
+  }
+
+  /** Pages the history until `text` shows, or gives up at the end of the
+   * history — more presses than there are pages, so it also exercises a
+   * PgUp at the very top and a PgDn at the very bottom. */
+  async function pageTo(
+    t: Awaited<ReturnType<typeof setup>>,
+    key: string,
+    text: string,
+  ): Promise<string> {
+    let frame = "";
+    for (let i = 0; i < 8; i++) {
+      t.mockInput.pressKey(key);
+      await sleep(20);
+      await t.renderOnce();
+      frame = t.captureCharFrame();
+    }
+    expect(frame).toContain(text);
+    return frame;
+  }
+
+  test("PgUp/PgDn scroll the history while the input has focus", async () => {
+    const t = await setup({ delayMs: 10 });
+    await fillHistory(t);
+    // The first exchange has scrolled off the bottom-stuck viewport.
+    expect(t.captureCharFrame()).not.toContain("line0");
+    await pageTo(t, PAGE_UP, "line0");
+    // Scrolling back is what the keys did, not a re-render: the last reply
+    // is off screen now.
+    expect(t.captureCharFrame()).not.toContain("Echo: line7");
+    await pageTo(t, PAGE_DOWN, "Echo: line7");
+    // Typing never stopped reaching the input while paging.
+    await t.mockInput.typeText("typed");
+    expect(t.view.inputText).toBe("typed");
+  });
+
+  test("a new reply follows the bottom again after PgUp then PgDn", async () => {
+    const t = await setup({ delayMs: 10 });
+    await fillHistory(t);
+    await pageTo(t, PAGE_UP, "line0");
+    await pageTo(t, PAGE_DOWN, "Echo: line7");
+    await t.mockInput.typeText("after");
+    t.mockInput.pressEnter();
+    expect(await t.frameWith("Echo: after")).toContain("Echo: after");
+  });
+
+  test("PgUp/PgDn are ignored once the view is torn down", async () => {
+    const t = await setup({ delayMs: 10 });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    await t.frameWith("Echo: hi");
+    t.view.destroy();
+    // No write may reach the renderables after destroy().
+    expect(() => {
+      t.mockInput.pressKey(PAGE_UP);
+      t.mockInput.pressKey(PAGE_DOWN);
+    }).not.toThrow();
   });
 });

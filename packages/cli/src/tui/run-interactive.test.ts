@@ -7,6 +7,7 @@ import { FileIndex } from "../mentions/file-index.js";
 import type { ShellResult } from "../shell/run-command.js";
 import { ChatView, LOGIN_STATUS } from "./chat-view.js";
 import {
+  RENDERER_OPTIONS,
   runInteractive,
   teardownExitMessage,
   waitForQuit,
@@ -521,6 +522,49 @@ describe("runInteractive", () => {
     t.mockInput.pressKey("c", { ctrl: true });
     expect(await run).toEqual({});
     expect(copied).toEqual(["Echo: hi"]);
+  });
+
+  test("the view gets the copy seam too: a selection reaches it", async () => {
+    const t = await createTestRenderer({
+      width: 80,
+      height: 20,
+      autoFocus: RENDERER_OPTIONS.autoFocus,
+    });
+    const copied: string[] = [];
+    const run = runInteractive({
+      ...sessionOpts().opts,
+      createSession: async () => ({
+        send: async (prompt: string) => `Echo: ${prompt}`,
+        close: async () => {},
+        kill: async () => {},
+      }),
+      createRenderer: async () => t.renderer,
+      index: FileIndex.fromPaths([]),
+      copy: async (text) => {
+        copied.push(text);
+        return true;
+      },
+    });
+    await waitFor(t, "Ctrl+R reopen");
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    await waitFor(t, "Echo: hi");
+    // A mouse drag is what this is in real life, but runInteractive calls
+    // renderer.start() and the live loop repaints between the press and the
+    // release, so the mock mouse's anchor and focus land on different rows
+    // and the selection comes back empty (verified A/B: the same drag in
+    // chat-view.test.ts, on a renderer that was never started, selects the
+    // reply). The renderer's "selection" event is the next thing down that
+    // path, and only the view listens for it: this proves runInteractive
+    // handed `copy` to ChatView and not just to the model.
+    (t.renderer as unknown as { emit(e: string, v: unknown): void }).emit(
+      "selection",
+      { getSelectedText: () => "Echo: hi" },
+    );
+    await waitFor(t, "copied");
+    expect(copied).toEqual(["Echo: hi"]);
+    t.mockInput.pressKey("c", { ctrl: true });
+    expect(await run).toEqual({});
   });
 
   test("teardown waits for an idle close that is still saving auth state", async () => {
