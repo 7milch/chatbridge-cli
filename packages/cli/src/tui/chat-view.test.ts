@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { ResponseTimeoutError } from "@chatbridge/core";
 import type { CommandInfo } from "@chatbridge/core/slash-commands";
 import type { StyledText } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
@@ -18,6 +19,7 @@ import {
   GUIDE,
   HELD_GUIDE,
   IDLE_CLOSED_GUIDE,
+  INCOMPLETE_NOTE,
   LOGIN_STATUS,
   MAX_INPUT_ROWS,
   MAX_QUEUE_ROWS,
@@ -483,7 +485,16 @@ describe("ChatView", () => {
     await t.mockInput.typeText("hello");
     t.mockInput.pressEnter();
     const busy = await t.frameWith("Thinking…");
-    expect(busy).toMatch(/[●○]{3} Thinking… {2}\ds \/ 2s/);
+    // The frame and the label live on the pending row now; the status line
+    // carries the elapsed time against the budget.
+    expect(busy).toMatch(/[●○]{3} Thinking… {2}\ds/);
+    const status =
+      busy
+        .split("\n")
+        .filter((l) => l.trim() !== "")
+        .at(-1) ?? "";
+    expect(status).toMatch(/\ds \/ 2s/);
+    expect(status).not.toContain("Thinking…");
     await t.frameWith("Echo: hello");
     expect(t.captureCharFrame()).toContain(GUIDE);
   });
@@ -512,7 +523,7 @@ describe("ChatView", () => {
     await t.mockInput.typeText("hello");
     t.mockInput.pressEnter();
     const busy = await t.frameWith("Working…");
-    expect(busy).toMatch(/(<>|><) Working… {2}\ds \/ 2s/);
+    expect(busy).toMatch(/(<>|><) Working… {2}\ds/);
     expect(busy).not.toContain("Thinking…");
   });
 
@@ -604,7 +615,7 @@ describe("ChatView", () => {
     await t.mockInput.typeText("hello");
     t.mockInput.pressEnter();
     const busy = await t.frameWith("Tinted…");
-    expect(busy).toMatch(/\*\* Tinted… {2}\ds \/ 2s/);
+    expect(busy).toMatch(/\*\* Tinted… {2}\ds/);
   });
 
   test("an empty label list shows the frame alone", async () => {
@@ -615,7 +626,7 @@ describe("ChatView", () => {
     await t.mockInput.typeText("hello");
     t.mockInput.pressEnter();
     const busy = await t.frameWith("## ");
-    expect(busy).toMatch(/## {3}\ds \/ 2s/);
+    expect(busy).toMatch(/## {3}\ds/);
   });
 
   test("a renderer destroyed mid-turn stops the indicator instead of writing", async () => {
@@ -1616,5 +1627,184 @@ describe("ChatView queue", () => {
     expect(await t.frameWith("0s /")).toContain("0s /");
     replies[1]?.resolve("reply two");
     await t.frameWith("reply two");
+  });
+});
+
+describe("ChatView: pending row", () => {
+  /** A session whose turns are resolved by the test, with the `onPartial`
+   * callback of the turn in flight captured so partials can be emitted. */
+  function streamingSession() {
+    let current: ReturnType<typeof deferred<string>> | undefined;
+    let onPartial: ((text: string) => void) | undefined;
+    const session: ChatSessionLike = {
+      send(_prompt, opts) {
+        const d = deferred<string>();
+        current = d;
+        onPartial = opts?.onPartial;
+        return d.promise;
+      },
+      async close() {},
+      async kill() {},
+    };
+    return {
+      session,
+      emit: (text: string) => onPartial?.(text),
+      resolve: (text: string) => current?.resolve(text),
+      reject: (err: unknown) => current?.reject(err),
+    };
+  }
+
+  /** One label, no ellipsis: the frame is asserted on verbatim. */
+  const fixedSpinner = (): ResolvedSpinner => ({
+    ...resolveSpinner(),
+    labels: ["Thinking"],
+  });
+
+  test("the indicator is the last history row, under the user message, not on the status line", async () => {
+    const s = streamingSession();
+    const t = await setup({ session: s.session, spinner: fixedSpinner() });
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("Thinking");
+    const lines = frame.split("\n");
+    const user = lines.findIndex((l) => l.includes("hello"));
+    const indicator = lines.findIndex((l) => l.includes("Thinking"));
+    const inputTop = lines.findIndex((l) => l.startsWith("─"));
+    expect(user).toBeGreaterThan(0);
+    expect(indicator).toBeGreaterThan(user);
+    expect(indicator).toBeLessThan(inputTop);
+    // The status line (the last row with text) has the budget but not the
+    // label.
+    const status = lines.filter((l) => l.trim() !== "").at(-1) ?? "";
+    expect(status).toContain("/ 2s");
+    expect(status).not.toContain("Thinking");
+    expect(status).toContain("Ctrl+R reopen · Ctrl+C quit");
+    s.resolve("done");
+    await t.frameWith("done");
+  });
+
+  test("a partial replaces the indicator with an assistant body and a tail row", async () => {
+    const s = streamingSession();
+    const t = await setup({ session: s.session, spinner: fixedSpinner() });
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    await t.frameWith("Thinking");
+    s.emit("Partial text");
+    const frame = await t.frameWith("Partial text");
+    expect(frame).toContain("assistant");
+    expect(frame).not.toContain("Thinking");
+    s.resolve("Partial text, finished.");
+    const done = await t.frameWith("finished.");
+    // Promoted in place: the reply appears exactly once.
+    expect(done.split("Partial text").length - 1).toBe(1);
+    expect(done).toContain(GUIDE);
+  });
+
+  test("the partial grows in place as more text arrives", async () => {
+    const s = streamingSession();
+    const t = await setup({ session: s.session, spinner: fixedSpinner() });
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    await t.frameWith("Thinking");
+    s.emit("one");
+    await t.frameWith("one");
+    s.emit("one two");
+    const grown = await t.frameWith("one two");
+    expect(grown.split("one").length - 1).toBe(1);
+    s.resolve("one two three");
+    const done = await t.frameWith("three");
+    expect(done).toContain("one two three");
+    expect(t.model.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+  });
+
+  test("a turn that settles without any partial appends the reply normally", async () => {
+    const s = streamingSession();
+    const t = await setup({ session: s.session, spinner: fixedSpinner() });
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    await t.frameWith("Thinking");
+    s.resolve("straight to the answer");
+    const done = await t.frameWith("straight to the answer");
+    expect(done).toContain("assistant");
+    expect(done).not.toContain("Thinking");
+    expect(done).toContain(GUIDE);
+  });
+
+  test("a failed turn leaves the partial marked incomplete, then the error", async () => {
+    const s = streamingSession();
+    const t = await setup({ session: s.session, spinner: fixedSpinner() });
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    await t.frameWith("Thinking");
+    s.emit("half");
+    await t.frameWith("half");
+    s.reject(new ResponseTimeoutError("Timed out."));
+    const frame = await t.frameWith("Timed out.");
+    expect(frame).toContain("half");
+    expect(frame).toContain(INCOMPLETE_NOTE);
+    expect(frame.indexOf("half")).toBeLessThan(frame.indexOf("Timed out."));
+    expect(frame).not.toContain("Thinking");
+  });
+
+  test("a queued turn restarts the indicator with a fresh row", async () => {
+    const s = streamingSession();
+    const t = await setup({ session: s.session, spinner: fixedSpinner() });
+    await t.mockInput.typeText("one");
+    t.mockInput.pressEnter();
+    await t.frameWith("Thinking");
+    s.emit("first partial");
+    await t.frameWith("first partial");
+    await t.mockInput.typeText("two");
+    t.mockInput.pressEnter();
+    await t.frameWith("▹ two");
+    expect(t.model.queue).toEqual(["two"]);
+    s.resolve("first reply");
+    await t.frameWith("first reply");
+    // The drained turn draws its own user message and a fresh indicator
+    // row under it; the promoted first reply is untouched.
+    const second = await t.frameWith("Thinking");
+    const lines = second.split("\n");
+    const user = lines.findLastIndex((l) => l.includes("two"));
+    const indicator = lines.findLastIndex((l) => l.includes("Thinking"));
+    expect(user).toBeGreaterThan(0);
+    expect(indicator).toBeGreaterThan(user);
+    expect(second).toContain("first reply");
+    expect(second.split("first partial").length - 1).toBe(0);
+    s.resolve("second reply");
+    const done = await t.frameWith("second reply");
+    expect(done).not.toContain("Thinking");
+  });
+
+  test("the pending row is dropped when a reset interrupts the turn", async () => {
+    const s = streamingSession();
+    const t = await setup({ session: s.session, spinner: fixedSpinner() });
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    await t.frameWith("Thinking");
+    s.emit("half a reply");
+    await t.frameWith("half a reply");
+    t.mockInput.pressKey("r", { ctrl: true });
+    const frame = await t.frameWith("── reopened ──");
+    expect(frame).not.toContain("half a reply");
+    expect(frame).not.toContain("Thinking");
+  });
+
+  test("nothing in the pending row is selectable", async () => {
+    const s = streamingSession();
+    const t = await setup({ session: s.session, spinner: fixedSpinner() });
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    await t.frameWith("Thinking");
+    s.emit("streamed");
+    await t.frameWith("streamed");
+    const pending = t.renderer.root.findDescendantById("pending");
+    expect(pending).toBeDefined();
+    const children = pending?.getChildren() ?? [];
+    expect(children.length).toBeGreaterThan(0);
+    for (const child of children) expect(child.selectable).toBe(false);
+    // Promotion gives the body back to the selection and retires the row.
+    s.resolve("streamed and settled");
+    await t.frameWith("streamed and settled");
+    expect(t.renderer.root.findDescendantById("pending")).toBeUndefined();
   });
 });

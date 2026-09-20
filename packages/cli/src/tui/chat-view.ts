@@ -42,6 +42,12 @@ export const QUEUE_GUIDE = "Up take back · Ctrl+R reopen · Ctrl+C quit";
  * about it, so the guide is the explanation. */
 export const IDLE_CLOSED_GUIDE =
   "Browser closed after being idle · your next prompt reopens it";
+/** The muted line under a reply that stopped before the service said it was
+ * done: the text above it is whatever had arrived. */
+export const INCOMPLETE_NOTE = "(incomplete)";
+/** The key guide appended to the busy status line. The frame and the label
+ * moved to the pending row, which leaves room for it. */
+const BUSY_GUIDE = "Ctrl+R reopen · Ctrl+C quit";
 /** Rows the queue list may take; a longer queue ends with a "+N more" row. */
 export const MAX_QUEUE_ROWS = 5;
 export const RESETTING_STATUS = "Reopening browser...";
@@ -147,6 +153,16 @@ interface ShellEntry {
   drawnFooter: string;
 }
 
+/** The renderables of the turn in flight, drawn as the last row of the
+ * history. `body` appears with the first partial; until then the whole row
+ * is the indicator written into `label`. */
+interface PendingRow {
+  box: BoxRenderable;
+  label: TextRenderable;
+  body: TextRenderable | undefined;
+  tail: TextRenderable;
+}
+
 /** Builds the OpenTUI tree for one ChatModel and mirrors its state.
  * Layout, top to bottom: badge header / banner-or-history / queue list
  * (hidden while the queue is empty) / hairline input (1–5 rows) / inline
@@ -170,6 +186,8 @@ export class ChatView {
   /** Shell entries already drawn; their output and footer are refreshed
    * from the model on every update (live output, held → sent). */
   private readonly shellEntries: ShellEntry[] = [];
+  /** The row of the turn in flight, while there is one. */
+  private pendingRow: PendingRow | undefined;
   private spinner: ReturnType<typeof setInterval> | undefined;
   private spinnerMode: "busy" | "running" | undefined;
   private frame = 0;
@@ -363,7 +381,12 @@ export class ChatView {
     // A turn still in flight when the view is destroyed would otherwise
     // write to renderables the renderer has already torn down.
     if (this.torn) return;
-    if (this.bannerShown && this.model.messages.length > 0) {
+    // A pending row is enough to swap the banner out: a shell turn is
+    // auto-sent and has no user message to do it.
+    if (
+      this.bannerShown &&
+      (this.model.messages.length > 0 || this.model.status === "busy")
+    ) {
       this.bannerShown = false;
       this.body.remove(this.banner);
       this.body.add(this.history);
@@ -371,7 +394,20 @@ export class ChatView {
     for (; this.rendered < this.model.messages.length; this.rendered++) {
       const message = this.model.messages[this.rendered];
       if (!message) continue;
-      this.history.add(this.messageBox(message));
+      const row = this.pendingRow;
+      if (
+        row?.body !== undefined &&
+        message.role === "assistant" &&
+        message.incomplete === undefined
+      ) {
+        // The streamed row already shows this reply: settle it in place
+        // rather than drawing a second box under it.
+        this.promotePending(row, message);
+      } else {
+        // The row is always last; anything appended has to go above it.
+        this.dropPending();
+        this.history.add(this.messageBox(message));
+      }
       // A drained turn starts while the view is still busy, so the spinner
       // is never restarted; the user message drawn exactly once per turn is
       // what restarts the elapsed timer, the frame cycle and the label.
@@ -379,7 +415,19 @@ export class ChatView {
     }
     for (const entry of this.shellEntries) this.refreshShell(entry);
     this.renderQueue();
-    if (this.statusPinned) return;
+    // After the status: startSpinner() picks the turn's label there, and the
+    // pending row paints it.
+    if (this.statusPinned) {
+      this.syncPending();
+      return;
+    }
+    this.paintStatus();
+    this.syncPending();
+  }
+
+  /** Puts the model's status on the status line and runs or stops the
+   * spinner interval that repaints it. */
+  private paintStatus(): void {
     switch (this.model.status) {
       case "busy":
         this.startSpinner("busy");
@@ -442,6 +490,144 @@ export class ChatView {
     }
   }
 
+  /** Adds, refreshes or removes the row of the turn in flight. It is the
+   * last child of the history and is not a message: it never reaches
+   * `model.messages`, and nothing in it is selectable. */
+  private syncPending(): void {
+    if (this.model.status !== "busy") {
+      this.dropPending();
+      return;
+    }
+    this.pendingRow ??= this.buildPending();
+    const row = this.pendingRow;
+    const partial = this.model.partial;
+    if (partial !== undefined) {
+      if (row.body === undefined) {
+        // First partial: the row stops being an indicator and becomes the
+        // reply taking shape, with the spinner demoted to the tail.
+        const body = this.bodyFor(
+          { text: partial, ...this.pendingFormat() },
+          true,
+        );
+        body.selectable = false;
+        row.body = body;
+        row.label.content = LABELS.assistant();
+        row.tail.visible = true;
+        row.box.insertBefore(body, row.tail);
+      } else {
+        this.setBody(row.body, partial);
+      }
+    }
+    this.paintPending();
+  }
+
+  /** The empty row, added to the history as its last child. */
+  private buildPending(): PendingRow {
+    const box = new BoxRenderable(this.renderer, {
+      id: "pending",
+      flexDirection: "column",
+      marginBottom: 1,
+    });
+    const label = new TextRenderable(this.renderer, {
+      content: "",
+      wrapMode: "none",
+      selectable: false,
+    });
+    // Hidden until a partial arrives: with no body the indicator is the
+    // whole row, and a hidden renderable takes no rows.
+    const tail = new TextRenderable(this.renderer, {
+      content: "",
+      wrapMode: "none",
+      selectable: false,
+      visible: false,
+    });
+    box.add(label);
+    box.add(tail);
+    this.history.add(box);
+    return { box, label, body: undefined, tail };
+  }
+
+  /** Writes the current frame and elapsed time into the row: into the label
+   * while the row is the indicator, into the tail once a body is there. */
+  private paintPending(): void {
+    const row = this.pendingRow;
+    if (row === undefined || this.torn) return;
+    const elapsed = Math.floor((Date.now() - this.startedAt) / 1000);
+    const raw = this.spinnerSpec.frames[this.frame] ?? "";
+    const frame = this.frameStyler === undefined ? raw : this.frameStyler(raw);
+    if (row.body === undefined) {
+      row.label.content = styled(
+        frame,
+        " ",
+        this.labelStyler === undefined
+          ? this.label
+          : this.labelStyler(this.label),
+        `  ${elapsed}s`,
+      );
+      return;
+    }
+    row.tail.content = styled(frame, theme.muted(` ${elapsed}s`));
+  }
+
+  /** Retires the row without settling it: an interrupted turn, or a message
+   * that has to be appended under it. */
+  private dropPending(): void {
+    const row = this.pendingRow;
+    if (row === undefined) return;
+    this.pendingRow = undefined;
+    // The renderer may already be gone (SIGINT under a running turn).
+    if (this.torn) return;
+    this.history.remove(row.box);
+    row.box.destroyRecursively();
+  }
+
+  /** Turns the row of the turn in flight into the settled reply's box: the
+   * same renderables stay where they are, so nothing flickers or jumps. */
+  private promotePending(row: PendingRow, message: Message): void {
+    this.pendingRow = undefined;
+    // The id is the handle on the row in flight; the settled box is an
+    // ordinary message and must not answer to it.
+    row.box.id = `reply-${this.rendered}`;
+    row.box.remove(row.tail);
+    row.tail.destroyRecursively();
+    if (row.body !== undefined) {
+      // The final text is not always the last partial: some providers only
+      // send the finished reply's own text at the end.
+      this.setBody(row.body, message.text, true);
+      row.body.selectable = true;
+    }
+  }
+
+  /** The reply format the row in flight is drawn with. Task 9 makes this
+   * `{ format: "markdown" }` for a Markdown session; every body is plain
+   * text today. */
+  private pendingFormat(): { format?: "markdown" } {
+    return {};
+  }
+
+  /** The renderable carrying a message's text, whether settled or still
+   * streaming. Always wrapped plain text today; the `markdown` format is
+   * rendered as Markdown in a later task, which is what `streaming` is
+   * there for. */
+  private bodyFor(
+    message: { text: string; role?: Role; format?: "markdown" },
+    _streaming: boolean,
+  ): TextRenderable {
+    return new TextRenderable(this.renderer, {
+      content:
+        message.role === "error"
+          ? styled(theme.errorText(message.text))
+          : message.text,
+      wrapMode: "word",
+    });
+  }
+
+  /** Rewrites a body's text. `settled` says the turn is over, which the
+   * Markdown body will need to leave streaming mode. */
+  private setBody(body: TextRenderable, text: string, _settled = false): void {
+    body.content = text;
+  }
+
   /** Number of entries waiting in the queue. */
   private get queued(): number {
     return this.model.queue.length;
@@ -496,6 +682,8 @@ export class ChatView {
     );
     this.popup.destroy();
     this.stopSpinner();
+    // Forgets the row without touching the renderer, which may be gone.
+    this.dropPending();
   }
 
   /** Enter: a message, or in shell mode a command. Mirrors the cases the
@@ -793,15 +981,16 @@ export class ChatView {
       this.refreshShell(entry);
       return box;
     }
-    box.add(
-      new TextRenderable(this.renderer, {
-        content:
-          message.role === "error"
-            ? styled(theme.errorText(message.text))
-            : message.text,
-        wrapMode: "word",
-      }),
-    );
+    box.add(this.bodyFor(message, false));
+    if (message.incomplete) {
+      box.add(
+        new TextRenderable(this.renderer, {
+          content: styled(theme.muted(INCOMPLETE_NOTE)),
+          wrapMode: "none",
+          selectable: false,
+        }),
+      );
+    }
     for (const a of message.attachments ?? []) {
       box.add(
         new TextRenderable(this.renderer, {
@@ -843,6 +1032,9 @@ export class ChatView {
       if (this.torn) return this.stopSpinner();
       this.frame = (this.frame + 1) % this.spinnerSpec.frames.length;
       this.paintSpinnerStatus();
+      // The same interval animates the row in flight and ticks its elapsed
+      // time; the status line alone would leave the row frozen.
+      this.paintPending();
     };
     tick();
     this.spinner = setInterval(tick, this.spinnerSpec.intervalMs);
@@ -884,14 +1076,11 @@ export class ChatView {
       );
       return;
     }
+    // The frame and the label are on the pending row, where the reply will
+    // land; the status line is left with the wait's numbers and the keys.
     const queued = n > 0 ? `  · ${n} queued` : "";
     this.status.content = styled(
-      frame,
-      " ",
-      this.labelStyler === undefined
-        ? this.label
-        : this.labelStyler(this.label),
-      `  ${elapsed}s / ${this.budgetSec}s${queued}`,
+      theme.muted(`${elapsed}s / ${this.budgetSec}s${queued} · ${BUSY_GUIDE}`),
     );
   }
 
