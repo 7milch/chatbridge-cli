@@ -11,36 +11,44 @@ has been idle for 24 h.
 
 `scripts/measure-idle-cpu.ts`, run by hand (CPU readings are too
 machine-dependent for CI). It launches through `BrowserRuntime.launch()`
-against an animated fixture page that honours the media query, lets it
-settle for 2 s, then sums the CPU seconds of every Chromium process over a
-10 s idle sample.
+against a fixture page with 200 boxes, lets it settle for 2 s, then sums
+the CPU seconds accumulated over a 10 s idle sample by every descendant
+process of the script's own PID — i.e. only the browser this run launched,
+not any other Chromium/Playwright process that happens to be running on
+the machine at the same time (the very kind of background load issue #95
+is about, so counting it would make the measurement circular).
 
 - Machine: MacBook Air (Mac16,12), Apple M4, 24 GB RAM, macOS 26.5.2 (build 25F84), arm64
 - Bun: 1.4.0
 - Playwright: 1.63.0 (`packages/runtime`), Chromium build 1243
-- Command: `bun run build && bun scripts/measure-idle-cpu.ts` (run from
-  `packages/core`, where the workspace symlinks for `@chatbridge/runtime`
-  and `@chatbridge/provider` are hoisted — running it from the repo root
-  fails with `Cannot find module '@chatbridge/runtime'` because the root
-  `package.json` declares no dependency on either package)
+- Command: `bun run build && bun scripts/measure-idle-cpu.ts`, run from the
+  repo root (the script imports `../packages/runtime/dist/index.js` and
+  `../packages/provider/dist/index.js` directly, so it no longer depends
+  on a workspace symlink being hoisted into a particular package)
 
-Two runs, back to back:
+Three cases (an animated page with `no-preference` and with `reduce`, plus
+a static page with `no-preference` as the floor), two runs back to back:
 
-| `browser.reducedMotion` | CPU s over 10 s idle | % of one core |
+| Case | CPU s over 10 s idle | % of one core |
 |---|---|---|
-| `no-preference` (before) — run 1 | 6.26 | 62.6% |
-| `reduce` (default now) — run 1 | 5.40 | 54.0% |
-| `no-preference` (before) — run 2 | 6.17 | 61.7% |
-| `reduce` (default now) — run 2 | 5.18 | 51.8% |
+| `no-preference`, animated (before) — run 1 | 0.96 | 9.6% |
+| `reduce`, animated (default now) — run 1 | 0.00 | 0.0% |
+| `no-preference`, static (control) — run 1 | 0.00 | 0.0% |
+| `no-preference`, animated (before) — run 2 | 0.94 | 9.4% |
+| `reduce`, animated (default now) — run 2 | 0.00 | 0.0% |
+| `no-preference`, static (control) — run 2 | -0.01 | -0.1% |
+
+(The static-control row's -0.01 in run 2 is measurement noise from `ps
+time`'s one-second resolution, not negative CPU usage.)
 
 ## Conclusion
 
-`reducedMotion: "reduce"` cuts idle CPU by roughly 15% here (~62% down to
-~53% of one core), not the near-zero result the issue's animated-page
-theory predicts — on this machine most of the sampled CPU is Chromium's
-software compositor/GPU-process overhead for a headless page with 200
-elements, independent of whether the CSS animation itself is still
-running. `reducedMotion` helps but does not by itself get an idle
-headless page near 0%, so the 24 h idle close remains the real backstop
-for a session left open unattended, and doubly so for a page that ignores
-the media query or one that polls.
+Scoped to the browser this script actually launched, `reducedMotion:
+"reduce"` takes the animated page from ~0.95 CPU s (~9.5% of one core)
+down to the same ~0 CPU s as the static control — i.e. it removes the
+animation's CPU cost entirely on this machine, matching issue #95's own
+measurement (0.30 s animated vs 0.00 s with `reduce` and 0.00 s static).
+What remains for the 24 h idle close to cover is a page that keeps
+animating despite the media query, one that polls the server while idle,
+or a provider that opts out with `browser: { reducedMotion:
+"no-preference" }`.
