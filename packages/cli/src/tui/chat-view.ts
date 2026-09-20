@@ -19,7 +19,13 @@ import { formatSize } from "../mentions/expand-mentions.js";
 import type { FileIndex } from "../mentions/file-index.js";
 import { mentionAtCursor } from "../mentions/parse-mentions.js";
 import { truncatedNote } from "../shell/format-result.js";
-import type { ChatModel, Message, Role } from "./chat-model.js";
+import {
+  COPIED_NOTICE,
+  COPY_FAILED_NOTICE,
+  type ChatModel,
+  type Message,
+  type Role,
+} from "./chat-model.js";
 import { MAX_ROWS, MentionPopup, type PopupRow } from "./mention-popup.js";
 import type { ResolvedSpinner } from "./spinner.js";
 import {
@@ -149,6 +155,9 @@ export interface ChatViewOptions {
   commands?: readonly CommandInfo[];
   /** How long a `model.notice` stays on the status line. Tests shorten it. */
   noticeMs?: number;
+  /** Puts a finished mouse selection over the history on the system
+   * clipboard. The same function the model got for `/copy`. */
+  copy?: (text: string) => Promise<boolean>;
 }
 
 /** KeyHandler's `on` is typed through a generic EventEmitter that does not
@@ -156,6 +165,18 @@ export interface ChatViewOptions {
 interface KeypressSource {
   on(event: "keypress", handler: (key: KeyEvent) => void): unknown;
   off(event: "keypress", handler: (key: KeyEvent) => void): unknown;
+}
+
+/** What a finished mouse selection hands the handler. */
+interface TextSelection {
+  getSelectedText(): string;
+}
+
+/** The renderer's `on` is typed through the same generic EventEmitter as
+ * KeyHandler's; `"selection"` fires once per gesture, on left mouse up. */
+interface SelectionSource {
+  on(event: "selection", handler: (s: TextSelection | null) => void): unknown;
+  off(event: "selection", handler: (s: TextSelection | null) => void): unknown;
 }
 
 /** The renderables of one shell entry that change after it is drawn. */
@@ -197,6 +218,10 @@ export class ChatView {
   private readonly index: FileIndex;
   private readonly commands: readonly CommandInfo[];
   private readonly onKeypress: (key: KeyEvent) => void;
+  private readonly onSelect: (s: TextSelection | null) => void;
+  /** Undefined when the host gave no clipboard: selecting then does nothing
+   * rather than reporting a failure the user cannot act on. */
+  private readonly copy: ((text: string) => Promise<boolean>) | undefined;
   private rendered = 0;
   /** Shell entries already drawn; their output and footer are refreshed
    * from the model on every update (live output, held → sent). */
@@ -207,9 +232,10 @@ export class ChatView {
   /** Clears `model.notice` when its time is up; undefined while none is
    * showing. */
   private noticeTimer: ReturnType<typeof setTimeout> | undefined;
-  /** The notice the timer in flight belongs to, so a repaint of the same
-   * notice does not keep pushing its end away. */
-  private shownNotice: string | undefined;
+  /** The `model.noticeSeq` the timer in flight belongs to, so a repaint of
+   * the same notice does not keep pushing its end away while a fresh
+   * notify() of the same text still gets a full window of its own. */
+  private shownNoticeSeq: number | undefined;
   private readonly noticeMs: number;
   private spinnerMode: "busy" | "running" | undefined;
   private frame = 0;
@@ -241,6 +267,7 @@ export class ChatView {
     this.commands = opts.commands ?? [];
     this.spinnerSpec = opts.spinner;
     this.noticeMs = opts.noticeMs ?? NOTICE_MS;
+    this.copy = opts.copy;
     this.frameStyler =
       opts.spinner.frameColor === undefined
         ? undefined
@@ -267,6 +294,8 @@ export class ChatView {
         ),
         wrapMode: "none",
         marginBottom: 1,
+        // Chrome, not message text: it must stay out of a selection.
+        selectable: false,
       }),
     );
     this.body = new BoxRenderable(renderer, {
@@ -289,7 +318,11 @@ export class ChatView {
     });
     for (const line of opts.banner) {
       this.banner.add(
-        new TextRenderable(renderer, { content: line, wrapMode: "none" }),
+        new TextRenderable(renderer, {
+          content: line,
+          wrapMode: "none",
+          selectable: false,
+        }),
       );
     }
     this.history = new ScrollBoxRenderable(renderer, {
@@ -313,6 +346,7 @@ export class ChatView {
         content: "",
         visible: false,
         wrapMode: "none",
+        selectable: false,
       });
       this.queueRows.push(row);
       this.queueList.add(row);
@@ -330,6 +364,7 @@ export class ChatView {
       id: "prompt",
       content: styled(theme.muted("> ")),
       flexShrink: 0,
+      selectable: false,
     });
     inputBox.add(this.prompt);
     this.input = new TextareaRenderable(renderer, {
@@ -362,6 +397,7 @@ export class ChatView {
       // input box off the bottom.
       height: 1,
       flexShrink: 0,
+      selectable: false,
     });
     root.add(this.status);
     renderer.root.add(root);
@@ -373,6 +409,10 @@ export class ChatView {
       "keypress",
       this.onKeypress,
     );
+    // OpenTUI owns the mouse, so the terminal's own select-to-copy is gone;
+    // this puts it back for the history's message text.
+    this.onSelect = (selection) => this.onSelection(selection);
+    (renderer as unknown as SelectionSource).on("selection", this.onSelect);
     this.input.onContentChange = () => {
       this.detectShellMode();
       this.fitInput();
@@ -454,17 +494,35 @@ export class ChatView {
     this.syncPending();
   }
 
+  /** Copies what a finished drag selected. The event fires once per gesture,
+   * on mouse up, so there is nothing to debounce. Only message text is
+   * selectable, so what arrives here is already free of chrome. Nothing may
+   * throw back into the renderer's emitter, and a whitespace-only selection
+   * (a plain click) is not a copy. */
+  private onSelection(selection: TextSelection | null): void {
+    if (this.torn || this.copy === undefined) return;
+    const text = selection?.getSelectedText() ?? "";
+    if (text.trim() === "") return;
+    void this.copy(text)
+      .catch(() => false)
+      .then((ok) => {
+        if (this.torn) return;
+        this.model.notify(ok ? COPIED_NOTICE : COPY_FAILED_NOTICE);
+      });
+  }
+
   /** Puts a short-lived notice on the status line and schedules its end.
    * The state's own line comes back when the timer clears `model.notice`
    * and repaints. */
   private paintNotice(text: string): void {
     this.status.content = styled(theme.muted(text));
-    if (this.shownNotice === text && this.noticeTimer !== undefined) return;
-    this.shownNotice = text;
+    const seq = this.model.noticeSeq;
+    if (this.shownNoticeSeq === seq && this.noticeTimer !== undefined) return;
+    this.shownNoticeSeq = seq;
     clearTimeout(this.noticeTimer);
     this.noticeTimer = setTimeout(() => {
       this.noticeTimer = undefined;
-      this.shownNotice = undefined;
+      this.shownNoticeSeq = undefined;
       this.model.notice = undefined;
       this.update();
     }, this.noticeMs);
@@ -741,6 +799,10 @@ export class ChatView {
       "keypress",
       this.onKeypress,
     );
+    (this.renderer as unknown as SelectionSource).off(
+      "selection",
+      this.onSelect,
+    );
     this.popup.destroy();
     this.stopSpinner();
     clearTimeout(this.noticeTimer);
@@ -998,6 +1060,7 @@ export class ChatView {
         new TextRenderable(this.renderer, {
           content: styled(theme.muted(`── ${message.text} ──`)),
           wrapMode: "none",
+          selectable: false,
         }),
       );
       return box;
@@ -1014,7 +1077,12 @@ export class ChatView {
       return box;
     }
     box.add(
-      new TextRenderable(this.renderer, { content: LABELS[message.role]() }),
+      new TextRenderable(this.renderer, {
+        content: LABELS[message.role](),
+        // A label is chrome: a selection spanning messages must come back as
+        // their text alone.
+        selectable: false,
+      }),
     );
     if (message.role === "shell") {
       box.add(
@@ -1032,6 +1100,7 @@ export class ChatView {
         content: "",
         wrapMode: "word",
         visible: false,
+        selectable: false,
       });
       box.add(output);
       box.add(footer);
@@ -1060,6 +1129,7 @@ export class ChatView {
       box.add(
         new TextRenderable(this.renderer, {
           content: styled(theme.muted(`📎 ${a.path} (${formatSize(a.bytes)})`)),
+          selectable: false,
         }),
       );
     }
@@ -1127,6 +1197,9 @@ export class ChatView {
    * modes and the vendor label only in the busy row, which is the one it
    * describes; the counter never does.  */
   private paintSpinnerStatus(): void {
+    // A notice owns the line while it is up, in either spinner mode; the
+    // tick still animates the pending row.
+    if (this.model.notice !== undefined) return;
     const elapsed = Math.floor((Date.now() - this.startedAt) / 1000);
     const n = this.queued;
     const raw = this.spinnerSpec.frames[this.frame] ?? "";
@@ -1143,9 +1216,6 @@ export class ChatView {
     }
     // The frame and the label are on the pending row, where the reply will
     // land; the status line is left with the wait's numbers and the keys.
-    // A notice owns the line while it is up; the tick still animates the
-    // pending row.
-    if (this.model.notice !== undefined) return;
     const queued = n > 0 ? `  · ${n} queued` : "";
     this.status.content = styled(
       theme.muted(`${elapsed}s / ${this.budgetSec}s${queued} · ${BUSY_GUIDE}`),

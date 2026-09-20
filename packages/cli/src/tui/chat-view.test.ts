@@ -14,6 +14,7 @@ import type { ShellConfig } from "../shell/shell-config.js";
 import { resolveBanner } from "./banner.js";
 import {
   COPIED_NOTICE,
+  COPY_FAILED_NOTICE,
   type ChatModelOptions,
   type ChatSessionLike,
 } from "./chat-model.js";
@@ -206,6 +207,8 @@ async function setup(
       opts.paths ?? ["src/chat-view.ts", "src/chat-model.ts", "README.md"],
     ),
     commands: opts.commands ?? [],
+    // The same function the model got: run-interactive.ts builds one.
+    ...(opts.copy ? { copy: opts.copy } : {}),
     ...(opts.noticeMs === undefined ? {} : { noticeMs: opts.noticeMs }),
   });
   teardown = () => {
@@ -1987,5 +1990,204 @@ describe("ChatView: the /copy notice", () => {
     // A leaked timer would clear the notice and repaint a destroyed view.
     await sleep(30);
     expect(t.model.notice).toBe(COPIED_NOTICE);
+  });
+
+  test("a second identical notice gets its own full window", async () => {
+    const t = await setup({ copy: async () => true, noticeMs: 200 });
+    await t.model.submit("hello");
+    await t.model.submit("/copy");
+    await t.frameWith(COPIED_NOTICE);
+    // Most of the first window is gone; a fresh notify() with the same text
+    // must restart the clock rather than inherit what is left of it.
+    await sleep(160);
+    t.model.notify(COPIED_NOTICE);
+    await t.renderOnce();
+    await sleep(100);
+    await t.renderOnce();
+    expect(t.model.notice).toBe(COPIED_NOTICE);
+    expect(t.captureCharFrame()).toContain(COPIED_NOTICE);
+  });
+
+  test("the running spinner leaves a live notice alone", async () => {
+    const runner = fakeRunner();
+    const t = await setup({
+      runCommand: runner.runCommand,
+      copy: async () => true,
+      noticeMs: 200,
+    });
+    await t.model.submit("hello");
+    await t.frameWith("Echo: hello");
+    void t.model.runShell("sleep 10");
+    await t.frameWith("Running…");
+    await t.model.submit("/copy");
+    const shown = await t.frameWith(COPIED_NOTICE);
+    // The "Running…" spinner ticks every frame; it must not paint over it.
+    expect(shown).not.toContain("Running…  ");
+    for (let i = 0; i < 4; i++) {
+      await sleep(20);
+      await t.renderOnce();
+      expect(t.captureCharFrame()).toContain(COPIED_NOTICE);
+    }
+    runner.finish({ exitCode: 0 });
+  });
+});
+
+describe("ChatView: select to copy", () => {
+  /** The row of the history that shows `text`, for the mock mouse. */
+  function rowOf(frame: string, text: string): number {
+    const y = frame.split("\n").findIndex((l) => l.includes(text));
+    expect(y).toBeGreaterThan(-1);
+    return y;
+  }
+
+  test("a finished selection over a reply copies its text", async () => {
+    const copied: string[] = [];
+    const t = await setup({
+      delayMs: 10,
+      copy: async (x) => {
+        copied.push(x);
+        return true;
+      },
+      noticeMs: 500,
+    });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("Echo: hi");
+    const y = rowOf(frame, "Echo: hi");
+    await t.mockMouse.drag(0, y, 8, y);
+    await t.renderOnce();
+    expect(copied).toEqual(["Echo: hi"]);
+    expect(await t.frameWith(COPIED_NOTICE)).toContain(COPIED_NOTICE);
+  });
+
+  test("role labels, separators and attachment lines are not selectable", async () => {
+    const copied: string[] = [];
+    const t = await setup({
+      delayMs: 10,
+      expand: async (text) => ({
+        prompt: text,
+        attachments: [{ path: "a.ts", bytes: 512 }],
+      }),
+      copy: async (x) => {
+        copied.push(x);
+        return true;
+      },
+    });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    await t.frameWith("Echo: hi");
+    await t.model.reset();
+    const frame = await t.frameWith("── reopened ──");
+    const top = rowOf(frame, "hi");
+    const bottom = rowOf(frame, "── reopened ──");
+    expect(bottom).toBeGreaterThan(top);
+    // Straight through both role labels, the attachment line and the
+    // separator: only the two message bodies come back.
+    await t.mockMouse.drag(0, top, 79, bottom);
+    await t.renderOnce();
+    expect(copied).toEqual(["hi\nEcho: hi"]);
+  });
+
+  test("the pending row is never copied", async () => {
+    const copied: string[] = [];
+    const s = streamingSession();
+    const t = await setup({
+      session: s.session,
+      copy: async (x) => {
+        copied.push(x);
+        return true;
+      },
+    });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    await t.frameWith("user");
+    s.emit("streaming reply");
+    const frame = await t.frameWith("streaming reply");
+    const y = rowOf(frame, "streaming reply");
+    // From the user's message straight down into the row in flight.
+    await t.mockMouse.drag(0, rowOf(frame, "hi"), 79, y);
+    await t.renderOnce();
+    expect(copied).toEqual(["hi"]);
+    s.resolve("streaming reply, done");
+    await t.frameWith("done");
+  });
+
+  test("a markdown reply copies what is on screen, not its source", async () => {
+    const copied: string[] = [];
+    const t = await setup({
+      session: {
+        responseFormat: "markdown",
+        async send() {
+          return "**bold** reply";
+        },
+        async close() {},
+        async kill() {},
+      },
+      copy: async (x) => {
+        copied.push(x);
+        return true;
+      },
+    });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("bold reply");
+    const y = rowOf(frame, "bold reply");
+    await t.mockMouse.drag(0, y, 10, y);
+    await t.renderOnce();
+    // The rendered text; the Markdown source is what `/copy` is for.
+    expect(copied).toEqual(["bold reply"]);
+  });
+
+  test("an empty selection copies nothing", async () => {
+    const copied: string[] = [];
+    const t = await setup({
+      delayMs: 10,
+      copy: async (x) => {
+        copied.push(x);
+        return true;
+      },
+    });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("Echo: hi");
+    const y = rowOf(frame, "Echo: hi");
+    await t.mockMouse.click(0, y);
+    await t.renderOnce();
+    expect(copied).toEqual([]);
+    expect(t.model.notice).toBeUndefined();
+  });
+
+  test("a failing clipboard notifies instead of throwing", async () => {
+    const t = await setup({
+      delayMs: 10,
+      copy: async () => {
+        throw new Error("no clipboard");
+      },
+      noticeMs: 500,
+    });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("Echo: hi");
+    const y = rowOf(frame, "Echo: hi");
+    await t.mockMouse.drag(0, y, 8, y);
+    expect(await t.frameWith(COPY_FAILED_NOTICE)).toContain(COPY_FAILED_NOTICE);
+  });
+
+  test("destroy() stops the view from copying a later selection", async () => {
+    const copied: string[] = [];
+    const t = await setup({
+      delayMs: 10,
+      copy: async (x) => {
+        copied.push(x);
+        return true;
+      },
+    });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("Echo: hi");
+    const y = rowOf(frame, "Echo: hi");
+    t.view.destroy();
+    await t.mockMouse.drag(0, y, 8, y);
+    expect(copied).toEqual([]);
   });
 });

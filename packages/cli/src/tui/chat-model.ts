@@ -171,6 +171,10 @@ export class ChatModel {
   /** A short message for the status line (`/copy`'s outcome). The view
    * shows it for a moment and clears it; the model only sets it. */
   notice: string | undefined;
+  /** Bumped by every notify(), so the view can tell a fresh notice from a
+   * repaint of the one it is already showing — even when the text is the
+   * same, which selecting twice makes routine. */
+  noticeSeq = 0;
   /** Called after every state change. */
   onChange: () => void = () => {};
   /** Resolves when the initial open settled (idle or dead). Never rejects,
@@ -676,6 +680,7 @@ export class ChatModel {
    * stays; it clears `notice` when the time is up. */
   notify(text: string): void {
     this.notice = text;
+    this.noticeSeq++;
     this.onChange();
   }
 

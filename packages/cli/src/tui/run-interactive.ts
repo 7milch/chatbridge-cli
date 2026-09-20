@@ -226,6 +226,9 @@ export async function runInteractive(
       spinner: resolveSpinner(opts.spinner),
       index,
       commands,
+      // The same function the model got: `/copy` and a mouse selection reach
+      // the clipboard the same way.
+      copy,
     });
     const quit = waitForQuit(renderer, model);
     uiUp = true;
