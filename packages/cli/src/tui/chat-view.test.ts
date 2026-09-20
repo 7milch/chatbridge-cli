@@ -58,6 +58,31 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+/** A session whose turns are resolved by the test, with the `onPartial`
+ * callback of the turn in flight captured so partials can be emitted.
+ * `format` is the session's declared response format. */
+function streamingSession(format?: "markdown" | "text") {
+  let current: ReturnType<typeof deferred<string>> | undefined;
+  let onPartial: ((text: string) => void) | undefined;
+  const session: ChatSessionLike = {
+    ...(format ? { responseFormat: format } : {}),
+    send(_prompt, opts) {
+      const d = deferred<string>();
+      current = d;
+      onPartial = opts?.onPartial;
+      return d.promise;
+    },
+    async close() {},
+    async kill() {},
+  };
+  return {
+    session,
+    emit: (text: string) => onPartial?.(text),
+    resolve: (text: string) => current?.resolve(text),
+    reject: (err: unknown) => current?.reject(err),
+  };
+}
+
 function fakeRunner() {
   const calls: string[] = [];
   let output = "";
@@ -1631,29 +1656,6 @@ describe("ChatView queue", () => {
 });
 
 describe("ChatView: pending row", () => {
-  /** A session whose turns are resolved by the test, with the `onPartial`
-   * callback of the turn in flight captured so partials can be emitted. */
-  function streamingSession() {
-    let current: ReturnType<typeof deferred<string>> | undefined;
-    let onPartial: ((text: string) => void) | undefined;
-    const session: ChatSessionLike = {
-      send(_prompt, opts) {
-        const d = deferred<string>();
-        current = d;
-        onPartial = opts?.onPartial;
-        return d.promise;
-      },
-      async close() {},
-      async kill() {},
-    };
-    return {
-      session,
-      emit: (text: string) => onPartial?.(text),
-      resolve: (text: string) => current?.resolve(text),
-      reject: (err: unknown) => current?.reject(err),
-    };
-  }
-
   /** One label, no ellipsis: the frame is asserted on verbatim. */
   const fixedSpinner = (): ResolvedSpinner => ({
     ...resolveSpinner(),
@@ -1806,5 +1808,102 @@ describe("ChatView: pending row", () => {
     s.resolve("streamed and settled");
     await t.frameWith("streamed and settled");
     expect(t.renderer.root.findDescendantById("pending")).toBeUndefined();
+  });
+});
+
+describe("ChatView: markdown", () => {
+  /** A session that declares `markdown` and answers with `reply`. */
+  function markdownSession(reply: string): ChatSessionLike {
+    return {
+      responseFormat: "markdown",
+      async send() {
+        return reply;
+      },
+      async close() {},
+      async kill() {},
+    };
+  }
+
+  test("a markdown reply is rendered with markup concealed", async () => {
+    const t = await setup({
+      session: markdownSession(
+        "## Title\n\n- **bold** item\n\n```ts\nconst a = 1;\n```",
+      ),
+    });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    // The prose block only paints once the asynchronous tree-sitter parse
+    // lands, so poll on it rather than on the code block, which paints first.
+    const frame = await t.frameWith("bold item");
+    expect(frame).toContain("Title");
+    expect(frame).toContain("const a = 1;");
+    // Concealment is asynchronous; the markers are gone once it lands.
+    expect(frame).not.toContain("##");
+    expect(frame).not.toContain("**");
+    expect(frame).not.toContain("```");
+  });
+
+  test("a text-format reply is shown verbatim", async () => {
+    const t = await setup({
+      session: {
+        async send() {
+          return "## not a heading **really**";
+        },
+        async close() {},
+        async kill() {},
+      },
+    });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    expect(await t.frameWith("not a heading")).toContain(
+      "## not a heading **really**",
+    );
+  });
+
+  test("user messages are never rendered as markdown", async () => {
+    const t = await setup({ session: markdownSession("plain reply") });
+    await t.mockInput.typeText("ask about **x** now");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("plain reply");
+    // The typed text is the user's, not the service's: it keeps its markers.
+    expect(frame).toContain("ask about **x** now");
+  });
+
+  test("a streaming markdown partial is promoted to the settled reply", async () => {
+    const s = streamingSession("markdown");
+    const t = await setup({ session: s.session });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    await t.frameWith("user");
+    s.emit("## Ti");
+    await t.frameWith("Ti");
+    s.emit("## Title\n\n- a");
+    await t.frameWith("Title");
+    s.resolve("## Title\n\n- **done**");
+    const done = await t.frameWith("done");
+    // Promoted in place: one heading, no leftover syntax, no pending row.
+    expect(done.split("Title").length - 1).toBe(1);
+    expect(done).not.toContain("##");
+    expect(done).not.toContain("**");
+    expect(done).toContain("assistant");
+    expect(t.renderer.root.findDescendantById("pending")).toBeUndefined();
+    expect(t.model.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+  });
+
+  test("an incomplete markdown reply is markdown with the note under it", async () => {
+    const s = streamingSession("markdown");
+    const t = await setup({ session: s.session });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    await t.frameWith("user");
+    s.emit("## Half");
+    await t.frameWith("Half");
+    s.reject(new ResponseTimeoutError("Timed out."));
+    await t.frameWith("Timed out.");
+    const frame = await t.frameWith("Half");
+    expect(frame).toContain("Timed out.");
+    expect(frame).not.toContain("## Half");
+    expect(frame).toContain(INCOMPLETE_NOTE);
+    expect(frame.indexOf("Half")).toBeLessThan(frame.indexOf("Timed out."));
   });
 });

@@ -1,6 +1,7 @@
 import {
   RGBA,
   StyledText,
+  SyntaxStyle,
   TextAttributes,
   type TextChunk,
 } from "@opentui/core";
@@ -42,6 +43,23 @@ export const theme = {
   errorText: make(TextAttributes.NONE, ANSI.red),
   selected: make(TextAttributes.INVERSE),
 };
+
+/** Styles for MarkdownRenderable, from the same ANSI indices as `theme`, so
+ * a reply looks like the rest of the history in any terminal palette. The
+ * scope names are the ones MarkdownRenderable looks up (0.5.10); a style it
+ * does not find falls back to `default`, which is the terminal foreground.
+ * The caller owns the returned handle and must `destroy()` it. */
+export function markdownSyntaxStyle(): SyntaxStyle {
+  return SyntaxStyle.fromStyles({
+    "markup.heading": { fg: RGBA.fromIndex(ANSI.green), bold: true },
+    "markup.strong": { bold: true },
+    "markup.italic": { italic: true },
+    "markup.raw": { fg: RGBA.fromIndex(ANSI.yellow) },
+    "markup.link": { fg: RGBA.fromIndex(ANSI.blue), underline: true },
+    "markup.list": { fg: MUTED_COLOR },
+    "markup.quote": { fg: MUTED_COLOR, italic: true },
+  });
+}
 
 /** Plain text in a vendor-chosen colour: a number is an ANSI palette index
  * (follows the terminal palette), a string is "#rrggbb". */

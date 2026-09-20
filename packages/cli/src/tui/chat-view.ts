@@ -8,6 +8,8 @@ import {
   BoxRenderable,
   type CliRenderer,
   type KeyEvent,
+  MarkdownRenderable,
+  type Renderable,
   ScrollBoxRenderable,
   type StyledText,
   TextRenderable,
@@ -20,7 +22,14 @@ import { truncatedNote } from "../shell/format-result.js";
 import type { ChatModel, Message, Role } from "./chat-model.js";
 import { MAX_ROWS, MentionPopup, type PopupRow } from "./mention-popup.js";
 import type { ResolvedSpinner } from "./spinner.js";
-import { MUTED_COLOR, type Styler, colored, styled, theme } from "./theme.js";
+import {
+  MUTED_COLOR,
+  type Styler,
+  colored,
+  markdownSyntaxStyle,
+  styled,
+  theme,
+} from "./theme.js";
 
 // Status-row texts must fit 80 columns: the row is one fixed line and
 // clips. Shift+Enter and Ctrl+J are left out for room (README documents
@@ -159,7 +168,8 @@ interface ShellEntry {
 interface PendingRow {
   box: BoxRenderable;
   label: TextRenderable;
-  body: TextRenderable | undefined;
+  /** Plain text, or a MarkdownRenderable for a `markdown` session. */
+  body: Renderable | undefined;
   tail: TextRenderable;
 }
 
@@ -192,6 +202,9 @@ export class ChatView {
   private spinnerMode: "busy" | "running" | undefined;
   private frame = 0;
   private readonly spinnerSpec: ResolvedSpinner;
+  /** Built once: every Markdown body shares it, and it owns a native handle
+   * that destroy() releases. */
+  private readonly markdownStyle = markdownSyntaxStyle();
   /** Built once from the vendor colours so a tick does not rebuild them. */
   private readonly frameStyler: Styler | undefined;
   private readonly labelStyler: Styler | undefined;
@@ -598,21 +611,31 @@ export class ChatView {
     }
   }
 
-  /** The reply format the row in flight is drawn with. Task 9 makes this
-   * `{ format: "markdown" }` for a Markdown session; every body is plain
-   * text today. */
+  /** The reply format the row in flight is drawn with: the session's, since
+   * the row is always the assistant's reply taking shape. */
   private pendingFormat(): { format?: "markdown" } {
-    return {};
+    return this.model.session?.responseFormat === "markdown"
+      ? { format: "markdown" }
+      : {};
   }
 
   /** The renderable carrying a message's text, whether settled or still
-   * streaming. Always wrapped plain text today; the `markdown` format is
-   * rendered as Markdown in a later task, which is what `streaming` is
-   * there for. */
+   * streaming. Only a reply of a `markdown` provider carries the format, so
+   * user, error and shell text is never reinterpreted as markup. Markdown
+   * concealment is asynchronous and fails open: when tree-sitter cannot
+   * highlight, the raw markers show rather than an error. */
   private bodyFor(
     message: { text: string; role?: Role; format?: "markdown" },
-    _streaming: boolean,
-  ): TextRenderable {
+    streaming: boolean,
+  ): Renderable {
+    if (message.format === "markdown") {
+      return new MarkdownRenderable(this.renderer, {
+        content: message.text,
+        syntaxStyle: this.markdownStyle,
+        conceal: true,
+        streaming,
+      });
+    }
     return new TextRenderable(this.renderer, {
       content:
         message.role === "error"
@@ -622,10 +645,16 @@ export class ChatView {
     });
   }
 
-  /** Rewrites a body's text. `settled` says the turn is over, which the
-   * Markdown body will need to leave streaming mode. */
-  private setBody(body: TextRenderable, text: string, _settled = false): void {
-    body.content = text;
+  /** Rewrites a body's text. `settled` says the turn is over, which is what
+   * takes the Markdown body out of streaming mode so its trailing block is
+   * parsed as finished. */
+  private setBody(body: Renderable, text: string, settled = false): void {
+    if (body instanceof MarkdownRenderable) {
+      body.content = text;
+      if (settled) body.streaming = false;
+      return;
+    }
+    (body as TextRenderable).content = text;
   }
 
   /** Number of entries waiting in the queue. */
@@ -684,6 +713,8 @@ export class ChatView {
     this.stopSpinner();
     // Forgets the row without touching the renderer, which may be gone.
     this.dropPending();
+    // Owns a native handle of its own, independent of the renderer.
+    this.markdownStyle.destroy();
   }
 
   /** Enter: a message, or in shell mode a command. Mirrors the cases the
