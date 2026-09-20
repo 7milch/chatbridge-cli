@@ -240,10 +240,12 @@ export class SessionController {
           // sent, but `send` already emptied the composer, so give the
           // attachments back and leave the text in the history.
           this.expanding = false;
-          this.pending = [...turn.attachments, ...this.pending];
+          const dropped = this.restorePending(turn.attachments);
+          const note =
+            dropped === 0 ? "" : SessionController.droppedLine(dropped);
           this.messages.push({
             role: "error",
-            text: `Reopened while resolving URLs; message not sent: ${turn.text}`,
+            text: `Reopened while resolving URLs; message not sent: ${turn.text}${note}`,
           });
           // Nothing else will run the entries queued behind this one. Only
           // from `idle`: a stale turn from `close()` must not open a browser
@@ -269,8 +271,14 @@ export class SessionController {
         this.expanding = false;
         // The composer was emptied by `send`; give the attachments back so
         // the user only has to re-type the text.
-        this.pending = [...turn.attachments, ...this.pending];
-        this.push({ role: "error", text: message });
+        const dropped = this.restorePending(turn.attachments);
+        this.push({
+          role: "error",
+          text:
+            dropped === 0
+              ? message
+              : message + SessionController.droppedLine(dropped),
+        });
         // Nothing else will run the entries that queued behind this one.
         this.drain();
         return { ok: false, code: "URL_HOOK", message };
@@ -394,23 +402,50 @@ export class SessionController {
     void this.startTurn(next);
   }
 
+  /** Puts attachments back in front of whatever is pending, skipping the
+   * ones that no longer fit: `send` empties the composer before a turn's
+   * expansion runs, so the user can have dropped files in meanwhile, and
+   * forcing these back would leave a composer that refuses every further
+   * attachment. Returns how many were left out. `place` is "back" for
+   * `takeBack`, whose entries belong after what the user typed since. */
+  private restorePending(
+    list: readonly PendingAttachment[],
+    place: "front" | "back" = "front",
+  ): number {
+    let total = this.pending.reduce((n, p) => n + p.bytes, 0);
+    const kept: PendingAttachment[] = [];
+    let dropped = 0;
+    for (const a of list) {
+      if (total + a.bytes > MAX_TOTAL_BYTES) {
+        dropped++;
+        continue;
+      }
+      total += a.bytes;
+      kept.push(a);
+    }
+    this.pending =
+      place === "front"
+        ? [...kept, ...this.pending]
+        : [...this.pending, ...kept];
+    return dropped;
+  }
+
+  /** The line appended when a restore had to leave attachments behind; the
+   * same wording the takeBack warning uses. */
+  private static droppedLine(dropped: number): string {
+    return `\n${dropped} attachment(s) left out: total size limit.`;
+  }
+
   /** Empties the queue back into the composer: the entries are returned
    * and their attachments become pending again. */
   takeBack(): TakeBackResult {
     if (this.queue.length === 0) return { entries: [], droppedAttachments: 0 };
     const entries = this.queue.splice(0);
-    let total = this.pending.reduce((n, p) => n + p.bytes, 0);
-    let dropped = 0;
-    for (const e of entries) {
-      for (const a of e.attachments) {
-        if (total + a.bytes > MAX_TOTAL_BYTES) {
-          dropped++;
-          continue;
-        }
-        total += a.bytes;
-        this.pending.push(a);
-      }
-    }
+    // Oldest first, appended after what is already pending: the queue's
+    // order is the user's, and restorePending puts each batch in front of
+    // the batches still to come.
+    const restored = entries.flatMap((e) => e.attachments);
+    const dropped = this.restorePending(restored, "back");
     this.emit();
     return {
       entries: entries.map((e) => ({

@@ -1091,6 +1091,73 @@ describe("URL hooks", () => {
     expect(h.sent).toEqual([]);
   });
 
+  test("restoring attachments after a refusal respects the total limit", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const h = harness({
+      expandUrls: async () => {
+        await gate;
+        throw new UrlHookError(["https://w/x: 403"]);
+      },
+    });
+    expect(
+      h.controller.addAttachment({
+        path: "big.txt",
+        bytes: MAX_FILE_BYTES,
+        content: "b",
+      }),
+    ).toEqual({ ok: true });
+    const p = h.controller.send("https://w/x");
+    // `send` empties the composer synchronously, so these are the files the
+    // user dropped in while the hooks were still resolving. Five max-size
+    // files fit on their own, but not beside `big.txt`.
+    for (let i = 0; i < 5; i++) {
+      expect(
+        h.controller.addAttachment({
+          path: `n${i}.txt`,
+          bytes: MAX_FILE_BYTES,
+          content: "n",
+        }),
+      ).toEqual({ ok: true });
+    }
+    release();
+    expect((await p).ok).toBe(false);
+    const s = h.controller.getState();
+    // `big.txt` no longer fits; it is reported, not forced in.
+    expect(s.pendingAttachments.map((a) => a.path)).toEqual([
+      "n0.txt",
+      "n1.txt",
+      "n2.txt",
+      "n3.txt",
+      "n4.txt",
+    ]);
+    expect(s.messages).toEqual([
+      {
+        role: "error",
+        text: "https://w/x: 403\n1 attachment(s) left out: total size limit.",
+      },
+    ]);
+    // The composer is usable again: it is under the limit.
+    expect(
+      h.controller.addAttachment({ path: "ok.txt", bytes: 5, content: "o" }),
+    ).toEqual({ ok: true });
+  });
+
+  test("a refusal with room to spare restores everything and says nothing extra", async () => {
+    const h = harness({
+      expandUrls: async () => {
+        throw new UrlHookError(["https://w/x: 403"]);
+      },
+    });
+    h.controller.addAttachment({ path: "a.txt", bytes: 1, content: "a" });
+    await h.controller.send("https://w/x");
+    const s = h.controller.getState();
+    expect(s.pendingAttachments).toEqual([{ path: "a.txt", bytes: 1 }]);
+    expect(s.messages).toEqual([{ role: "error", text: "https://w/x: 403" }]);
+  });
+
   test("a reopen during URL expansion recovers the turn instead of opening a second browser", async () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => {
