@@ -15,11 +15,14 @@ import type {
   ShellResult,
 } from "../shell/run-command.js";
 import {
+  COPIED_NOTICE,
+  COPY_FAILED_NOTICE,
   ChatModel,
   type ChatModelOptions,
   type ChatSessionLike,
   IDLE_SEPARATOR,
   NEW_CHAT_SEPARATOR,
+  NOTHING_TO_COPY_NOTICE,
 } from "./chat-model.js";
 import { modelWith } from "./test-helpers.js";
 
@@ -1906,7 +1909,9 @@ describe("idle close", () => {
       commands: [{ name: "model", description: "Show the model" }],
       ...opts,
       openSession: async (_report, onIdleExpired) => {
-        expire.push(onIdleExpired);
+        // These tests only care that the expiry reached the model, so the
+        // close they hand over is already settled.
+        expire.push(() => onIdleExpired(Promise.resolve()));
         const s = sessions[n++];
         if (s === undefined) throw new Error("no session queued");
         return s.session;
@@ -1915,6 +1920,35 @@ describe("idle close", () => {
     await model.ready;
     return { model, sessions, expire };
   }
+
+  test("idle expiry keeps the in-flight close reachable until it settles", async () => {
+    let expire: ((closing: Promise<void>) => void) | undefined;
+    let settle!: () => void;
+    const closing = new Promise<void>((r) => {
+      settle = r;
+    });
+    const session: ChatSessionLike = {
+      send: async () => "ok",
+      close: async () => {},
+      kill: async () => {},
+    };
+    const model = new ChatModel({
+      login: async () => {},
+      clearAuth: async () => {},
+      openSession: async (_report, onIdleExpired) => {
+        expire = onIdleExpired;
+        return session;
+      },
+    });
+    await model.ready;
+    expire?.(closing);
+    expect(model.session).toBeUndefined();
+    expect(model.idleClosing).toBe(closing);
+    settle();
+    await closing;
+    await Promise.resolve();
+    expect(model.idleClosing).toBeUndefined();
+  });
 
   test("expiry drops the session and the next prompt reopens and sends", async () => {
     const h = await idleHarness();
@@ -2117,5 +2151,295 @@ describe("idle close", () => {
     expect(h.model.messages.filter((m) => m.role === "user")).toEqual([
       { role: "user", text: "hello" },
     ]);
+  });
+});
+
+/** Polls `predicate` every 5 ms until it holds, failing after 1 s with
+ * `label` so a hung expectation names itself instead of timing out blind. */
+async function waitFor(predicate: () => boolean, label = "condition") {
+  const deadline = Date.now() + 1_000;
+  while (!predicate()) {
+    if (Date.now() > deadline)
+      throw new Error(`timed out waiting for ${label}`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+describe("ChatModel: streaming", () => {
+  /** A session whose reply is a deferred and whose `onPartial` the test can
+   * fire by hand, so a partial lands at an exactly known moment. */
+  function streamingSession(format?: "markdown" | "text") {
+    const d = deferred<string>();
+    let emit: ((t: string) => void) | undefined;
+    const session: ChatSessionLike = {
+      responseFormat: format,
+      send: (_p, opts) => {
+        emit = opts?.onPartial;
+        return d.promise;
+      },
+      close: async () => {},
+      kill: async () => {},
+    };
+    return { session, d, emit: (t: string) => emit?.(t) };
+  }
+
+  test("partials update model.partial and never enter messages", async () => {
+    const s = streamingSession();
+    const model = await modelWith(s.session);
+    let changes = 0;
+    model.onChange = () => changes++;
+    void model.submit("hi");
+    await waitFor(() => model.status === "busy", "busy");
+    expect(model.partial).toBeUndefined();
+    const before = changes;
+    s.emit("He");
+    expect(model.partial).toBe("He");
+    expect(changes).toBe(before + 1);
+    expect(model.messages.map((m) => m.role)).toEqual(["user"]);
+    s.d.resolve("Hello");
+    await waitFor(() => model.status === "idle", "idle");
+    expect(model.partial).toBeUndefined();
+    expect(model.messages.at(-1)).toEqual({ role: "assistant", text: "Hello" });
+  });
+
+  test("a markdown session stamps format on the assistant message", async () => {
+    const s = streamingSession("markdown");
+    const model = await modelWith(s.session);
+    void model.submit("hi");
+    await waitFor(() => model.status === "busy", "busy");
+    s.d.resolve("# T");
+    await waitFor(() => model.status === "idle", "idle");
+    expect(model.messages.at(-1)).toEqual({
+      role: "assistant",
+      text: "# T",
+      format: "markdown",
+    });
+  });
+
+  test("a failed turn keeps the partial as an incomplete assistant message before the error", async () => {
+    const s = streamingSession("markdown");
+    const model = await modelWith(s.session);
+    void model.submit("hi");
+    await waitFor(() => model.status === "busy", "busy");
+    s.emit("half a rep");
+    s.d.reject(
+      new ResponseTimeoutError(
+        "Timed out during waitForResponse after 1000 ms.",
+      ),
+    );
+    await waitFor(() => model.status === "idle", "idle");
+    expect(model.partial).toBeUndefined();
+    expect(model.messages.slice(-2)).toEqual([
+      {
+        role: "assistant",
+        text: "half a rep",
+        format: "markdown",
+        incomplete: true,
+      },
+      {
+        role: "error",
+        text: "Timed out during waitForResponse after 1000 ms.",
+      },
+    ]);
+  });
+
+  test("a failed turn without a partial pushes only the error", async () => {
+    const s = streamingSession();
+    const model = await modelWith(s.session);
+    void model.submit("hi");
+    await waitFor(() => model.status === "busy", "busy");
+    s.d.reject(new ResponseTimeoutError("t"));
+    await waitFor(() => model.status === "idle", "idle");
+    expect(model.messages.map((m) => m.role)).toEqual(["user", "error"]);
+  });
+
+  test("a partial from a turn made stale by a reset is dropped", async () => {
+    const s = streamingSession();
+    const model = await modelWith(s.session, {
+      openSession: async () => streamingSession().session,
+    });
+    void model.submit("hi");
+    await waitFor(() => model.status === "busy", "busy");
+    await model.reset();
+    let changes = 0;
+    model.onChange = () => changes++;
+    s.emit("stale");
+    expect(model.partial).toBeUndefined();
+    expect(changes).toBe(0);
+  });
+
+  test("a reset clears the partial of the turn it interrupts", async () => {
+    const s = streamingSession();
+    const model = await modelWith(s.session, {
+      openSession: async () => streamingSession().session,
+    });
+    void model.submit("hi");
+    await waitFor(() => model.status === "busy", "busy");
+    s.emit("half");
+    expect(model.partial).toBe("half");
+    await model.reset();
+    expect(model.partial).toBeUndefined();
+  });
+});
+
+describe("ChatModel: /copy", () => {
+  /** A session that answers every prompt with "Echo: <prompt>". */
+  function echoSession(): ChatSessionLike {
+    return {
+      send: async (prompt) => `Echo: ${prompt}`,
+      close: async () => {},
+      kill: async () => {},
+    };
+  }
+
+  test("copies the newest complete assistant reply, as the provider returned it", async () => {
+    const copied: string[] = [];
+    const model = await modelWith(echoSession(), {
+      copy: async (t) => {
+        copied.push(t);
+        return true;
+      },
+    });
+    await model.submit("one");
+    await model.submit("two");
+    const before = model.messages.length;
+    expect(await model.submit("/copy")).toBe(true);
+    expect(copied).toEqual(["Echo: two"]);
+    expect(model.notice).toBe(COPIED_NOTICE);
+    expect(model.messages.length).toBe(before); // no turn, no entry
+  });
+
+  test("skips an incomplete reply", async () => {
+    const copied: string[] = [];
+    const d = deferred<string>();
+    let emit: ((t: string) => void) | undefined;
+    const failing: ChatSessionLike = {
+      send: (_p, opts) => {
+        emit = opts?.onPartial;
+        return d.promise;
+      },
+      close: async () => {},
+      kill: async () => {},
+    };
+    const model = await modelWith(echoSession(), {
+      copy: async (t) => {
+        copied.push(t);
+        return true;
+      },
+      openSession: async () => failing,
+    });
+    await model.submit("one");
+    // Replace the echo session with the streaming one, then fail its turn
+    // after a partial arrived: the model keeps it as `incomplete`.
+    await model.reset();
+    void model.submit("two");
+    await waitFor(() => model.status === "busy", "busy");
+    emit?.("half a re");
+    d.reject(new ResponseTimeoutError("timed out"));
+    await waitFor(() => model.status === "idle", "idle");
+    expect(
+      model.messages.some((m) => m.role === "assistant" && m.incomplete),
+    ).toBe(true);
+
+    await model.submit("/copy");
+    expect(copied).toEqual(["Echo: one"]);
+    expect(model.notice).toBe(COPIED_NOTICE);
+  });
+
+  test("nothing to copy yet", async () => {
+    const model = await modelWith(echoSession(), { copy: async () => true });
+    await model.submit("/copy");
+    expect(model.notice).toBe(NOTHING_TO_COPY_NOTICE);
+  });
+
+  test("copy failed", async () => {
+    const model = await modelWith(echoSession(), { copy: async () => false });
+    await model.submit("hi");
+    await model.submit("/copy");
+    expect(model.notice).toBe(COPY_FAILED_NOTICE);
+  });
+
+  test("a rejecting copy is a failure, not a crash", async () => {
+    const model = await modelWith(echoSession(), {
+      copy: async () => {
+        throw new Error("no clipboard");
+      },
+    });
+    await model.submit("hi");
+    await model.submit("/copy");
+    expect(model.notice).toBe(COPY_FAILED_NOTICE);
+  });
+
+  test("without a copy function nothing is claimed to be copied", async () => {
+    const model = await modelWith(echoSession());
+    await model.submit("hi");
+    await model.submit("/copy");
+    expect(model.notice).toBe(COPY_FAILED_NOTICE);
+  });
+
+  test("works while a turn is pending: copies the last settled reply", async () => {
+    const copied: string[] = [];
+    const d = deferred<string>();
+    const slow: ChatSessionLike = {
+      send: async () => d.promise,
+      close: async () => {},
+      kill: async () => {},
+    };
+    const model = await modelWith(echoSession(), {
+      copy: async (t) => {
+        copied.push(t);
+        return true;
+      },
+      openSession: async () => slow,
+    });
+    await model.submit("one");
+    await model.reset();
+    void model.submit("two");
+    await waitFor(() => model.status === "busy", "busy");
+    expect(await model.submit("/copy")).toBe(true);
+    expect(copied).toEqual(["Echo: one"]);
+    expect(model.queue).toEqual([]); // a built-in never queues
+    d.resolve("second reply");
+    await waitFor(() => model.status === "idle", "idle");
+    expect(model.messages.at(-1)).toMatchObject({
+      role: "assistant",
+      text: "second reply",
+    });
+  });
+
+  test("works after the idle close, without opening a session", async () => {
+    const copied: string[] = [];
+    let expire: ((closing: Promise<void>) => void) | undefined;
+    let opens = 0;
+    const model = new ChatModel({
+      login: async () => {},
+      clearAuth: async () => {},
+      copy: async (t) => {
+        copied.push(t);
+        return true;
+      },
+      openSession: async (_report, onIdleExpired) => {
+        opens++;
+        expire = onIdleExpired;
+        return echoSession();
+      },
+    });
+    await model.ready;
+    await model.submit("one");
+    expire?.(Promise.resolve());
+    expect(model.idleClosed).toBe(true);
+    expect(await model.submit("/copy")).toBe(true);
+    expect(copied).toEqual(["Echo: one"]);
+    expect(opens).toBe(1);
+    expect(model.idleClosed).toBe(true);
+  });
+
+  test("notify sets the notice and repaints", async () => {
+    const model = await modelWith(echoSession());
+    let changes = 0;
+    model.onChange = () => changes++;
+    model.notify("hello");
+    expect(model.notice).toBe("hello");
+    expect(changes).toBe(1);
   });
 });

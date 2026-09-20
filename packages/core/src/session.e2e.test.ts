@@ -3,7 +3,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDummyProvider } from "@chatbridge/example-dummy-chat/provider";
-import { startDummyChat } from "@chatbridge/example-dummy-chat/server";
+import {
+  dummyReply,
+  startDummyChat,
+} from "@chatbridge/example-dummy-chat/server";
 import type { Provider } from "@chatbridge/provider";
 import { AuthStore, BrowserRuntime } from "@chatbridge/runtime";
 import { ChatSession } from "./chat-session.js";
@@ -106,6 +109,46 @@ describe("ChatSession", () => {
     cleanups.push(() => session.close());
     expect(await session.send("first")).toBe("Echo: first");
     expect(await session.send("second")).toBe("Echo: second");
+  }, 60_000);
+
+  test("an interactive-style send sees growing partials and a Markdown final text", async () => {
+    const server = await startDummyChat(0);
+    cleanups.push(server.stop);
+    const provider = createDummyProvider(server.url);
+    const store = tempStore(provider.name);
+    await prepareAuth(provider, store);
+    server.setChunkDelayMs(60);
+
+    const session = await ChatSession.open({
+      provider,
+      authStore: store,
+      headless: true,
+      timeoutMs: 30_000,
+    });
+    cleanups.push(() => session.close());
+    expect(session.responseFormat).toBe("markdown");
+
+    const partials: string[] = [];
+    const reply = await session.send("md: table please", {
+      onPartial: (text) => partials.push(text),
+    });
+    expect(reply).toBe(dummyReply("md: table please"));
+    expect(partials.length).toBeGreaterThanOrEqual(2);
+    for (let i = 1; i < partials.length; i++) {
+      expect(partials[i]?.length).toBeGreaterThan(partials[i - 1]?.length ?? 0);
+    }
+
+    // Second turn: no partial may carry the first turn's text, which is what
+    // the provider's `assistants < users` guard exists to prevent.
+    const second: string[] = [];
+    const secondReply = await session.send("md: again", {
+      onPartial: (text) => second.push(text),
+    });
+    expect(secondReply).toBe(dummyReply("md: again"));
+    expect(second.length).toBeGreaterThanOrEqual(2);
+    for (const text of second) {
+      expect(text.startsWith("Echo: md: again")).toBe(true);
+    }
   }, 60_000);
 
   test("a response timeout leaves the session usable", async () => {

@@ -8,6 +8,8 @@ import {
   BoxRenderable,
   type CliRenderer,
   type KeyEvent,
+  MarkdownRenderable,
+  type Renderable,
   ScrollBoxRenderable,
   type StyledText,
   TextRenderable,
@@ -17,10 +19,23 @@ import { formatSize } from "../mentions/expand-mentions.js";
 import type { FileIndex } from "../mentions/file-index.js";
 import { mentionAtCursor } from "../mentions/parse-mentions.js";
 import { truncatedNote } from "../shell/format-result.js";
-import type { ChatModel, Message, Role } from "./chat-model.js";
+import {
+  COPIED_NOTICE,
+  COPY_FAILED_NOTICE,
+  type ChatModel,
+  type Message,
+  type Role,
+} from "./chat-model.js";
 import { MAX_ROWS, MentionPopup, type PopupRow } from "./mention-popup.js";
 import type { ResolvedSpinner } from "./spinner.js";
-import { MUTED_COLOR, type Styler, colored, styled, theme } from "./theme.js";
+import {
+  MUTED_COLOR,
+  type Styler,
+  colored,
+  markdownSyntaxStyle,
+  styled,
+  theme,
+} from "./theme.js";
 
 // Status-row texts must fit 80 columns: the row is one fixed line and
 // clips. Shift+Enter and Ctrl+J are left out for room (README documents
@@ -42,6 +57,15 @@ export const QUEUE_GUIDE = "Up take back · Ctrl+R reopen · Ctrl+C quit";
  * about it, so the guide is the explanation. */
 export const IDLE_CLOSED_GUIDE =
   "Browser closed after being idle · your next prompt reopens it";
+/** The muted line under a reply that stopped before the service said it was
+ * done: the text above it is whatever had arrived. */
+export const INCOMPLETE_NOTE = "(incomplete)";
+/** The key guide appended to the busy status line. The frame and the label
+ * moved to the pending row, which leaves room for it. */
+export const BUSY_GUIDE = "Ctrl+R reopen · Ctrl+C quit";
+/** How long a `model.notice` (a `/copy` outcome) stays on the status line
+ * before the state's own line comes back. */
+export const NOTICE_MS = 2_000;
 /** Rows the queue list may take; a longer queue ends with a "+N more" row. */
 export const MAX_QUEUE_ROWS = 5;
 export const RESETTING_STATUS = "Reopening browser...";
@@ -129,6 +153,11 @@ export interface ChatViewOptions {
   index: FileIndex;
   /** The provider's commands; the `/` popup lists them after the built-ins. */
   commands?: readonly CommandInfo[];
+  /** How long a `model.notice` stays on the status line. Tests shorten it. */
+  noticeMs?: number;
+  /** Puts a finished mouse selection over the history on the system
+   * clipboard. The same function the model got for `/copy`. */
+  copy?: (text: string) => Promise<boolean>;
 }
 
 /** KeyHandler's `on` is typed through a generic EventEmitter that does not
@@ -138,6 +167,18 @@ interface KeypressSource {
   off(event: "keypress", handler: (key: KeyEvent) => void): unknown;
 }
 
+/** What a finished mouse selection hands the handler. */
+interface TextSelection {
+  getSelectedText(): string;
+}
+
+/** The renderer's `on` is typed through the same generic EventEmitter as
+ * KeyHandler's; `"selection"` fires once per gesture, on left mouse up. */
+interface SelectionSource {
+  on(event: "selection", handler: (s: TextSelection | null) => void): unknown;
+  off(event: "selection", handler: (s: TextSelection | null) => void): unknown;
+}
+
 /** The renderables of one shell entry that change after it is drawn. */
 interface ShellEntry {
   message: Message;
@@ -145,6 +186,17 @@ interface ShellEntry {
   footer: TextRenderable;
   drawnOutput: string;
   drawnFooter: string;
+}
+
+/** The renderables of the turn in flight, drawn as the last row of the
+ * history. `body` appears with the first partial; until then the whole row
+ * is the indicator written into `label`. */
+interface PendingRow {
+  box: BoxRenderable;
+  label: TextRenderable;
+  /** Plain text, or a MarkdownRenderable for a `markdown` session. */
+  body: Renderable | undefined;
+  tail: TextRenderable;
 }
 
 /** Builds the OpenTUI tree for one ChatModel and mirrors its state.
@@ -166,14 +218,31 @@ export class ChatView {
   private readonly index: FileIndex;
   private readonly commands: readonly CommandInfo[];
   private readonly onKeypress: (key: KeyEvent) => void;
+  private readonly onSelect: (s: TextSelection | null) => void;
+  /** Undefined when the host gave no clipboard: selecting then does nothing
+   * rather than reporting a failure the user cannot act on. */
+  private readonly copy: ((text: string) => Promise<boolean>) | undefined;
   private rendered = 0;
   /** Shell entries already drawn; their output and footer are refreshed
    * from the model on every update (live output, held → sent). */
   private readonly shellEntries: ShellEntry[] = [];
+  /** The row of the turn in flight, while there is one. */
+  private pendingRow: PendingRow | undefined;
   private spinner: ReturnType<typeof setInterval> | undefined;
+  /** Clears `model.notice` when its time is up; undefined while none is
+   * showing. */
+  private noticeTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The `model.noticeSeq` the timer in flight belongs to, so a repaint of
+   * the same notice does not keep pushing its end away while a fresh
+   * notify() of the same text still gets a full window of its own. */
+  private shownNoticeSeq: number | undefined;
+  private readonly noticeMs: number;
   private spinnerMode: "busy" | "running" | undefined;
   private frame = 0;
   private readonly spinnerSpec: ResolvedSpinner;
+  /** Built once: every Markdown body shares it, and it owns a native handle
+   * that destroy() releases. */
+  private readonly markdownStyle = markdownSyntaxStyle();
   /** Built once from the vendor colours so a tick does not rebuild them. */
   private readonly frameStyler: Styler | undefined;
   private readonly labelStyler: Styler | undefined;
@@ -197,6 +266,8 @@ export class ChatView {
     this.index = opts.index;
     this.commands = opts.commands ?? [];
     this.spinnerSpec = opts.spinner;
+    this.noticeMs = opts.noticeMs ?? NOTICE_MS;
+    this.copy = opts.copy;
     this.frameStyler =
       opts.spinner.frameColor === undefined
         ? undefined
@@ -223,6 +294,8 @@ export class ChatView {
         ),
         wrapMode: "none",
         marginBottom: 1,
+        // Chrome, not message text: it must stay out of a selection.
+        selectable: false,
       }),
     );
     this.body = new BoxRenderable(renderer, {
@@ -245,7 +318,11 @@ export class ChatView {
     });
     for (const line of opts.banner) {
       this.banner.add(
-        new TextRenderable(renderer, { content: line, wrapMode: "none" }),
+        new TextRenderable(renderer, {
+          content: line,
+          wrapMode: "none",
+          selectable: false,
+        }),
       );
     }
     this.history = new ScrollBoxRenderable(renderer, {
@@ -269,6 +346,7 @@ export class ChatView {
         content: "",
         visible: false,
         wrapMode: "none",
+        selectable: false,
       });
       this.queueRows.push(row);
       this.queueList.add(row);
@@ -286,6 +364,7 @@ export class ChatView {
       id: "prompt",
       content: styled(theme.muted("> ")),
       flexShrink: 0,
+      selectable: false,
     });
     inputBox.add(this.prompt);
     this.input = new TextareaRenderable(renderer, {
@@ -318,6 +397,7 @@ export class ChatView {
       // input box off the bottom.
       height: 1,
       flexShrink: 0,
+      selectable: false,
     });
     root.add(this.status);
     renderer.root.add(root);
@@ -329,6 +409,10 @@ export class ChatView {
       "keypress",
       this.onKeypress,
     );
+    // OpenTUI owns the mouse, so the terminal's own select-to-copy is gone;
+    // this puts it back for the history's message text.
+    this.onSelect = (selection) => this.onSelection(selection);
+    (renderer as unknown as SelectionSource).on("selection", this.onSelect);
     this.input.onContentChange = () => {
       this.detectShellMode();
       this.fitInput();
@@ -363,7 +447,12 @@ export class ChatView {
     // A turn still in flight when the view is destroyed would otherwise
     // write to renderables the renderer has already torn down.
     if (this.torn) return;
-    if (this.bannerShown && this.model.messages.length > 0) {
+    // A pending row is enough to swap the banner out: a shell turn is
+    // auto-sent and has no user message to do it.
+    if (
+      this.bannerShown &&
+      (this.model.messages.length > 0 || this.model.status === "busy")
+    ) {
       this.bannerShown = false;
       this.body.remove(this.banner);
       this.body.add(this.history);
@@ -371,7 +460,20 @@ export class ChatView {
     for (; this.rendered < this.model.messages.length; this.rendered++) {
       const message = this.model.messages[this.rendered];
       if (!message) continue;
-      this.history.add(this.messageBox(message));
+      const row = this.pendingRow;
+      if (
+        row?.body !== undefined &&
+        message.role === "assistant" &&
+        message.incomplete === undefined
+      ) {
+        // The streamed row already shows this reply: settle it in place
+        // rather than drawing a second box under it.
+        this.promotePending(row, message);
+      } else {
+        // The row is always last; anything appended has to go above it.
+        this.dropPending();
+        this.history.add(this.messageBox(message));
+      }
       // A drained turn starts while the view is still busy, so the spinner
       // is never restarted; the user message drawn exactly once per turn is
       // what restarts the elapsed timer, the frame cycle and the label.
@@ -379,7 +481,62 @@ export class ChatView {
     }
     for (const entry of this.shellEntries) this.refreshShell(entry);
     this.renderQueue();
-    if (this.statusPinned) return;
+    // After the status: startSpinner() picks the turn's label there, and the
+    // pending row paints it.
+    if (this.statusPinned) {
+      this.syncPending();
+      return;
+    }
+    this.paintStatus();
+    // After paintStatus, which keeps the spinner running for the state the
+    // model is in: the notice only borrows the line it painted.
+    if (this.model.notice !== undefined) this.paintNotice(this.model.notice);
+    this.syncPending();
+  }
+
+  /** Copies what a finished drag selected. The event fires once per gesture,
+   * on mouse up, so there is nothing to debounce. Only message text is
+   * selectable, so what arrives here is already free of chrome. Nothing may
+   * throw back into the renderer's emitter, and a whitespace-only selection
+   * (a plain click) is not a copy. */
+  private onSelection(selection: TextSelection | null): void {
+    if (this.torn || this.copy === undefined) return;
+    let text = "";
+    try {
+      text = selection?.getSelectedText() ?? "";
+    } catch {
+      // A selection that cannot report itself is no selection.
+      return;
+    }
+    if (text.trim() === "") return;
+    void this.copy(text)
+      .catch(() => false)
+      .then((ok) => {
+        if (this.torn) return;
+        this.model.notify(ok ? COPIED_NOTICE : COPY_FAILED_NOTICE);
+      });
+  }
+
+  /** Puts a short-lived notice on the status line and schedules its end.
+   * The state's own line comes back when the timer clears `model.notice`
+   * and repaints. */
+  private paintNotice(text: string): void {
+    this.status.content = styled(theme.muted(text));
+    const seq = this.model.noticeSeq;
+    if (this.shownNoticeSeq === seq && this.noticeTimer !== undefined) return;
+    this.shownNoticeSeq = seq;
+    clearTimeout(this.noticeTimer);
+    this.noticeTimer = setTimeout(() => {
+      this.noticeTimer = undefined;
+      this.shownNoticeSeq = undefined;
+      this.model.notice = undefined;
+      this.update();
+    }, this.noticeMs);
+  }
+
+  /** Puts the model's status on the status line and runs or stops the
+   * spinner interval that repaints it. */
+  private paintStatus(): void {
     switch (this.model.status) {
       case "busy":
         this.startSpinner("busy");
@@ -442,6 +599,160 @@ export class ChatView {
     }
   }
 
+  /** Adds, refreshes or removes the row of the turn in flight. It is the
+   * last child of the history and is not a message: it never reaches
+   * `model.messages`, and nothing in it is selectable. */
+  private syncPending(): void {
+    if (this.model.status !== "busy") {
+      this.dropPending();
+      return;
+    }
+    this.pendingRow ??= this.buildPending();
+    const row = this.pendingRow;
+    const partial = this.model.partial;
+    if (partial !== undefined) {
+      if (row.body === undefined) {
+        // First partial: the row stops being an indicator and becomes the
+        // reply taking shape, with the spinner demoted to the tail.
+        const body = this.bodyFor(
+          { text: partial, ...this.pendingFormat() },
+          true,
+        );
+        body.selectable = false;
+        row.body = body;
+        row.label.content = LABELS.assistant();
+        row.tail.visible = true;
+        row.box.insertBefore(body, row.tail);
+      } else {
+        this.setBody(row.body, partial);
+      }
+    }
+    this.paintPending();
+  }
+
+  /** The empty row, added to the history as its last child. */
+  private buildPending(): PendingRow {
+    const box = new BoxRenderable(this.renderer, {
+      id: "pending",
+      flexDirection: "column",
+      marginBottom: 1,
+    });
+    const label = new TextRenderable(this.renderer, {
+      content: "",
+      wrapMode: "none",
+      selectable: false,
+    });
+    // Hidden until a partial arrives: with no body the indicator is the
+    // whole row, and a hidden renderable takes no rows.
+    const tail = new TextRenderable(this.renderer, {
+      content: "",
+      wrapMode: "none",
+      selectable: false,
+      visible: false,
+    });
+    box.add(label);
+    box.add(tail);
+    this.history.add(box);
+    return { box, label, body: undefined, tail };
+  }
+
+  /** Writes the current frame and elapsed time into the row: into the label
+   * while the row is the indicator, into the tail once a body is there. */
+  private paintPending(): void {
+    const row = this.pendingRow;
+    if (row === undefined || this.torn) return;
+    const elapsed = Math.floor((Date.now() - this.startedAt) / 1000);
+    const raw = this.spinnerSpec.frames[this.frame] ?? "";
+    const frame = this.frameStyler === undefined ? raw : this.frameStyler(raw);
+    if (row.body === undefined) {
+      row.label.content = styled(
+        frame,
+        " ",
+        this.labelStyler === undefined
+          ? this.label
+          : this.labelStyler(this.label),
+        `  ${elapsed}s`,
+      );
+      return;
+    }
+    row.tail.content = styled(frame, theme.muted(` ${elapsed}s`));
+  }
+
+  /** Retires the row without settling it: an interrupted turn, or a message
+   * that has to be appended under it. */
+  private dropPending(): void {
+    const row = this.pendingRow;
+    if (row === undefined) return;
+    this.pendingRow = undefined;
+    // The renderer may already be gone (SIGINT under a running turn).
+    if (this.torn) return;
+    this.history.remove(row.box);
+    row.box.destroyRecursively();
+  }
+
+  /** Turns the row of the turn in flight into the settled reply's box: the
+   * same renderables stay where they are, so nothing flickers or jumps. */
+  private promotePending(row: PendingRow, message: Message): void {
+    this.pendingRow = undefined;
+    // The id is the handle on the row in flight; the settled box is an
+    // ordinary message and must not answer to it.
+    row.box.id = `reply-${this.rendered}`;
+    row.box.remove(row.tail);
+    row.tail.destroyRecursively();
+    if (row.body !== undefined) {
+      // The final text is not always the last partial: some providers only
+      // send the finished reply's own text at the end.
+      this.setBody(row.body, message.text, true);
+      row.body.selectable = true;
+    }
+  }
+
+  /** The reply format the row in flight is drawn with: the session's, since
+   * the row is always the assistant's reply taking shape. */
+  private pendingFormat(): { format?: "markdown" } {
+    return this.model.session?.responseFormat === "markdown"
+      ? { format: "markdown" }
+      : {};
+  }
+
+  /** The renderable carrying a message's text, whether settled or still
+   * streaming. Only a reply of a `markdown` provider carries the format, so
+   * user, error and shell text is never reinterpreted as markup. Markdown
+   * concealment is asynchronous and fails open: when tree-sitter cannot
+   * highlight, the raw markers show rather than an error. */
+  private bodyFor(
+    message: { text: string; role?: Role; format?: "markdown" },
+    streaming: boolean,
+  ): Renderable {
+    if (message.format === "markdown") {
+      return new MarkdownRenderable(this.renderer, {
+        content: message.text,
+        syntaxStyle: this.markdownStyle,
+        conceal: true,
+        streaming,
+      });
+    }
+    return new TextRenderable(this.renderer, {
+      content:
+        message.role === "error"
+          ? styled(theme.errorText(message.text))
+          : message.text,
+      wrapMode: "word",
+    });
+  }
+
+  /** Rewrites a body's text. `settled` says the turn is over, which is what
+   * takes the Markdown body out of streaming mode so its trailing block is
+   * parsed as finished. */
+  private setBody(body: Renderable, text: string, settled = false): void {
+    if (body instanceof MarkdownRenderable) {
+      body.content = text;
+      if (settled) body.streaming = false;
+      return;
+    }
+    (body as TextRenderable).content = text;
+  }
+
   /** Number of entries waiting in the queue. */
   private get queued(): number {
     return this.model.queue.length;
@@ -494,8 +805,18 @@ export class ChatView {
       "keypress",
       this.onKeypress,
     );
+    (this.renderer as unknown as SelectionSource).off(
+      "selection",
+      this.onSelect,
+    );
     this.popup.destroy();
     this.stopSpinner();
+    clearTimeout(this.noticeTimer);
+    this.noticeTimer = undefined;
+    // Forgets the row without touching the renderer, which may be gone.
+    this.dropPending();
+    // Owns a native handle of its own, independent of the renderer.
+    this.markdownStyle.destroy();
   }
 
   /** Enter: a message, or in shell mode a command. Mirrors the cases the
@@ -545,6 +866,15 @@ export class ChatView {
     if (key.ctrl && key.name === "r") {
       key.preventDefault();
       void this.model.reset();
+      return;
+    }
+    // The history never takes focus (the renderer runs with autoFocus off),
+    // so nothing else claims these keys; they page it from wherever the
+    // cursor is. A popup does not use them either, so it stays open.
+    if (key.name === "pageup" || key.name === "pagedown") {
+      key.preventDefault();
+      const page = Math.max(1, this.history.height - 1);
+      this.history.scrollBy(key.name === "pageup" ? -page : page);
       return;
     }
     if (this.shell && this.input.plainText === "") {
@@ -745,6 +1075,7 @@ export class ChatView {
         new TextRenderable(this.renderer, {
           content: styled(theme.muted(`── ${message.text} ──`)),
           wrapMode: "none",
+          selectable: false,
         }),
       );
       return box;
@@ -761,7 +1092,12 @@ export class ChatView {
       return box;
     }
     box.add(
-      new TextRenderable(this.renderer, { content: LABELS[message.role]() }),
+      new TextRenderable(this.renderer, {
+        content: LABELS[message.role](),
+        // A label is chrome: a selection spanning messages must come back as
+        // their text alone.
+        selectable: false,
+      }),
     );
     if (message.role === "shell") {
       box.add(
@@ -779,6 +1115,7 @@ export class ChatView {
         content: "",
         wrapMode: "word",
         visible: false,
+        selectable: false,
       });
       box.add(output);
       box.add(footer);
@@ -793,19 +1130,21 @@ export class ChatView {
       this.refreshShell(entry);
       return box;
     }
-    box.add(
-      new TextRenderable(this.renderer, {
-        content:
-          message.role === "error"
-            ? styled(theme.errorText(message.text))
-            : message.text,
-        wrapMode: "word",
-      }),
-    );
+    box.add(this.bodyFor(message, false));
+    if (message.incomplete) {
+      box.add(
+        new TextRenderable(this.renderer, {
+          content: styled(theme.muted(INCOMPLETE_NOTE)),
+          wrapMode: "none",
+          selectable: false,
+        }),
+      );
+    }
     for (const a of message.attachments ?? []) {
       box.add(
         new TextRenderable(this.renderer, {
           content: styled(theme.muted(`📎 ${a.path} (${formatSize(a.bytes)})`)),
+          selectable: false,
         }),
       );
     }
@@ -843,6 +1182,9 @@ export class ChatView {
       if (this.torn) return this.stopSpinner();
       this.frame = (this.frame + 1) % this.spinnerSpec.frames.length;
       this.paintSpinnerStatus();
+      // The same interval animates the row in flight and ticks its elapsed
+      // time; the status line alone would leave the row frozen.
+      this.paintPending();
     };
     tick();
     this.spinner = setInterval(tick, this.spinnerSpec.intervalMs);
@@ -870,6 +1212,9 @@ export class ChatView {
    * modes and the vendor label only in the busy row, which is the one it
    * describes; the counter never does.  */
   private paintSpinnerStatus(): void {
+    // A notice owns the line while it is up, in either spinner mode; the
+    // tick still animates the pending row.
+    if (this.model.notice !== undefined) return;
     const elapsed = Math.floor((Date.now() - this.startedAt) / 1000);
     const n = this.queued;
     const raw = this.spinnerSpec.frames[this.frame] ?? "";
@@ -884,14 +1229,11 @@ export class ChatView {
       );
       return;
     }
+    // The frame and the label are on the pending row, where the reply will
+    // land; the status line is left with the wait's numbers and the keys.
     const queued = n > 0 ? `  · ${n} queued` : "";
     this.status.content = styled(
-      frame,
-      " ",
-      this.labelStyler === undefined
-        ? this.label
-        : this.labelStyler(this.label),
-      `  ${elapsed}s / ${this.budgetSec}s${queued}`,
+      theme.muted(`${elapsed}s / ${this.budgetSec}s${queued} · ${BUSY_GUIDE}`),
     );
   }
 

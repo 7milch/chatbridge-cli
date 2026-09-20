@@ -9,6 +9,7 @@ import {
   type ParsedSlash,
   type ProviderCommandResult,
   ResponseTimeoutError,
+  type SendOptions,
   UrlHookError,
   closeOrKill,
   commandNamesOf,
@@ -39,7 +40,10 @@ import {
 
 /** What the model needs from a ChatSession; lets tests inject a fake. */
 export interface ChatSessionLike {
-  send(prompt: string): Promise<string>;
+  send(prompt: string, opts?: SendOptions): Promise<string>;
+  /** What the provider's replies are written in, so the history can pick a
+   * renderer. Optional so older fakes keep working; absent means "text". */
+  readonly responseFormat?: "markdown" | "text";
   /** Optional so older fakes keep working; the real ChatSession has it. */
   runCommand?(name: string, args: string): Promise<ProviderCommandResult>;
   close(): Promise<void>;
@@ -65,6 +69,13 @@ export interface Message {
   /** `shell` entries: the shell could not be started; outside a reset, the
    * error entry pushed right after it says why. */
   failed?: boolean;
+  /** `assistant` entries: render `text` as Markdown. Absent: verbatim. */
+  format?: "markdown";
+  /** `assistant` entries: the turn failed after this much had arrived. Kept
+   * because a timeout is often only the completion check failing, so the
+   * text on screen is usually the whole reply minus the last token. Skipped
+   * by `/copy`: half a reply is not what the user meant to copy. */
+  incomplete?: true;
 }
 /** opening: the first session is being opened; the UI is already up and
  * anything typed is queued. idle: accepting input. busy: a turn is in
@@ -94,6 +105,11 @@ export const IDLE_SEPARATOR = "reopened after idle";
 /** Remedies for the two failures a user can fix from inside the TUI. */
 export const AUTH_HINT = "Type /login to log in.";
 export const INSTALL_HINT = "Run: npx playwright install chromium";
+/** Status-line notices `/copy` leaves behind. Lower case: they sit on the
+ * status line next to the state's own text, not in the history. */
+export const COPIED_NOTICE = "copied";
+export const COPY_FAILED_NOTICE = "copy failed";
+export const NOTHING_TO_COPY_NOTICE = "nothing to copy yet";
 
 export interface ChatModelOptions {
   /** Opens a session: called once by the constructor and by every reset.
@@ -101,10 +117,11 @@ export interface ChatModelOptions {
    * entry in the history rather than a crash before the first frame.
    * `report` paints the status row while the open runs (retry attempts);
    * `onIdleExpired` is handed to the session so core can tell the model
-   * that it closed the browser after the idle timeout. */
+   * that it closed the browser after the idle timeout, passing the promise
+   * of that close so teardown can wait for the auth-state save. */
   openSession: (
     report: (message: string) => void,
-    onIdleExpired: () => void,
+    onIdleExpired: (closing: Promise<void>) => void,
   ) => Promise<ChatSessionLike>;
   /** `/login`: the headful login; resolves when the auth state is saved. */
   login: (opts: {
@@ -127,6 +144,10 @@ export interface ChatModelOptions {
   /** The provider's `/commands` (name and description); `/help` lists them
    * and submit() recognises them. Default: none. */
   commands?: readonly CommandInfo[];
+  /** `/copy`: puts the text on the system clipboard, resolving to whether
+   * it got there. Default: a function that always fails — a model built
+   * without a clipboard says "copy failed" rather than lying. */
+  copy?: (text: string) => Promise<boolean>;
 }
 
 /** Conversation state for the interactive UI. No OpenTUI dependency. */
@@ -136,12 +157,24 @@ export class ChatModel {
   /** The last fatal error; the reason the model is `dead`. Cleared by a
    * successful reset. Reported by the app when the user quits. */
   fatal: unknown = undefined;
+  /** The reply text so far of the turn in flight; undefined outside a turn
+   * and before its first partial. Deliberately not a message: nothing that
+   * reads `messages` (copying, a future transcript file) can then pick up
+   * half a reply. The view draws it as the pending row instead. */
+  partial: string | undefined;
   /** Results waiting for the next submit (autoSend: false). */
   readonly heldResults: ShellResult[] = [];
   /** Messages typed while a turn or a shell command was in flight (or the
    * model was resetting or dead), trimmed, in arrival order. Drained one
    * entry per turn. */
   readonly queue: string[] = [];
+  /** A short message for the status line (`/copy`'s outcome). The view
+   * shows it for a moment and clears it; the model only sets it. */
+  notice: string | undefined;
+  /** Bumped by every notify(), so the view can tell a fresh notice from a
+   * repaint of the one it is already showing — even when the text is the
+   * same, which selecting twice makes routine. */
+  noticeSeq = 0;
   /** Called after every state change. */
   onChange: () => void = () => {};
   /** Resolves when the initial open settled (idle or dead). Never rejects,
@@ -155,6 +188,10 @@ export class ChatModel {
   /** True once the idle timeout closed the browser and no session has
    * replaced it. The next prompt reopens; the view says so. */
   idleClosed = false;
+  /** The idle close core is still running, if any. The model has already
+   * dropped that session, so this is the only handle teardown has to wait
+   * for the auth-state save. Cleared once it settles. */
+  idleClosing: Promise<void> | undefined;
   /** Where a turn that ended while `/login` was running left the model.
    * The login owns the status meanwhile, so the turn records its outcome
    * here and runLogin restores it instead of the status it captured. */
@@ -177,7 +214,7 @@ export class ChatModel {
   private running: RunningCommand | undefined;
   private readonly openSession: (
     report: (message: string) => void,
-    onIdleExpired: () => void,
+    onIdleExpired: (closing: Promise<void>) => void,
   ) => Promise<ChatSessionLike>;
   private readonly login: ChatModelOptions["login"];
   private readonly clearAuth: () => Promise<void>;
@@ -191,6 +228,7 @@ export class ChatModel {
   private readonly cwd: string;
   private readonly commands: readonly CommandInfo[];
   private readonly commandNames: ReadonlySet<string>;
+  private readonly copy: (text: string) => Promise<boolean>;
 
   constructor(opts: ChatModelOptions) {
     this.openSession = opts.openSession;
@@ -204,6 +242,7 @@ export class ChatModel {
     this.cwd = opts.cwd ?? process.cwd();
     this.commands = opts.commands ?? [];
     this.commandNames = commandNamesOf({ commands: this.commands });
+    this.copy = opts.copy ?? (async () => false);
     // Last: openInitial may settle synchronously enough to touch the
     // fields above.
     this.ready = this.openInitial();
@@ -256,8 +295,8 @@ export class ChatModel {
     report: (message: string) => void,
   ): Promise<ChatSessionLike> {
     const holder: { opened?: ChatSessionLike } = {};
-    const session = await this.openSession(report, () => {
-      if (holder.opened !== undefined) this.idleExpired(holder.opened);
+    const session = await this.openSession(report, (closing) => {
+      if (holder.opened !== undefined) this.idleExpired(holder.opened, closing);
     });
     // Both assignments must stay synchronous after this await: an expiry
     // that fires between `holder.opened` and the caller's `this.current`
@@ -267,14 +306,19 @@ export class ChatModel {
     return session;
   }
 
-  /** Core has closed `session`'s browser after the idle timeout. The
-   * session is gone but the model stays usable: the status is untouched
-   * (it is `idle`, since a turn would have held the watch paused), and the
-   * next prompt reopens through the ordinary reset path. */
-  private idleExpired(session: ChatSessionLike): void {
+  /** Core is closing `session`'s browser after the idle timeout, and
+   * `closing` settles when that close has finished. The session is gone but
+   * the model stays usable: the status is untouched (it is `idle`, since a
+   * turn would have held the watch paused), and the next prompt reopens
+   * through the ordinary reset path. */
+  private idleExpired(session: ChatSessionLike, closing: Promise<void>): void {
     if (this.current !== session) return; // stale: a reset replaced it
     this.current = undefined;
     this.idleClosed = true;
+    this.idleClosing = closing;
+    void closing.then(() => {
+      if (this.idleClosing === closing) this.idleClosing = undefined;
+    });
     this.onChange();
   }
 
@@ -565,14 +609,42 @@ export class ChatModel {
   ): Promise<void> {
     const session = this.requireSession();
     const generation = this.generation;
+    // Spread, not a plain field: a text session's assistant entries carry no
+    // `format` key at all.
+    const format =
+      session.responseFormat === "markdown"
+        ? { format: "markdown" as const }
+        : {};
     try {
-      const reply = await session.send(prompt);
+      const reply = await session.send(prompt, {
+        onPartial: (text) => {
+          if (generation !== this.generation) return; // stale: reset ran
+          this.partial = text;
+          // Every partial repaints: the pending row is drawn from this.
+          // Core already drops unchanged text, so there is no second guard.
+          this.onChange();
+        },
+      });
       if (generation !== this.generation) return; // stale: reset ran
       if (releasesHeld) this.releaseHeld();
-      this.messages.push({ role: "assistant", text: reply });
+      this.partial = undefined;
+      this.messages.push({ role: "assistant", text: reply, ...format });
       this.settle("idle");
     } catch (err) {
       if (generation !== this.generation) return; // stale: reset ran
+      // Whatever had arrived is kept as its own entry, before the error, so
+      // a timeout that was only the completion check failing does not throw
+      // the reply away. Read before clearing.
+      const partial = this.partial;
+      this.partial = undefined;
+      if (partial !== undefined) {
+        this.messages.push({
+          role: "assistant",
+          text: partial,
+          ...format,
+          incomplete: true,
+        });
+      }
       const message = err instanceof Error ? err.message : String(err);
       this.messages.push({ role: "error", text: message });
       // A timeout leaves the browser usable; anything else ends the session.
@@ -604,6 +676,14 @@ export class ChatModel {
     return entries;
   }
 
+  /** Shows a short message on the status line. The view owns how long it
+   * stays; it clears `notice` when the time is up. */
+  notify(text: string): void {
+    this.notice = text;
+    this.noticeSeq++;
+    this.onChange();
+  }
+
   /** Runs one `/command`. Resolves like submit(): true when the input was
    * taken, false for an unknown command, which the view refills so the
    * user can fix the typo. */
@@ -628,6 +708,27 @@ export class ChatModel {
         this.messages.push({ role: "help", text: helpText(this.commands) });
         this.onChange();
         return true;
+      case "copy": {
+        // Nothing is sent and no session is needed, so `/copy` works in
+        // every state, the idle close included. An incomplete reply is
+        // skipped: half a reply is not what the user meant to copy.
+        // A backwards loop, not findLast: the build targets ES2022.
+        let reply: Message | undefined;
+        for (let i = this.messages.length - 1; i >= 0; i--) {
+          const m = this.messages[i];
+          if (m?.role === "assistant" && m.incomplete !== true) {
+            reply = m;
+            break;
+          }
+        }
+        if (reply === undefined) {
+          this.notify(NOTHING_TO_COPY_NOTICE);
+          return true;
+        }
+        const ok = await this.copy(reply.text).catch(() => false);
+        this.notify(ok ? COPIED_NOTICE : COPY_FAILED_NOTICE);
+        return true;
+      }
       case "new":
         await this.reset(NEW_CHAT_SEPARATOR);
         return true;
@@ -840,6 +941,9 @@ export class ChatModel {
     this.idleClosed = false;
     this.status = "resetting";
     this.generation++;
+    // The interrupted turn's partial belongs to a conversation that is about
+    // to be replaced; its own stale guard will not run until it settles.
+    this.partial = undefined;
     this.onChange();
     const old = this.current;
     // Undefined when the first open failed: there is nothing to close.

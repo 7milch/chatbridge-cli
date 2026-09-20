@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { TextAttributes } from "@opentui/core";
-import { MUTED_COLOR, colored, mixHex, styled, theme } from "./theme.js";
+import {
+  MUTED_COLOR,
+  colored,
+  markdownSyntaxStyle,
+  mixHex,
+  styled,
+  theme,
+} from "./theme.js";
 
 describe("theme", () => {
   test("badge is bold and inverse without a colour", () => {
@@ -63,6 +70,45 @@ describe("theme", () => {
     expect(hex.fg?.r).toBeCloseTo(1);
     expect(hex.fg?.g).toBeCloseTo(0);
     expect(hex.fg?.b).toBeCloseTo(0);
+  });
+});
+
+describe("markdownSyntaxStyle", () => {
+  test("registers the markup scopes MarkdownRenderable looks up", () => {
+    const style = markdownSyntaxStyle();
+    try {
+      for (const scope of [
+        "markup.heading",
+        "markup.strong",
+        "markup.italic",
+        "markup.raw",
+        "markup.link",
+        "markup.list",
+        "markup.quote",
+      ]) {
+        expect(style.getStyle(scope)).toBeDefined();
+      }
+    } finally {
+      style.destroy();
+    }
+  });
+
+  test("colours come from the ANSI palette, not fixed truecolour", () => {
+    const style = markdownSyntaxStyle();
+    try {
+      const heading = style.getStyle("markup.heading");
+      expect(heading?.bold).toBe(true);
+      expect(heading?.fg?.intent).toBe("indexed");
+      expect(heading?.fg?.slot).toBe(2);
+      expect(style.getStyle("markup.raw")?.fg?.slot).toBe(3);
+      const link = style.getStyle("markup.link");
+      expect(link?.fg?.slot).toBe(4);
+      expect(link?.underline).toBe(true);
+      expect(style.getStyle("markup.italic")?.italic).toBe(true);
+      expect(style.getStyle("markup.list")?.fg?.slot).toBe(MUTED_COLOR.slot);
+    } finally {
+      style.destroy();
+    }
   });
 });
 

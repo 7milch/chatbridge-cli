@@ -225,6 +225,7 @@ export function createExtension(opts: CreateExtensionOptions) {
         return { cliPath };
       },
       clearAuth: () => authStore.clear(),
+      writeClipboard: (text) => vscode.env.clipboard.writeText(text),
       commands,
     });
 

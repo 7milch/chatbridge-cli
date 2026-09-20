@@ -179,7 +179,10 @@ extension"). Verified recipe, run in the extension folder:
 
 Before discovery, each `dom-notes.md` section holds one line:
 `Not yet observed.` A section is done when it names a locator that matched
-exactly one element on the observation date.
+exactly one element on the observation date. If the service supports
+`streaming`, add a line to the Streaming behaviour section answering: which
+element grows while the reply streams, and how do you tell it from the
+previous turn's element (see `responseText` below)?
 
 ## Procedure
 
@@ -215,6 +218,8 @@ exactly one element on the observation date.
 | `detectBlock` (optional) | Called only after `isLoggedIn` returned false. Return a short description when the page is a bot challenge or an IdP refusal (title, a known interstitial element); return `undefined` for a normal logged-out page. Must not throw. |
 | `commands` (optional, framework ≥ 0.9.0) | `/name` commands for the TUI and VSCode: `{ name, description, run(page, args) }` returning `{ kind: "show", text }` or `{ kind: "send", prompt }`. Names are lower-case letters, never a built-in. Not available in one-shot mode. |
 | `urlHooks` (optional, framework ≥ 0.9.0) | `{ match: RegExp | (url) => boolean, resolve(url) => { label, content } }`. Fetching and credentials are the provider's (a script with a PAT is fine); the framework only appends the content as an attachment. Runs under the session timeout; `MAX_FILE_BYTES` / `MAX_TOTAL_BYTES` apply. Trailing prose punctuation (`.,;:!?'"]>`) is trimmed off the URL before `match` runs; a `)` only when it does not close a `(` inside the URL. |
+| `responseFormat` (optional, framework ≥ 0.10.0) | `"markdown" \| "text"` (default `"text"`). What `waitForResponse` and `streaming.responseText` return. Use the exported `elementToMarkdown(locator)` to turn a reply element's DOM into Markdown instead of writing a converter. |
+| `streaming` (optional, framework ≥ 0.10.0) | `{ responseText(page): Promise<string \| undefined>; pollIntervalMs?: number }` (default 250 ms). Lets interactive UIs show the reply while it is written; core polls it while `waitForResponse` is pending. `responseText` must never return an earlier turn's text — return `undefined` until the new reply's element can be told apart from the previous turn's (count assistant vs. user messages, or key off a busy/idle state attribute). |
 
 Two more optional fields tune the framework's browser handling:
 

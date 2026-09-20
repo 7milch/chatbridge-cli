@@ -7,6 +7,7 @@ import { FileIndex } from "../mentions/file-index.js";
 import type { ShellResult } from "../shell/run-command.js";
 import { ChatView, LOGIN_STATUS } from "./chat-view.js";
 import {
+  RENDERER_OPTIONS,
   runInteractive,
   teardownExitMessage,
   waitForQuit,
@@ -29,6 +30,34 @@ async function waitFor(
     throw new Error(`frame never showed ${JSON.stringify(needle)}:\n${frame}`);
   }
   return frame;
+}
+
+/** The row showing `needle`, once it has stopped moving: the same row in
+ * three consecutive frames. A mouse drag needs this — a row index read
+ * while the history is still growing is stale by the time the drag runs,
+ * and the selection spans a relayout instead of the text. */
+async function settledRowOf(
+  t: Awaited<ReturnType<typeof createTestRenderer>>,
+  needle: string,
+): Promise<number> {
+  const rowOf = () =>
+    t
+      .captureCharFrame()
+      .split("\n")
+      .findIndex((l) => l.includes(needle));
+  let stable = 0;
+  let row = rowOf();
+  for (let i = 0; i < 60 && stable < 3; i++) {
+    await new Promise((r) => setTimeout(r, 20));
+    await t.renderOnce();
+    const next = rowOf();
+    stable = next === row && next > -1 ? stable + 1 : 0;
+    row = next;
+  }
+  if (stable < 3) {
+    throw new Error(`row of ${JSON.stringify(needle)} never settled`);
+  }
+  return row;
 }
 
 describe("waitForQuit", () => {
@@ -483,6 +512,163 @@ describe("runInteractive", () => {
     // The browser opened by the abandoned reset must not be left running.
     expect(s.launches[1]?.closed).toBe(1);
   });
+
+  /** A session the model can hold, for the idle-close teardown tests: core
+   * owns the real browser there, so the fake never has to close one. */
+  function idleSession() {
+    return {
+      send: async () => "",
+      close: async () => {},
+      kill: async () => {},
+    };
+  }
+
+  test("the copy seam is what the model uses for /copy", async () => {
+    const t = await createTestRenderer({ width: 80, height: 20 });
+    const copied: string[] = [];
+    const run = runInteractive({
+      ...sessionOpts().opts,
+      createSession: async () => ({
+        send: async (prompt: string) => `Echo: ${prompt}`,
+        close: async () => {},
+        kill: async () => {},
+      }),
+      createRenderer: async () => t.renderer,
+      index: FileIndex.fromPaths([]),
+      copy: async (text) => {
+        copied.push(text);
+        return true;
+      },
+    });
+    await waitFor(t, "Ctrl+R reopen");
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    await waitFor(t, "Echo: hi");
+    await t.mockInput.typeText("/copy");
+    t.mockInput.pressEnter();
+    await waitFor(t, "copied");
+    t.mockInput.pressKey("c", { ctrl: true });
+    expect(await run).toEqual({});
+    expect(copied).toEqual(["Echo: hi"]);
+  });
+
+  test("the view gets the copy seam too: a selection reaches it", async () => {
+    const t = await createTestRenderer({
+      width: 80,
+      height: 20,
+      autoFocus: RENDERER_OPTIONS.autoFocus,
+    });
+    const copied: string[] = [];
+    const run = runInteractive({
+      ...sessionOpts().opts,
+      createSession: async () => ({
+        send: async (prompt: string) => `Echo: ${prompt}`,
+        close: async () => {},
+        kill: async () => {},
+      }),
+      createRenderer: async () => t.renderer,
+      index: FileIndex.fromPaths([]),
+      copy: async (text) => {
+        copied.push(text);
+        return true;
+      },
+    });
+    await waitFor(t, "Ctrl+R reopen");
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    await waitFor(t, "Echo: hi");
+    // The first frame that shows the reply is not its final position: the
+    // history is still growing under it. Dragging on that row selects
+    // across a relayout and comes back empty, so wait for the row to hold
+    // still before reading it.
+    const y = await settledRowOf(t, "Echo: hi");
+    // The real mouse path: only the view listens for the renderer's
+    // selection, so a copy here proves runInteractive handed `copy` to
+    // ChatView and not just to the model.
+    await t.mockMouse.drag(0, y, 8, y);
+    await waitFor(t, "copied");
+    expect(copied).toEqual(["Echo: hi"]);
+    t.mockInput.pressKey("c", { ctrl: true });
+    expect(await run).toEqual({});
+  });
+
+  test("teardown waits for an idle close that is still saving auth state", async () => {
+    const t = await createTestRenderer({ width: 80, height: 20 });
+    let expire: ((closing: Promise<void>) => void) | undefined;
+    let settle!: () => void;
+    const closing = new Promise<void>((r) => {
+      settle = r;
+    });
+    let resolved = false;
+    const run = runInteractive({
+      ...sessionOpts().opts,
+      createSession: async (_report, onIdleExpired) => {
+        expire = onIdleExpired;
+        return idleSession();
+      },
+      createRenderer: async () => t.renderer,
+      index: FileIndex.fromPaths([]),
+    }).then((r) => {
+      resolved = true;
+      return r;
+    });
+    await waitFor(t, "Ctrl+R reopen");
+    // Core has dropped the session into its idle close; the model no longer
+    // holds it, so `closing` is teardown's only handle on the save.
+    expire?.(closing);
+    t.mockInput.pressKey("c", { ctrl: true });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(resolved).toBe(false);
+    settle();
+    expect(await run).toEqual({});
+  });
+
+  test("a wedged idle close is given up on after the teardown budget", async () => {
+    const t = await createTestRenderer({ width: 80, height: 20 });
+    let expire: ((closing: Promise<void>) => void) | undefined;
+    let closes = 0;
+    const exits: Array<number | undefined> = [];
+    const errs: string[] = [];
+    const realExit = process.exit;
+    const realWrite = process.stderr.write.bind(process.stderr);
+    process.exit = ((code?: number) => {
+      exits.push(code);
+    }) as unknown as typeof process.exit;
+    process.stderr.write = ((chunk: unknown) => {
+      errs.push(String(chunk));
+      return true;
+    }) as unknown as typeof process.stderr.write;
+    try {
+      const run = runInteractive({
+        ...sessionOpts().opts,
+        createSession: async (_report, onIdleExpired) => {
+          expire = onIdleExpired;
+          return {
+            ...idleSession(),
+            close: async () => {
+              closes++;
+            },
+          };
+        },
+        createRenderer: async () => t.renderer,
+        index: FileIndex.fromPaths([]),
+      });
+      await waitFor(t, "Ctrl+R reopen");
+      expire?.(new Promise<void>(() => {})); // the close never settles
+      // A reopen after the idle expiry: the session the model holds now is
+      // live, and the wedged idle close must not stop teardown closing it.
+      t.mockInput.pressKey("r", { ctrl: true });
+      await waitFor(t, "── reopened ──");
+      t.mockInput.pressKey("c", { ctrl: true });
+      await run;
+      expect(closes).toBeGreaterThan(0);
+    } finally {
+      process.exit = realExit;
+      process.stderr.write = realWrite;
+    }
+    expect(exits).toEqual([1]);
+    expect(errs).toContain("browser did not close within 5 s; exiting\n");
+  }, 20_000);
 
   test("teardown progress messages are flushed after the terminal is restored", async () => {
     const t = await createTestRenderer({ width: 80, height: 20 });

@@ -25,6 +25,7 @@ interface Fake {
     | "discard"
     | "markLoggedIn"
     | "pushHelp"
+    | "lastReply"
     | "addAttachment"
     | "removeAttachment"
     | "getState"
@@ -32,6 +33,10 @@ interface Fake {
   sendResults: Array<Awaited<ReturnType<SessionController["send"]>>>;
   /** Drives both `getState().status` and what `discard` returns. */
   busy: boolean;
+  /** What `lastReply()` answers; undefined means nothing to copy. */
+  reply: string | undefined;
+  /** Text handed to `writeClipboard`, in order. */
+  clipboard: string[];
   login: CommandDeps["runLogin"];
   install: CommandDeps["installBrowser"];
   cleared: number;
@@ -44,6 +49,7 @@ function fake(): Fake {
     cleared: 0,
     busy: false,
     picked: [],
+    clipboard: [],
   } as unknown as Fake;
   f.ui = {
     showErrorMessage: async (m, ...items) => {
@@ -100,6 +106,7 @@ function fake(): Fake {
       return !f.busy;
     },
     markLoggedIn: () => f.log.push("markLoggedIn"),
+    lastReply: () => f.reply,
     pushHelp: (t: string) => f.log.push(`help:${t}`),
     addAttachment: (a) => {
       f.log.push(`attach:${a.path}:${a.bytes}`);
@@ -164,6 +171,47 @@ describe("commands", () => {
       expect(listing).toContain(`/${c.name}`);
       expect(listing).toContain(c.description);
     }
+  });
+
+  test("copy writes the last reply and says so", async () => {
+    const f = fake();
+    f.reply = "Echo: hello";
+    await commands(f, {
+      writeClipboard: async (text) => {
+        f.clipboard.push(text);
+      },
+    }).copy();
+    expect(f.clipboard).toEqual(["Echo: hello"]);
+    expect(f.log).toEqual(["info:Copied the last reply."]);
+  });
+
+  test("copy with no reply yet writes nothing", async () => {
+    const f = fake();
+    await commands(f, {
+      writeClipboard: async (text) => {
+        f.clipboard.push(text);
+      },
+    }).copy();
+    expect(f.clipboard).toEqual([]);
+    expect(f.log).toEqual(["info:Nothing to copy yet."]);
+  });
+
+  test("a rejecting clipboard warns", async () => {
+    const f = fake();
+    f.reply = "Echo: hello";
+    await commands(f, {
+      writeClipboard: async () => {
+        throw new Error("no clipboard");
+      },
+    }).copy();
+    expect(f.log).toEqual(["warn:Could not copy the last reply."]);
+  });
+
+  test("without writeClipboard (a vendor's older wiring) copy warns", async () => {
+    const f = fake();
+    f.reply = "Echo: hello";
+    await commands(f).copy();
+    expect(f.log).toEqual(["warn:Could not copy the last reply."]);
   });
 
   test("help also lists the provider's own commands", () => {

@@ -7,6 +7,7 @@ import type {
 import type { AuthStore } from "@chatbridge/runtime";
 import {
   ChatSession,
+  DEFAULT_POLL_INTERVAL_MS,
   IDLE_CLOSE_BUDGET_MS,
   type RuntimeLike,
   needsHeadedPreCheck,
@@ -526,6 +527,21 @@ describe("ChatSession.send timeout diagnosis", () => {
     await session.close();
   });
 
+  test("a streaming turn with onPartial still diagnoses the timeout", async () => {
+    const h = harness();
+    const g = gate();
+    h.provider.streaming = { responseText: async () => "partial" };
+    const session = await ChatSession.open({ ...opts(h), pollSleep: g.sleep });
+    const seen: string[] = [];
+    const first = session.send("one", { onPartial: (t) => seen.push(t) });
+    await g.tick();
+    expect(seen).toEqual(["partial"]);
+    h.loggedIn = false;
+    (await replyOf(h, 0)).reject(timeout());
+    await expect(first).rejects.toBeInstanceOf(AuthExpiredError);
+    await session.close();
+  });
+
   test("turns the timeout into BlockedError when detectBlock reports a block", async () => {
     const h = harness();
     h.hasDetectBlock = true;
@@ -840,6 +856,46 @@ describe("ChatSession: idle close", () => {
     expect(h.killed).toBe(0);
   });
 
+  test("onIdleExpired receives a promise that settles only after the close", async () => {
+    const h = harness();
+    const c = clock();
+    const { options } = idleOpts(h, c);
+    let closing: Promise<void> | undefined;
+    let closedWhenTold = -1;
+    await ChatSession.open({
+      ...options,
+      onIdleExpired: (p) => {
+        closing = p;
+        closedWhenTold = h.closed;
+      },
+    });
+    c.advance(IDLE_MS + 1);
+    await waitFor(() => closing !== undefined, "the expiry callback");
+    // Told first: nothing was closed yet when the UI heard about it.
+    expect(closedWhenTold).toBe(0);
+    await closing;
+    expect(h.closed).toBe(1);
+    expect(h.saved).toBe(1);
+  });
+
+  test("the closing promise resolves after the kill fallback and never rejects", async () => {
+    const h = harness();
+    const c = clock();
+    const { options } = idleOpts(h, c);
+    let closing: Promise<void> | undefined;
+    await ChatSession.open({
+      ...options,
+      onIdleExpired: (p) => {
+        closing = p;
+      },
+    });
+    h.loginGate = new Promise<void>(() => {}); // close() parks forever
+    c.advance(IDLE_MS + 1);
+    await waitFor(() => closing !== undefined, "the expiry callback");
+    await expect(closing).resolves.toBeUndefined();
+    expect(h.killed).toBe(1);
+  }, 20_000);
+
   test("a wedged page is killed after the close budget", async () => {
     const h = harness();
     const c = clock();
@@ -957,5 +1013,176 @@ describe("ChatSession: idle close", () => {
 
   test("the close budget is 5 s", () => {
     expect(IDLE_CLOSE_BUDGET_MS).toBe(5000);
+  });
+});
+
+/** A pollSleep the test releases one tick at a time. */
+function gate() {
+  const waiting: Array<() => void> = [];
+  return {
+    sleep: () => new Promise<void>((r) => waiting.push(r)),
+    /** Releases one pending sleep and lets the poll body run. */
+    async tick() {
+      await waitFor(() => waiting.length > 0, "a pending poll sleep");
+      waiting.shift()?.();
+      await new Promise((r) => setTimeout(r, 5));
+    },
+    get pending() {
+      return waiting.length;
+    },
+  };
+}
+
+describe("ChatSession: streaming partials", () => {
+  test("emits only when the text changes, skips undefined, returns the final text", async () => {
+    const h = harness();
+    const g = gate();
+    const texts: Array<string | undefined> = [undefined, "He", "He", "Hello"];
+    h.provider.streaming = { responseText: async () => texts.shift() };
+    const session = await ChatSession.open({ ...opts(h), pollSleep: g.sleep });
+    const seen: string[] = [];
+    const reply = session.send("hi", { onPartial: (t) => seen.push(t) });
+    for (let i = 0; i < 4; i++) await g.tick();
+    expect(seen).toEqual(["He", "Hello"]);
+    (await replyOf(h, 0)).resolve("Hello, world");
+    expect(await reply).toBe("Hello, world");
+    await session.close();
+  });
+
+  test("never emits after the turn settled", async () => {
+    const h = harness();
+    const g = gate();
+    h.provider.streaming = { responseText: async () => "late" };
+    const session = await ChatSession.open({ ...opts(h), pollSleep: g.sleep });
+    const seen: string[] = [];
+    const reply = session.send("hi", { onPartial: (t) => seen.push(t) });
+    await waitFor(() => g.pending === 1, "the first sleep");
+    (await replyOf(h, 0)).resolve("done");
+    await reply;
+    await g.tick();
+    expect(seen).toEqual([]);
+    await session.close();
+  });
+
+  test("a responseText or onPartial that throws does not fail the turn", async () => {
+    const h = harness();
+    const g = gate();
+    let calls = 0;
+    h.provider.streaming = {
+      responseText: async () => {
+        calls++;
+        if (calls === 1) throw new Error("detached");
+        return "ok";
+      },
+    };
+    const session = await ChatSession.open({ ...opts(h), pollSleep: g.sleep });
+    const reply = session.send("hi", {
+      onPartial: () => {
+        throw new Error("ui bug");
+      },
+    });
+    await g.tick();
+    await g.tick();
+    expect(calls).toBe(2);
+    (await replyOf(h, 0)).resolve("final");
+    expect(await reply).toBe("final");
+    await session.close();
+  });
+
+  test("polls do not overlap", async () => {
+    const h = harness();
+    const g = gate();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let calls = 0;
+    const slow = deferred<string>();
+    h.provider.streaming = {
+      responseText: async () => {
+        calls++;
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        const v = await slow.promise;
+        inFlight--;
+        return v;
+      },
+    };
+    const session = await ChatSession.open({ ...opts(h), pollSleep: g.sleep });
+    const reply = session.send("hi", { onPartial: () => {} });
+    await g.tick();
+    // The poll body is parked on `slow`: no second sleep was requested and no
+    // second read started.
+    expect(calls).toBe(1);
+    expect(g.pending).toBe(0);
+    slow.resolve("x");
+    await g.tick();
+    expect(maxInFlight).toBe(1);
+    (await replyOf(h, 0)).resolve("final");
+    await reply;
+    await session.close();
+  });
+
+  test("does not poll without onPartial, or without provider.streaming", async () => {
+    const h = harness();
+    const g = gate();
+    let calls = 0;
+    h.provider.streaming = {
+      responseText: async () => {
+        calls++;
+        return "x";
+      },
+    };
+    const session = await ChatSession.open({ ...opts(h), pollSleep: g.sleep });
+    const a = session.send("one");
+    (await replyOf(h, 0)).resolve("r1");
+    await a;
+    h.provider.streaming = undefined;
+    const b = session.send("two", { onPartial: () => {} });
+    (await replyOf(h, 1)).resolve("r2");
+    await b;
+    expect(calls).toBe(0);
+    expect(g.pending).toBe(0);
+    await session.close();
+  });
+
+  test("uses the provider's pollIntervalMs, default 250", async () => {
+    const h = harness();
+    const asked: number[] = [];
+    const pollSleep = (ms: number) => {
+      asked.push(ms);
+      return new Promise<void>(() => {});
+    };
+    h.provider.streaming = {
+      responseText: async () => undefined,
+      pollIntervalMs: 40,
+    };
+    const custom = await ChatSession.open({ ...opts(h), pollSleep });
+    const first = custom.send("hi", { onPartial: () => {} });
+    await waitFor(() => asked.length === 1, "the first sleep");
+    expect(asked).toEqual([40]);
+    (await replyOf(h, 0)).resolve("x");
+    await first;
+    await custom.close();
+
+    asked.length = 0;
+    h.provider.streaming = { responseText: async () => undefined };
+    const plain = await ChatSession.open({ ...opts(h), pollSleep });
+    const second = plain.send("hi", { onPartial: () => {} });
+    await waitFor(() => asked.length === 1, "the first sleep");
+    expect(asked).toEqual([DEFAULT_POLL_INTERVAL_MS]);
+    expect(DEFAULT_POLL_INTERVAL_MS).toBe(250);
+    (await replyOf(h, 1)).resolve("x");
+    await second;
+    await plain.close();
+  });
+
+  test("responseFormat mirrors the provider, default text", async () => {
+    const h = harness();
+    const plain = await ChatSession.open(opts(h));
+    expect(plain.responseFormat).toBe("text");
+    await plain.close();
+    h.provider.responseFormat = "markdown";
+    const md = await ChatSession.open(opts(h));
+    expect(md.responseFormat).toBe("markdown");
+    await md.close();
   });
 });

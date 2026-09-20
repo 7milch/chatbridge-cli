@@ -20,6 +20,7 @@ import {
   type ChatSessionLike,
 } from "./chat-model.js";
 import { ChatView } from "./chat-view.js";
+import { copyToClipboard, spawnClipboardProcess } from "./clipboard.js";
 import { expandInput } from "./expand-input.js";
 import { type SpinnerOptions, resolveSpinner } from "./spinner.js";
 
@@ -42,7 +43,23 @@ export interface InteractiveOptions extends ChatSessionOptions {
   createSession?: ChatModelOptions["openSession"];
   /** Test-only: replaces runLogin. */
   login?: ChatModelOptions["login"];
+  /** Test-only: replaces the system clipboard `/copy` writes to. */
+  copy?: ChatModelOptions["copy"];
 }
+
+/**
+ * The renderer options the TUI runs under. `autoFocus: false` is what keeps
+ * the text cursor in the chat input: with it on, OpenTUI's left-mousedown
+ * handler focuses the first focusable ancestor of whatever was clicked, so
+ * a click on the history would take focus off the textarea and typing would
+ * stop reaching it. Wheel scrolling and mouse selection do not go through
+ * the focus path, so they are unaffected. Exported so the view's tests can
+ * build their renderer the same way; they would otherwise prove nothing.
+ */
+export const RENDERER_OPTIONS = {
+  exitOnCtrlC: false,
+  autoFocus: false,
+} as const;
 
 const CLOSE_TIMEOUT_MS = 5_000;
 const CLOSING_STATUS = "Closing browser...";
@@ -95,10 +112,11 @@ export function waitForQuit(
   });
 }
 
-/** Waits for an in-flight reset to settle, capped at CLOSE_TIMEOUT_MS.
- * True when there was nothing to wait for or it settled in time; false when
- * it did not, in which case the caller must not assume which session is
- * current and hard-exits instead. */
+/** Waits for an in-flight reset — or for an idle close still saving the
+ * auth state — to settle, capped at CLOSE_TIMEOUT_MS. True when there was
+ * nothing to wait for or it settled in time; false when it did not, in
+ * which case the caller must not assume which session is current and
+ * hard-exits instead. */
 async function settleReset(
   pending: Promise<void> | undefined,
 ): Promise<boolean> {
@@ -157,12 +175,23 @@ export async function runInteractive(
   const sessionOpts: InteractiveOptions = { ...opts, onProgress };
   const index = opts.index ?? (await FileIndex.build({ cwd: process.cwd() }));
   const renderer = await (
-    opts.createRenderer ?? (() => createCliRenderer({ exitOnCtrlC: false }))
+    opts.createRenderer ?? (() => createCliRenderer({ ...RENDERER_OPTIONS }))
   )();
   let view: ChatView | undefined;
   let model: ChatModel | undefined;
   try {
     const commands = commandInfoOf(opts.provider);
+    // One function, shared: the renderer's OSC 52 escape is the last resort
+    // of the platform command, and it needs the renderer that exists here.
+    const copy =
+      opts.copy ??
+      ((text: string) =>
+        copyToClipboard(text, {
+          env: process.env,
+          platform: process.platform,
+          process: spawnClipboardProcess,
+          osc52: (t) => renderer.copyToClipboardOSC52(t),
+        }));
     model = new ChatModel({
       openSession:
         opts.createSession ??
@@ -187,6 +216,7 @@ export async function runInteractive(
             onProgress: report,
           })),
       clearAuth: () => opts.authStore.clear(),
+      copy,
       shell: opts.shell,
       commands,
       expand: (text) =>
@@ -210,6 +240,9 @@ export async function runInteractive(
       spinner: resolveSpinner(opts.spinner),
       index,
       commands,
+      // The same function the model got: `/copy` and a mouse selection reach
+      // the clipboard the same way.
+      copy,
     });
     const quit = waitForQuit(renderer, model);
     uiUp = true;
@@ -233,11 +266,19 @@ export async function runInteractive(
     // Wait for whichever is in flight, under the same cap.
     const pendingReset = model?.pendingReset;
     const settled = await settleReset(pendingReset ?? model?.ready);
+    // The idle close may still be saving the rotated auth state; the model
+    // no longer holds that session, only the promise of its close.
+    const idleSettled = await settleReset(model?.idleClosing);
     // The model may still hold no session: the open above failed.
     const open = model?.session;
-    const closed =
+    // The session the model holds now is closed on its own account: an idle
+    // close that never settled belongs to a session the model let go of, and
+    // short-circuiting on it would leave this browser running and its auth
+    // state unsaved. The hard exit below still covers either failure.
+    const sessionClosed =
       settled &&
       (open === undefined || (await closeWithTimeout(open, CLOSE_TIMEOUT_MS)));
+    const closed = sessionClosed && idleSettled;
     view?.destroy();
     renderer.destroy();
     // The terminal is ours again: anything the teardown reported can be

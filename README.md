@@ -209,9 +209,19 @@ chat.
   the status row counts the held results, and they are appended to the next
   message you send. If that send fails (a timeout, a reopened browser) they
   stay held for the next try. Held results are dropped when you quit.
-- While a reply is pending the status line shows an activity indicator
-  with the elapsed time against the `--timeout` budget, e.g.
-  `○●○ Thinking…  12s / 120s`.
+- While a reply is pending the wait indicator is the last row of the
+  history, under your message, not on the status line. For a provider with
+  `streaming`, the reply grows in place from that row as it arrives; for a
+  provider with `responseFormat: "markdown"` it renders as Markdown. The
+  status line itself shows only the elapsed time against the budget and the
+  key guide during a turn. A failed turn keeps the partial reply, marked
+  `(incomplete)`. One-shot mode (`-p`) and the VSCode view are unchanged:
+  the whole reply arrives at once, as plain text (the Markdown source, for
+  a Markdown provider).
+- Drag over history text with the mouse to copy it to the clipboard on
+  mouse up (what is on screen — for a Markdown reply that is the rendered
+  text, not the source); `/copy` copies the last complete reply's source
+  text instead. See "Copying text" in `packages/cli/README.md`.
 - A response timeout is shown in the history and you can keep chatting.
   If the timeout turns out to be a lost login or a block, the chat closes
   with exit code 3 or 6; any other failure closes it with exit code 1.
@@ -353,7 +363,7 @@ export default defineProvider({
 ```
 
 `defineProvider` rejects command names that are not lower-case letters, that
-collide with a built-in (`login`, `logout`, `new`, `reopen`, `help`), or that
+collide with a built-in (`login`, `logout`, `new`, `reopen`, `copy`, `help`), or that
 repeat. A `show` result is printed; a `send` result is sent as an ordinary
 turn while the history keeps the `/command` line you typed. A URL hook runs
 under the session timeout and its result is subject to the same size limits
@@ -381,6 +391,18 @@ detection that keys on DOM state rather than on a running animation, which
 never needs the opt-out. The user's `idle` config key, the
 `CHATBRIDGE_IDLE_TIMEOUT` environment variable and the VSCode setting
 override `idle.timeoutMs`.
+
+## Upgrading to 0.10
+
+Two changes affect embedders of `@chatbridge/core` and provider authors:
+
+- `ChatSessionOptions.onIdleExpired` now receives the in-flight close as its
+  argument: `(closing: Promise<void>) => void`, where `closing` settles once
+  the idle close (or its kill fallback) has finished and never rejects. A UI
+  that tears itself down should await it, capped at its own teardown budget,
+  so a process exit does not race the auth-state save.
+- A provider `commands` entry named `copy` is now rejected by
+  `defineProvider()`: `copy` joins the built-in command names.
 
 ## License
 

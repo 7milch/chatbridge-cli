@@ -8,7 +8,9 @@ export {
 export {
   ChatSession,
   type ChatSessionOptions,
+  DEFAULT_POLL_INTERVAL_MS,
   IDLE_CLOSE_BUDGET_MS,
+  type SendOptions,
   type OpenOptions,
   type RuntimeLike,
   isRetryableOpenError,

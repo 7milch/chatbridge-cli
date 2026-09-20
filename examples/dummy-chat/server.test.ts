@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { startDummyChat } from "./server";
+import { dummyReply, renderDummyMarkdown, startDummyChat } from "./server";
 
 let stop: (() => void) | undefined;
 afterEach(() => stop?.());
@@ -50,6 +50,16 @@ describe("dummy chat server", () => {
     expect(await chat.text()).toContain('name="reply-delay" content="1500"');
   });
 
+  test("setChunkDelayMs is rendered into the chat page", async () => {
+    const s = await startDummyChat(0);
+    stop = s.stop;
+    s.setChunkDelayMs(7);
+    const chat = await fetch(`${s.url}/chat`, {
+      headers: { cookie: "session=ok" },
+    });
+    expect(await chat.text()).toContain('name="chunk-delay" content="7"');
+  });
+
   test("serves the challenge page on /chat while blocked", async () => {
     const server = await startDummyChat(0);
     try {
@@ -69,5 +79,125 @@ describe("dummy chat server", () => {
     } finally {
       server.stop();
     }
+  });
+});
+
+describe("dummyReply", () => {
+  test("keeps the historical Echo shape for a plain prompt", () => {
+    expect(dummyReply("hi")).toBe("Echo: hi");
+  });
+
+  test("answers an `md:` prompt with a fenced block and a table", () => {
+    const reply = dummyReply("md: x");
+    expect(reply.startsWith("Echo: md: x\n")).toBe(true);
+    expect(reply).toContain("## Details");
+    expect(reply).toContain("```ts\nconst a = 1;\n```");
+    expect(reply).toContain("| k | v |\n| --- | --- |\n| a | 1 |");
+  });
+});
+
+describe("renderDummyMarkdown", () => {
+  test("a fence right after text, with no blank line, is still a code block", () => {
+    // A prompt is echoed verbatim, and people type a fence straight under a
+    // sentence; folding it into the paragraph would turn the whole block into
+    // one line that Markdown then reads as an inline code span.
+    expect(
+      renderDummyMarkdown("see:\n```ts\nconst a = 1;\nconst b = 2;\n```\ndone"),
+    ).toBe(
+      '<p>see:</p><pre><code class="language-ts">const a = 1;\nconst b = 2;</code></pre><p>done</p>',
+    );
+  });
+
+  test("renders every block kind the `md:` reply uses", () => {
+    const html = renderDummyMarkdown(dummyReply("md: x"));
+    expect(html).toContain("<p>Echo: md: x</p>");
+    expect(html).toContain("<h2>Details</h2>");
+    expect(html).toContain(
+      "<ul><li><strong>bold</strong> item</li><li>second item</li></ul>",
+    );
+    expect(html).toContain(
+      '<pre><code class="language-ts">const a = 1;</code></pre>',
+    );
+    expect(html).toContain(
+      "<table><thead><tr><th>k</th><th>v</th></tr></thead>" +
+        "<tbody><tr><td>a</td><td>1</td></tr></tbody></table>",
+    );
+  });
+
+  test("escapes & < > before any inline handling", () => {
+    expect(renderDummyMarkdown("a & <img src=x> **b**")).toBe(
+      "<p>a &amp; &lt;img src=x&gt; <strong>b</strong></p>",
+    );
+  });
+
+  // A fence language comes from the prompt and lands in an attribute value,
+  // so a quote in it must not be able to close that attribute.
+  test("escapes quotes, including in a fence language", () => {
+    expect(renderDummyMarkdown('say "hi"')).toBe("<p>say &quot;hi&quot;</p>");
+    expect(renderDummyMarkdown('```ts" onload="x\ncode\n```')).toContain(
+      'class="language-ts&quot; onload=&quot;x"',
+    );
+  });
+});
+
+describe("POST /reply", () => {
+  test("rejects a request without a session", async () => {
+    const s = await startDummyChat(0);
+    stop = s.stop;
+    const res = await fetch(`${s.url}/reply`, { method: "POST", body: "hi" });
+    expect(res.status).toBe(401);
+  });
+
+  async function chunksFor(url: string, text: string): Promise<string[]> {
+    const res = await fetch(`${url}/reply`, {
+      method: "POST",
+      body: text,
+      headers: { cookie: "session=ok" },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { chunks: string[] };
+    return body.chunks;
+  }
+
+  test("grows a plain reply's paragraph over three cumulative states", async () => {
+    const s = await startDummyChat(0);
+    stop = s.stop;
+    const chunks = await chunksFor(s.url, "hello");
+    expect(chunks).toHaveLength(3);
+    expect(chunks.at(-1)).toBe("<p>Echo: hello</p>");
+    for (let i = 1; i < chunks.length; i++) {
+      expect((chunks[i] ?? "").length).toBeGreaterThan(
+        (chunks[i - 1] ?? "").length,
+      );
+      expect((chunks[i] ?? "").startsWith("<p>")).toBe(true);
+    }
+  });
+
+  test("adds one top-level block per state for an `md:` reply", async () => {
+    const s = await startDummyChat(0);
+    stop = s.stop;
+    const chunks = await chunksFor(s.url, "md: x");
+    expect(chunks).toHaveLength(5);
+    expect(chunks.at(-1)).toBe(renderDummyMarkdown(dummyReply("md: x")));
+    for (let i = 1; i < chunks.length; i++) {
+      expect((chunks[i] ?? "").startsWith(chunks[i - 1] ?? "")).toBe(true);
+    }
+  });
+
+  test("escapes the prompt instead of reflecting it as HTML", async () => {
+    const s = await startDummyChat(0);
+    stop = s.stop;
+    const chunks = await chunksFor(s.url, "<img src=x onerror=alert(1)>");
+    const last = chunks.at(-1) ?? "";
+    expect(last).not.toContain("<img");
+    expect(last).toContain("&lt;img src=x onerror=alert(1)&gt;");
+  });
+
+  test("answers a 50 KB prompt", async () => {
+    const s = await startDummyChat(0);
+    stop = s.stop;
+    const text = "x".repeat(50_000);
+    const chunks = await chunksFor(s.url, text);
+    expect(chunks.at(-1)).toBe(`<p>Echo: ${text}</p>`);
   });
 });

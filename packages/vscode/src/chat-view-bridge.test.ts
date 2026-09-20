@@ -110,6 +110,23 @@ describe("ChatViewBridge", () => {
     expect(calls).toEqual(["send:hi", "remove:2", "cmd:newChat"]);
   });
 
+  test("a /copy command is accepted and routed", () => {
+    const calls: string[] = [];
+    const bridge = new ChatViewBridge(() => state, {
+      send() {},
+      removeAttachment() {},
+      takeBack() {},
+      removeQueued() {},
+      command: (n) => calls.push(`cmd:${n}`),
+      attachUris() {},
+      pasted() {},
+    });
+    const w = fakeWebview();
+    bridge.attach(w.webview);
+    w.receive({ type: "command", name: "copy" });
+    expect(calls).toEqual(["cmd:copy"]);
+  });
+
   test("pushState and pushProgress reach the attached webview only", () => {
     const bridge = new ChatViewBridge(() => state, {
       send() {},
@@ -274,6 +291,7 @@ describe("ChatViewBridge", () => {
       newChat: true,
       installBrowser: true,
       reopen: true,
+      copy: true,
       help: true,
       pickFiles: true,
     };

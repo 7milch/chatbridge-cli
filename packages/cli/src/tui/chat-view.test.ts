@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { ResponseTimeoutError } from "@chatbridge/core";
 import type { CommandInfo } from "@chatbridge/core/slash-commands";
 import type { StyledText } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
@@ -11,13 +12,20 @@ import type {
 } from "../shell/run-command.js";
 import type { ShellConfig } from "../shell/shell-config.js";
 import { resolveBanner } from "./banner.js";
-import type { ChatModelOptions, ChatSessionLike } from "./chat-model.js";
 import {
+  COPIED_NOTICE,
+  COPY_FAILED_NOTICE,
+  type ChatModelOptions,
+  type ChatSessionLike,
+} from "./chat-model.js";
+import {
+  BUSY_GUIDE,
   ChatView,
   DEAD_GUIDE,
   GUIDE,
   HELD_GUIDE,
   IDLE_CLOSED_GUIDE,
+  INCOMPLETE_NOTE,
   LOGIN_STATUS,
   MAX_INPUT_ROWS,
   MAX_QUEUE_ROWS,
@@ -29,11 +37,17 @@ import {
   idleGuide,
 } from "./chat-view.js";
 import { POPUP_HINT } from "./mention-popup.js";
+import { RENDERER_OPTIONS } from "./run-interactive.js";
 import { type ResolvedSpinner, resolveSpinner } from "./spinner.js";
 import { modelWith } from "./test-helpers.js";
 import { styled, theme } from "./theme.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** The mock keyboard has no page keys; these are the sequences a legacy
+ * terminal sends, which OpenTUI's parser reports as `pageup`/`pagedown`. */
+const PAGE_UP = "\u001b[5~";
+const PAGE_DOWN = "\u001b[6~";
 
 function echoSession(delayMs: number): ChatSessionLike {
   return {
@@ -54,6 +68,31 @@ function deferred<T>() {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+/** A session whose turns are resolved by the test, with the `onPartial`
+ * callback of the turn in flight captured so partials can be emitted.
+ * `format` is the session's declared response format. */
+function streamingSession(format?: "markdown" | "text") {
+  let current: ReturnType<typeof deferred<string>> | undefined;
+  let onPartial: ((text: string) => void) | undefined;
+  const session: ChatSessionLike = {
+    ...(format ? { responseFormat: format } : {}),
+    send(_prompt, opts) {
+      const d = deferred<string>();
+      current = d;
+      onPartial = opts?.onPartial;
+      return d.promise;
+    },
+    async close() {},
+    async kill() {},
+  };
+  return {
+    session,
+    emit: (text: string) => onPartial?.(text),
+    resolve: (text: string) => current?.resolve(text),
+    reject: (err: unknown) => current?.reject(err),
+  };
 }
 
 function fakeRunner() {
@@ -132,12 +171,18 @@ async function setup(
     openGate?: Promise<void>;
     login?: ChatModelOptions["login"];
     commands?: CommandInfo[];
+    copy?: (text: string) => Promise<boolean>;
+    /** Shortened so a test can watch the notice come and go. */
+    noticeMs?: number;
   } = {},
 ) {
   const t = await createTestRenderer({
     width: opts.width ?? 80,
     height: 20,
     kittyKeyboard: opts.kittyKeyboard ?? false,
+    // Production's setting: without it a click would steal focus here but
+    // not in the real TUI, and the focus tests below would prove nothing.
+    autoFocus: RENDERER_OPTIONS.autoFocus,
   });
   const model = await modelWith(
     opts.session ?? echoSession(opts.delayMs ?? 100),
@@ -149,6 +194,7 @@ async function setup(
         opts.expand ?? (async (text) => ({ prompt: text, attachments: [] })),
       runCommand: opts.runCommand,
       shell: opts.shell,
+      ...(opts.copy ? { copy: opts.copy } : {}),
       ...(opts.login ? { login: opts.login } : {}),
     },
     opts.openGate,
@@ -170,6 +216,9 @@ async function setup(
       opts.paths ?? ["src/chat-view.ts", "src/chat-model.ts", "README.md"],
     ),
     commands: opts.commands ?? [],
+    // The same function the model got: run-interactive.ts builds one.
+    ...(opts.copy ? { copy: opts.copy } : {}),
+    ...(opts.noticeMs === undefined ? {} : { noticeMs: opts.noticeMs }),
   });
   teardown = () => {
     view.destroy();
@@ -186,6 +235,30 @@ async function setup(
     }
     throw new Error(`no frame contained ${JSON.stringify(text)}`);
   }
+  /** Like `frameWith`, but also waits for `without` to be gone. OpenTUI's
+   * MarkdownRenderable conceals markup asynchronously (tree-sitter parsing
+   * settles over several render passes), so the first frame containing
+   * `text` can still show raw `##`/`**`/`` ``` `` for a beat, especially on a
+   * slower CI runner; poll until both conditions hold before asserting. */
+  async function settledFrame(
+    text: string,
+    without: string[],
+    tries = 250,
+  ): Promise<string> {
+    let last = "";
+    for (let i = 0; i < tries; i++) {
+      await sleep(20);
+      await t.renderOnce();
+      const f = t.captureCharFrame();
+      last = f;
+      if (f.includes(text) && without.every((w) => !f.includes(w))) return f;
+    }
+    throw new Error(
+      `no settled frame contained ${JSON.stringify(text)} without ${JSON.stringify(
+        without,
+      )}; last frame:\n${last}`,
+    );
+  }
   /** A lone ESC byte is held by the input parser until it can rule out an
    * escape sequence, so the key lands some time after the press. Waits for
    * the effect — `candidate` gone from the frame — instead of a fixed delay. */
@@ -201,7 +274,7 @@ async function setup(
       `popup still showed ${JSON.stringify(candidate)} after Escape`,
     );
   }
-  return { ...t, model, view, frameWith, escapePopup };
+  return { ...t, model, view, frameWith, settledFrame, escapePopup };
 }
 
 describe("ChatView", () => {
@@ -483,7 +556,16 @@ describe("ChatView", () => {
     await t.mockInput.typeText("hello");
     t.mockInput.pressEnter();
     const busy = await t.frameWith("Thinking…");
-    expect(busy).toMatch(/[●○]{3} Thinking… {2}\ds \/ 2s/);
+    // The frame and the label live on the pending row now; the status line
+    // carries the elapsed time against the budget.
+    expect(busy).toMatch(/[●○]{3} Thinking… {2}\ds/);
+    const status =
+      busy
+        .split("\n")
+        .filter((l) => l.trim() !== "")
+        .at(-1) ?? "";
+    expect(status).toMatch(/\ds \/ 2s/);
+    expect(status).not.toContain("Thinking…");
     await t.frameWith("Echo: hello");
     expect(t.captureCharFrame()).toContain(GUIDE);
   });
@@ -512,7 +594,7 @@ describe("ChatView", () => {
     await t.mockInput.typeText("hello");
     t.mockInput.pressEnter();
     const busy = await t.frameWith("Working…");
-    expect(busy).toMatch(/(<>|><) Working… {2}\ds \/ 2s/);
+    expect(busy).toMatch(/(<>|><) Working… {2}\ds/);
     expect(busy).not.toContain("Thinking…");
   });
 
@@ -604,7 +686,7 @@ describe("ChatView", () => {
     await t.mockInput.typeText("hello");
     t.mockInput.pressEnter();
     const busy = await t.frameWith("Tinted…");
-    expect(busy).toMatch(/\*\* Tinted… {2}\ds \/ 2s/);
+    expect(busy).toMatch(/\*\* Tinted… {2}\ds/);
   });
 
   test("an empty label list shows the frame alone", async () => {
@@ -615,7 +697,7 @@ describe("ChatView", () => {
     await t.mockInput.typeText("hello");
     t.mockInput.pressEnter();
     const busy = await t.frameWith("## ");
-    expect(busy).toMatch(/## {3}\ds \/ 2s/);
+    expect(busy).toMatch(/## {3}\ds/);
   });
 
   test("a renderer destroyed mid-turn stops the indicator instead of writing", async () => {
@@ -1616,5 +1698,676 @@ describe("ChatView queue", () => {
     expect(await t.frameWith("0s /")).toContain("0s /");
     replies[1]?.resolve("reply two");
     await t.frameWith("reply two");
+  });
+});
+
+describe("ChatView: pending row", () => {
+  /** One label, no ellipsis: the frame is asserted on verbatim. */
+  const fixedSpinner = (): ResolvedSpinner => ({
+    ...resolveSpinner(),
+    labels: ["Thinking"],
+  });
+
+  test("the indicator is the last history row, under the user message, not on the status line", async () => {
+    const s = streamingSession();
+    const t = await setup({ session: s.session, spinner: fixedSpinner() });
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("Thinking");
+    const lines = frame.split("\n");
+    const user = lines.findIndex((l) => l.includes("hello"));
+    const indicator = lines.findIndex((l) => l.includes("Thinking"));
+    const inputTop = lines.findIndex((l) => l.startsWith("─"));
+    expect(user).toBeGreaterThan(0);
+    expect(indicator).toBeGreaterThan(user);
+    expect(indicator).toBeLessThan(inputTop);
+    // The status line (the last row with text) has the budget but not the
+    // label.
+    const status = lines.filter((l) => l.trim() !== "").at(-1) ?? "";
+    expect(status).toContain("/ 2s");
+    expect(status).not.toContain("Thinking");
+    expect(status).toContain("Ctrl+R reopen · Ctrl+C quit");
+    s.resolve("done");
+    await t.frameWith("done");
+  });
+
+  test("a partial replaces the indicator with an assistant body and a tail row", async () => {
+    const s = streamingSession();
+    const t = await setup({ session: s.session, spinner: fixedSpinner() });
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    await t.frameWith("Thinking");
+    s.emit("Partial text");
+    const frame = await t.frameWith("Partial text");
+    expect(frame).toContain("assistant");
+    expect(frame).not.toContain("Thinking");
+    s.resolve("Partial text, finished.");
+    const done = await t.frameWith("finished.");
+    // Promoted in place: the reply appears exactly once.
+    expect(done.split("Partial text").length - 1).toBe(1);
+    expect(done).toContain(GUIDE);
+  });
+
+  test("the partial grows in place as more text arrives", async () => {
+    const s = streamingSession();
+    const t = await setup({ session: s.session, spinner: fixedSpinner() });
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    await t.frameWith("Thinking");
+    s.emit("one");
+    await t.frameWith("one");
+    s.emit("one two");
+    const grown = await t.frameWith("one two");
+    expect(grown.split("one").length - 1).toBe(1);
+    s.resolve("one two three");
+    const done = await t.frameWith("three");
+    expect(done).toContain("one two three");
+    expect(t.model.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+  });
+
+  test("a turn that settles without any partial appends the reply normally", async () => {
+    const s = streamingSession();
+    const t = await setup({ session: s.session, spinner: fixedSpinner() });
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    await t.frameWith("Thinking");
+    s.resolve("straight to the answer");
+    const done = await t.frameWith("straight to the answer");
+    expect(done).toContain("assistant");
+    expect(done).not.toContain("Thinking");
+    expect(done).toContain(GUIDE);
+  });
+
+  test("a failed turn leaves the partial marked incomplete, then the error", async () => {
+    const s = streamingSession();
+    const t = await setup({ session: s.session, spinner: fixedSpinner() });
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    await t.frameWith("Thinking");
+    s.emit("half");
+    await t.frameWith("half");
+    s.reject(new ResponseTimeoutError("Timed out."));
+    const frame = await t.frameWith("Timed out.");
+    expect(frame).toContain("half");
+    expect(frame).toContain(INCOMPLETE_NOTE);
+    expect(frame.indexOf("half")).toBeLessThan(frame.indexOf("Timed out."));
+    expect(frame).not.toContain("Thinking");
+  });
+
+  test("a queued turn restarts the indicator with a fresh row", async () => {
+    const s = streamingSession();
+    const t = await setup({ session: s.session, spinner: fixedSpinner() });
+    await t.mockInput.typeText("one");
+    t.mockInput.pressEnter();
+    await t.frameWith("Thinking");
+    s.emit("first partial");
+    await t.frameWith("first partial");
+    await t.mockInput.typeText("two");
+    t.mockInput.pressEnter();
+    await t.frameWith("▹ two");
+    expect(t.model.queue).toEqual(["two"]);
+    s.resolve("first reply");
+    await t.frameWith("first reply");
+    // The drained turn draws its own user message and a fresh indicator
+    // row under it; the promoted first reply is untouched.
+    const second = await t.frameWith("Thinking");
+    const lines = second.split("\n");
+    const user = lines.findLastIndex((l) => l.includes("two"));
+    const indicator = lines.findLastIndex((l) => l.includes("Thinking"));
+    expect(user).toBeGreaterThan(0);
+    expect(indicator).toBeGreaterThan(user);
+    expect(second).toContain("first reply");
+    expect(second.split("first partial").length - 1).toBe(0);
+    s.resolve("second reply");
+    const done = await t.frameWith("second reply");
+    expect(done).not.toContain("Thinking");
+  });
+
+  test("the pending row is dropped when a reset interrupts the turn", async () => {
+    const s = streamingSession();
+    const t = await setup({ session: s.session, spinner: fixedSpinner() });
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    await t.frameWith("Thinking");
+    s.emit("half a reply");
+    await t.frameWith("half a reply");
+    t.mockInput.pressKey("r", { ctrl: true });
+    const frame = await t.frameWith("── reopened ──");
+    expect(frame).not.toContain("half a reply");
+    expect(frame).not.toContain("Thinking");
+  });
+
+  test("nothing in the pending row is selectable", async () => {
+    const s = streamingSession();
+    const t = await setup({ session: s.session, spinner: fixedSpinner() });
+    await t.mockInput.typeText("hello");
+    t.mockInput.pressEnter();
+    await t.frameWith("Thinking");
+    s.emit("streamed");
+    await t.frameWith("streamed");
+    const pending = t.renderer.root.findDescendantById("pending");
+    expect(pending).toBeDefined();
+    const children = pending?.getChildren() ?? [];
+    expect(children.length).toBeGreaterThan(0);
+    for (const child of children) expect(child.selectable).toBe(false);
+    // Promotion gives the body back to the selection and retires the row.
+    s.resolve("streamed and settled");
+    await t.frameWith("streamed and settled");
+    expect(t.renderer.root.findDescendantById("pending")).toBeUndefined();
+  });
+});
+
+describe("ChatView: markdown", () => {
+  /** A session that declares `markdown` and answers with `reply`. */
+  function markdownSession(reply: string): ChatSessionLike {
+    return {
+      responseFormat: "markdown",
+      async send() {
+        return reply;
+      },
+      async close() {},
+      async kill() {},
+    };
+  }
+
+  test("a markdown reply is rendered with markup concealed", async () => {
+    const t = await setup({
+      session: markdownSession(
+        "## Title\n\n- **bold** item\n\n```ts\nconst a = 1;\n```",
+      ),
+    });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    // The prose block only paints once the asynchronous tree-sitter parse
+    // lands, so wait for it settled (text present, markers gone) rather
+    // than asserting on the first frame that merely has the text.
+    const frame = await t.settledFrame("bold item", ["##", "**", "```"]);
+    expect(frame).toContain("Title");
+    expect(frame).toContain("const a = 1;");
+    // Concealment is asynchronous; the markers are gone once it lands.
+    expect(frame).not.toContain("##");
+    expect(frame).not.toContain("**");
+    expect(frame).not.toContain("```");
+  });
+
+  test("a text-format reply is shown verbatim", async () => {
+    const t = await setup({
+      session: {
+        async send() {
+          return "## not a heading **really**";
+        },
+        async close() {},
+        async kill() {},
+      },
+    });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    expect(await t.frameWith("not a heading")).toContain(
+      "## not a heading **really**",
+    );
+  });
+
+  test("user messages are never rendered as markdown", async () => {
+    const t = await setup({ session: markdownSession("plain reply") });
+    await t.mockInput.typeText("ask about **x** now");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("plain reply");
+    // The typed text is the user's, not the service's: it keeps its markers.
+    expect(frame).toContain("ask about **x** now");
+  });
+
+  test("a streaming markdown partial is promoted to the settled reply", async () => {
+    const s = streamingSession("markdown");
+    const t = await setup({ session: s.session });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    await t.frameWith("user");
+    s.emit("## Ti");
+    await t.frameWith("Ti");
+    s.emit("## Title\n\n- a");
+    await t.frameWith("Title");
+    s.resolve("## Title\n\n- **done**");
+    // Concealment lands over several render passes; wait for it to settle
+    // before asserting no raw markup remains, or a slower CI runner can
+    // catch the frame mid-conceal (heading still raw, list already done).
+    const done = await t.settledFrame("done", ["##", "**"]);
+    // Promoted in place: one heading, no leftover syntax, no pending row.
+    expect(done.split("Title").length - 1).toBe(1);
+    expect(done).not.toContain("##");
+    expect(done).not.toContain("**");
+    expect(done).toContain("assistant");
+    expect(t.renderer.root.findDescendantById("pending")).toBeUndefined();
+    expect(t.model.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+  });
+
+  test("an incomplete markdown reply is markdown with the note under it", async () => {
+    const s = streamingSession("markdown");
+    const t = await setup({ session: s.session });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    await t.frameWith("user");
+    s.emit("## Half");
+    await t.frameWith("Half");
+    s.reject(new ResponseTimeoutError("Timed out."));
+    await t.frameWith("Timed out.");
+    // Concealment of the already-streamed heading markup is asynchronous;
+    // wait for it to settle before asserting the raw "## Half" is gone.
+    const frame = await t.settledFrame("Half", ["## Half"]);
+    expect(frame).toContain("Timed out.");
+    expect(frame).not.toContain("## Half");
+    expect(frame).toContain(INCOMPLETE_NOTE);
+    expect(frame.indexOf("Half")).toBeLessThan(frame.indexOf("Timed out."));
+  });
+});
+
+describe("ChatView: the /copy notice", () => {
+  /** Waits for a frame without `text`, the counterpart of frameWith. */
+  async function frameWithout(
+    t: Awaited<ReturnType<typeof setup>>,
+    text: string,
+    tries = 100,
+  ): Promise<string> {
+    for (let i = 0; i < tries; i++) {
+      await sleep(20);
+      await t.renderOnce();
+      const f = t.captureCharFrame();
+      if (!f.includes(text)) return f;
+    }
+    throw new Error(`every frame still showed ${JSON.stringify(text)}`);
+  }
+
+  test("shows the notice, then the idle guide again", async () => {
+    const t = await setup({ delayMs: 1, copy: async () => true, noticeMs: 80 });
+    await t.model.submit("hello");
+    await t.model.submit("/copy");
+    const shown = await t.frameWith(COPIED_NOTICE);
+    expect(shown).not.toContain(GUIDE);
+    const later = await frameWithout(t, COPIED_NOTICE);
+    expect(t.model.notice).toBeUndefined();
+    expect(later).toContain(GUIDE);
+  });
+
+  test("a notice during a busy turn shows and then returns to the busy status line", async () => {
+    const s = streamingSession();
+    const t = await setup({
+      session: s.session,
+      copy: async () => true,
+      noticeMs: 80,
+    });
+    void t.model.submit("first");
+    await t.frameWith("Thinking…");
+    s.resolve("Echo: first");
+    await t.frameWith("Echo: first");
+    void t.model.submit("second");
+    await t.frameWith("Thinking…");
+    await t.model.submit("/copy");
+    const shown = await t.frameWith(COPIED_NOTICE);
+    // The spinner tick must not paint over the notice while it is up.
+    expect(shown).not.toContain(BUSY_GUIDE);
+    const later = await frameWithout(t, COPIED_NOTICE);
+    expect(later).toContain(BUSY_GUIDE);
+    s.resolve("Echo: second");
+  });
+
+  test("a pinned teardown message outlives a notice", async () => {
+    const t = await setup({ copy: async () => true, noticeMs: 80 });
+    await t.model.submit("hello");
+    t.view.setStatus("Closing browser...");
+    await t.model.submit("/copy");
+    await t.renderOnce();
+    const frame = t.captureCharFrame();
+    expect(frame).toContain("Closing browser...");
+    expect(frame).not.toContain(COPIED_NOTICE);
+  });
+
+  test("destroy() clears the notice timer", async () => {
+    // A window far shorter than the sleep below, so a timer that survived
+    // destroy() would certainly have fired by the time we look.
+    const t = await setup({ copy: async () => true, noticeMs: 20 });
+    await t.model.submit("hello");
+    await t.model.submit("/copy");
+    // The paint that schedules the timer; frameWith would race the window.
+    await t.renderOnce();
+    expect(t.model.notice).toBe(COPIED_NOTICE);
+    t.view.destroy();
+    // A leaked timer would clear the notice and repaint a destroyed view.
+    await sleep(200);
+    expect(t.model.notice).toBe(COPIED_NOTICE);
+  });
+
+  test("a second identical notice gets its own full window", async () => {
+    const t = await setup({ copy: async () => true, noticeMs: 600 });
+    await t.model.submit("hello");
+    await t.model.submit("/copy");
+    await t.frameWith(COPIED_NOTICE);
+    // Most of the first window is gone; a fresh notify() with the same text
+    // must restart the clock rather than inherit what is left of it. The
+    // margins are wide so a slow machine cannot decide the outcome.
+    await sleep(450);
+    t.model.notify(COPIED_NOTICE);
+    await t.renderOnce();
+    await sleep(300);
+    await t.renderOnce();
+    expect(t.model.notice).toBe(COPIED_NOTICE);
+    expect(t.captureCharFrame()).toContain(COPIED_NOTICE);
+  });
+
+  test("the running spinner leaves a live notice alone", async () => {
+    const runner = fakeRunner();
+    const t = await setup({
+      runCommand: runner.runCommand,
+      copy: async () => true,
+      noticeMs: 200,
+    });
+    await t.model.submit("hello");
+    await t.frameWith("Echo: hello");
+    void t.model.runShell("sleep 10");
+    await t.frameWith("Running…");
+    await t.model.submit("/copy");
+    const shown = await t.frameWith(COPIED_NOTICE);
+    // The "Running…" spinner ticks every frame; it must not paint over it.
+    expect(shown).not.toContain("Running…  ");
+    for (let i = 0; i < 4; i++) {
+      await sleep(20);
+      await t.renderOnce();
+      expect(t.captureCharFrame()).toContain(COPIED_NOTICE);
+    }
+    runner.finish({ exitCode: 0 });
+  });
+});
+
+describe("ChatView: select to copy", () => {
+  /** The row of the history that shows `text`, for the mock mouse. */
+  function rowOf(frame: string, text: string): number {
+    const y = frame.split("\n").findIndex((l) => l.includes(text));
+    expect(y).toBeGreaterThan(-1);
+    return y;
+  }
+
+  test("a finished selection over a reply copies its text", async () => {
+    const copied: string[] = [];
+    const t = await setup({
+      delayMs: 10,
+      copy: async (x) => {
+        copied.push(x);
+        return true;
+      },
+      noticeMs: 500,
+    });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("Echo: hi");
+    const y = rowOf(frame, "Echo: hi");
+    await t.mockMouse.drag(0, y, 8, y);
+    await t.renderOnce();
+    expect(copied).toEqual(["Echo: hi"]);
+    expect(await t.frameWith(COPIED_NOTICE)).toContain(COPIED_NOTICE);
+  });
+
+  test("role labels, separators and attachment lines are not selectable", async () => {
+    const copied: string[] = [];
+    const t = await setup({
+      delayMs: 10,
+      expand: async (text) => ({
+        prompt: text,
+        attachments: [{ path: "a.ts", bytes: 512 }],
+      }),
+      copy: async (x) => {
+        copied.push(x);
+        return true;
+      },
+    });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    await t.frameWith("Echo: hi");
+    await t.model.reset();
+    const frame = await t.frameWith("── reopened ──");
+    const top = rowOf(frame, "hi");
+    const bottom = rowOf(frame, "── reopened ──");
+    expect(bottom).toBeGreaterThan(top);
+    // Straight through both role labels, the attachment line and the
+    // separator: only the two message bodies come back.
+    await t.mockMouse.drag(0, top, 79, bottom);
+    await t.renderOnce();
+    expect(copied).toEqual(["hi\nEcho: hi"]);
+  });
+
+  test("the pending row is never copied", async () => {
+    const copied: string[] = [];
+    const s = streamingSession();
+    const t = await setup({
+      session: s.session,
+      copy: async (x) => {
+        copied.push(x);
+        return true;
+      },
+    });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    await t.frameWith("user");
+    s.emit("streaming reply");
+    const frame = await t.frameWith("streaming reply");
+    const y = rowOf(frame, "streaming reply");
+    // From the user's message straight down into the row in flight.
+    await t.mockMouse.drag(0, rowOf(frame, "hi"), 79, y);
+    await t.renderOnce();
+    expect(copied).toEqual(["hi"]);
+    s.resolve("streaming reply, done");
+    await t.frameWith("done");
+  });
+
+  test("a markdown reply copies what is on screen, not its source", async () => {
+    const copied: string[] = [];
+    const t = await setup({
+      session: {
+        responseFormat: "markdown",
+        async send() {
+          return "**bold** reply";
+        },
+        async close() {},
+        async kill() {},
+      },
+      copy: async (x) => {
+        copied.push(x);
+        return true;
+      },
+    });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("bold reply");
+    const y = rowOf(frame, "bold reply");
+    await t.mockMouse.drag(0, y, 10, y);
+    await t.renderOnce();
+    // The rendered text; the Markdown source is what `/copy` is for.
+    expect(copied).toEqual(["bold reply"]);
+  });
+
+  test("an empty selection copies nothing", async () => {
+    const copied: string[] = [];
+    const t = await setup({
+      delayMs: 10,
+      copy: async (x) => {
+        copied.push(x);
+        return true;
+      },
+    });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("Echo: hi");
+    const y = rowOf(frame, "Echo: hi");
+    await t.mockMouse.click(0, y);
+    await t.renderOnce();
+    expect(copied).toEqual([]);
+    expect(t.model.notice).toBeUndefined();
+  });
+
+  test("a selection that cannot report its text is treated as empty", async () => {
+    const copied: string[] = [];
+    const t = await setup({
+      delayMs: 10,
+      copy: async (x) => {
+        copied.push(x);
+        return true;
+      },
+    });
+    // Straight at the emitter: a throw from the renderer's selection object
+    // must not come back out of the handler.
+    const emitter = t.renderer as unknown as {
+      emit(event: string, payload: unknown): void;
+    };
+    expect(() =>
+      emitter.emit("selection", {
+        getSelectedText() {
+          throw new Error("no selection");
+        },
+      }),
+    ).not.toThrow();
+    await t.renderOnce();
+    expect(copied).toEqual([]);
+    expect(t.model.notice).toBeUndefined();
+  });
+
+  test("a failing clipboard notifies instead of throwing", async () => {
+    const t = await setup({
+      delayMs: 10,
+      copy: async () => {
+        throw new Error("no clipboard");
+      },
+      noticeMs: 500,
+    });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("Echo: hi");
+    const y = rowOf(frame, "Echo: hi");
+    await t.mockMouse.drag(0, y, 8, y);
+    expect(await t.frameWith(COPY_FAILED_NOTICE)).toContain(COPY_FAILED_NOTICE);
+  });
+
+  test("destroy() stops the view from copying a later selection", async () => {
+    const copied: string[] = [];
+    const t = await setup({
+      delayMs: 10,
+      copy: async (x) => {
+        copied.push(x);
+        return true;
+      },
+    });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("Echo: hi");
+    const y = rowOf(frame, "Echo: hi");
+    t.view.destroy();
+    await t.mockMouse.drag(0, y, 8, y);
+    expect(copied).toEqual([]);
+  });
+});
+
+describe("ChatView: input focus", () => {
+  /** The renderer option is what keeps focus put; production and the tests
+   * must agree on it, so `setup()` above reads it from the same constant
+   * run-interactive.ts passes to createCliRenderer. */
+  test("the production renderer options turn autoFocus off", () => {
+    expect(RENDERER_OPTIONS.autoFocus).toBe(false);
+  });
+
+  test("typing still reaches the input after clicking the history", async () => {
+    const t = await setup({ delayMs: 10 });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("Echo: hi");
+    const y = frame.split("\n").findIndex((l) => l.includes("Echo: hi"));
+    await t.mockMouse.click(2, y);
+    await t.renderOnce();
+    await t.mockInput.typeText("again");
+    expect(t.view.inputText).toBe("again");
+  });
+
+  test("clicking the header or the status line does not steal focus", async () => {
+    const t = await setup({ delayMs: 10 });
+    const lastRow = t.captureCharFrame().split("\n").length - 1;
+    await t.mockMouse.click(2, 0);
+    await t.renderOnce();
+    await t.mockMouse.click(2, lastRow);
+    await t.renderOnce();
+    await t.mockInput.typeText("still typing");
+    expect(t.view.inputText).toBe("still typing");
+  });
+
+  /** Eight exchanges: far more than the 20-row viewport holds. */
+  async function fillHistory(t: Awaited<ReturnType<typeof setup>>) {
+    for (let i = 0; i < 8; i++) {
+      await t.mockInput.typeText(`line${i}`);
+      t.mockInput.pressEnter();
+      await t.frameWith(`Echo: line${i}`);
+    }
+  }
+
+  /** Presses `key` eight times — more than there are pages in a history of
+   * eight exchanges — so the view ends up at that end of the history and
+   * the surplus presses exercise a PgUp at the very top and a PgDn at the
+   * very bottom. Asserts `text` is on screen afterwards. */
+  async function pageTo(
+    t: Awaited<ReturnType<typeof setup>>,
+    key: string,
+    text: string,
+  ): Promise<string> {
+    let frame = "";
+    for (let i = 0; i < 8; i++) {
+      t.mockInput.pressKey(key);
+      await sleep(20);
+      await t.renderOnce();
+      frame = t.captureCharFrame();
+    }
+    expect(frame).toContain(text);
+    return frame;
+  }
+
+  test("PgUp/PgDn scroll the history while the input has focus", async () => {
+    const t = await setup({ delayMs: 10 });
+    await fillHistory(t);
+    // The first exchange has scrolled off the bottom-stuck viewport.
+    expect(t.captureCharFrame()).not.toContain("line0");
+    await pageTo(t, PAGE_UP, "line0");
+    // Scrolling back is what the keys did, not a re-render: the last reply
+    // is off screen now.
+    expect(t.captureCharFrame()).not.toContain("Echo: line7");
+    await pageTo(t, PAGE_DOWN, "Echo: line7");
+    // Typing never stopped reaching the input while paging.
+    await t.mockInput.typeText("typed");
+    expect(t.view.inputText).toBe("typed");
+  });
+
+  test("a new reply follows the bottom again after PgUp then PgDn", async () => {
+    const t = await setup({ delayMs: 10 });
+    await fillHistory(t);
+    await pageTo(t, PAGE_UP, "line0");
+    await pageTo(t, PAGE_DOWN, "Echo: line7");
+    await t.mockInput.typeText("after");
+    t.mockInput.pressEnter();
+    expect(await t.frameWith("Echo: after")).toContain("Echo: after");
+  });
+
+  test("PgUp/PgDn are ignored once the view is torn down", async () => {
+    const t = await setup({ delayMs: 10 });
+    await fillHistory(t);
+    const before = t.captureCharFrame();
+    t.view.destroy();
+    // The renderables outlive destroy() — the renderer is still up — so the
+    // frame is what shows whether the keys did anything. PgUp is the
+    // discriminating one: the history is stuck at the bottom, so a live
+    // view would scroll away from `before`, while PgDn there is a no-op
+    // either way.
+    expect(() => {
+      t.mockInput.pressKey(PAGE_UP);
+      t.mockInput.pressKey(PAGE_DOWN);
+    }).not.toThrow();
+    await sleep(20);
+    await t.renderOnce();
+    expect(t.captureCharFrame()).toBe(before);
+    // And once more with PgUp alone, which no longer cancels out.
+    t.mockInput.pressKey(PAGE_UP);
+    await sleep(20);
+    await t.renderOnce();
+    expect(t.captureCharFrame()).toBe(before);
   });
 });

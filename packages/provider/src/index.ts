@@ -1,4 +1,6 @@
-import type { Page } from "playwright-core";
+import type { Locator, Page } from "playwright-core";
+
+export { elementToMarkdown } from "./element-to-markdown.js";
 
 /** Provider defaults for the opening phase (launch → goto → isLoggedIn →
  * startNewChat). Users override both via config.json and env vars. */
@@ -57,6 +59,7 @@ export const BUILTIN_COMMAND_NAMES = [
   "logout",
   "new",
   "reopen",
+  "copy",
   "help",
 ] as const;
 
@@ -77,6 +80,18 @@ export interface UrlHook {
    * ("403 from Confluence", "script not found"). Runs under the session
    * timeout. */
   resolve(url: string): Promise<UrlHookResult>;
+}
+
+/** Lets interactive UIs show the reply while it is being written. Core polls
+ * `responseText` while `waitForResponse` is pending; completion, the final
+ * text and timeouts still come from `waitForResponse`. */
+export interface ProviderStreaming {
+  /** Text so far of the reply to the most recent `sendMessage`, in
+   * `responseFormat`. `undefined` while only a placeholder exists. Must
+   * never return an earlier turn's text. */
+  responseText(page: Page): Promise<string | undefined>;
+  /** Poll interval in ms. Default 250. */
+  pollIntervalMs?: number;
 }
 
 /**
@@ -108,6 +123,12 @@ export interface Provider {
    * core calls this only after `isLoggedIn` returned false. Must not throw
    * on an ordinary logged-out page. */
   detectBlock?(page: Page): Promise<string | undefined>;
+  /** Optional. What `waitForResponse` (and `streaming.responseText`) return.
+   * "text" (default) is shown verbatim. "markdown" is rendered as Markdown
+   * by UIs that support it; `elementToMarkdown` produces it from the DOM. */
+  responseFormat?: "markdown" | "text";
+  /** Optional. See ProviderStreaming. */
+  streaming?: ProviderStreaming;
   /** Optional. A slow service may raise the opening timeout; a flaky one
    * may ask for retries. See ProviderOpenDefaults. */
   open?: ProviderOpenDefaults;
@@ -174,7 +195,24 @@ export function defineProvider(provider: Provider): Provider {
       `Provider idle.timeoutMs must be a non-negative finite number, got ${idleTimeout}.`,
     );
   }
+  const format = provider.responseFormat;
+  if (format !== undefined && format !== "markdown" && format !== "text") {
+    throw new Error(
+      `Provider responseFormat must be "markdown" or "text", got ${JSON.stringify(format)}.`,
+    );
+  }
+  if (provider.streaming !== undefined) {
+    if (typeof provider.streaming.responseText !== "function") {
+      throw new Error("Provider streaming.responseText must be a function.");
+    }
+    const poll = provider.streaming.pollIntervalMs;
+    if (poll !== undefined && (!Number.isFinite(poll) || poll <= 0)) {
+      throw new Error(
+        `Provider streaming.pollIntervalMs must be a finite number greater than 0, got ${poll}.`,
+      );
+    }
+  }
   return provider;
 }
 
-export type { Page };
+export type { Locator, Page };

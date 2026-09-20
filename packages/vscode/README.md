@@ -74,8 +74,12 @@ export const { activate, deactivate } = createExtension({
   and drains in order once the turn finishes; Shift+Enter inserts a newline.
 - **Up** on an empty composer takes the last queued message back for
   editing; queued entries can also be removed individually.
-- **`/` commands** — `/login`, `/logout`, `/new`, `/reopen`, `/help`, the
-  same table the TUI uses, plus whatever the provider adds. Type `/` in the
+- **`/` commands** — `/login`, `/logout`, `/new`, `/reopen`, `/copy`,
+  `/help`, the same table the TUI uses, plus whatever the provider adds.
+  `/copy` copies the last complete reply's text to the editor clipboard,
+  with an information message for feedback (a warning if the write fails).
+
+  Type `/` in the
   composer and the menu opens, filtered as you type: **↑/↓** select, **Tab**
   completes the word to `/name ` so arguments can follow, **Enter**
   completes too — unless what you typed is already the whole command, in

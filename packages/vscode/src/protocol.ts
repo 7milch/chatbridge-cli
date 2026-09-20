@@ -42,6 +42,8 @@ export type WebviewCommand =
   | "newChat"
   | "installBrowser"
   | "reopen"
+  /** The host copies the last reply to the clipboard. */
+  | "copy"
   /** The host answers with a `help` history entry. Sent by the webview and
    * by the `<id>.help` VS Code command. */
   | "help"

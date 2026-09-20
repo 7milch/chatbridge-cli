@@ -48,7 +48,10 @@ No CI workflow: real-service tests need a human login.
 
 Before discovery, each `dom-notes.md` section holds one line:
 `Not yet observed.` A section is done when it names a locator that matched
-exactly one element on the observation date.
+exactly one element on the observation date. If the service supports
+`streaming`, add a line to the Streaming behaviour section answering: which
+element grows while the reply streams, and how do you tell it from the
+previous turn's element (see `responseText` below)?
 
 ## Procedure
 
@@ -77,6 +80,8 @@ exactly one element on the observation date.
 | `startNewChat` | Navigate or click, then wait for the composer visible and empty. |
 | `sendMessage` | Record the assistant-message count (module-level `WeakMap<Page, number>`), fill, submit, then wait briefly for the "generating" state to begin (ignore timeout). |
 | `waitForResponse` | Wait for the count to exceed the recorded one, wait for the done signal, then read the newest message with `innerText` until two reads 500 ms apart agree. Never return an earlier turn. |
+| `responseFormat` (optional, framework ≥ 0.10.0) | `"markdown" \| "text"` (default `"text"`). What `waitForResponse` and `streaming.responseText` return. Use the exported `elementToMarkdown(locator)` to turn a reply element's DOM into Markdown instead of writing a converter. |
+| `streaming` (optional, framework ≥ 0.10.0) | `{ responseText(page): Promise<string \| undefined>; pollIntervalMs?: number }` (default 250 ms). Lets interactive UIs show the reply while it is written; core polls it while `waitForResponse` is pending. `responseText` must never return an earlier turn's text — return `undefined` until the new reply's element can be told apart from the previous turn's (count assistant vs. user messages, or key off a busy/idle state attribute). |
 
 ## Traps seen in the wild
 
