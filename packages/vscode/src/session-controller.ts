@@ -255,7 +255,7 @@ export class SessionController {
           this.expanding = false;
           const dropped = this.restorePending(turn.attachments);
           const note =
-            dropped === 0 ? "" : SessionController.droppedLine(dropped);
+            dropped === 0 ? "" : `\n${droppedAttachmentsLine(dropped)}`;
           const head = fromQueue
             ? `${REOPENED_STEM}: ${turn.text}`
             : REOPENED_MESSAGE;
@@ -293,7 +293,7 @@ export class SessionController {
           text:
             dropped === 0
               ? message
-              : message + SessionController.droppedLine(dropped),
+              : `${message}\n${droppedAttachmentsLine(dropped)}`,
         });
         // Nothing else will run the entries that queued behind this one.
         this.drain();
@@ -444,12 +444,6 @@ export class SessionController {
         ? [...kept, ...this.pending]
         : [...this.pending, ...kept];
     return dropped;
-  }
-
-  /** The line appended when a restore had to leave attachments behind; the
-   * same wording the takeBack warning uses. */
-  private static droppedLine(dropped: number): string {
-    return `\n${dropped} attachment(s) left out: total size limit.`;
   }
 
   /** Empties the queue back into the composer: the entries are returned
@@ -688,4 +682,14 @@ export class SessionController {
     if (this.status !== "dead") this.status = "closed";
     this.emit();
   }
+}
+
+/** Why attachments went missing, for the message the user reads (or hears):
+ * a restore that no longer fits under MAX_TOTAL_BYTES, and the same thing
+ * `takeBack` warns about in `create-extension.ts`. One helper so the two
+ * sites cannot drift, with a real plural — a screen reader reads
+ * "attachment(s)" out literally. Not exported from `index.ts`: internal. */
+export function droppedAttachmentsLine(dropped: number): string {
+  const noun = dropped === 1 ? "attachment" : "attachments";
+  return `${dropped} ${noun} left out: total size limit.`;
 }

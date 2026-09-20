@@ -16,6 +16,7 @@ import {
   REOPENED_SEPARATOR,
   SessionController,
   type SessionControllerOptions,
+  droppedAttachmentsLine,
 } from "./session-controller.js";
 
 function deferred<T>() {
@@ -1136,7 +1137,7 @@ describe("URL hooks", () => {
     expect(s.messages).toEqual([
       {
         role: "error",
-        text: "https://w/x: 403\n1 attachment(s) left out: total size limit.",
+        text: "https://w/x: 403\n1 attachment left out: total size limit.",
       },
     ]);
     // The composer is usable again: it is under the limit.
@@ -1304,7 +1305,7 @@ describe("URL hooks", () => {
       { role: "separator", text: REOPENED_SEPARATOR },
       {
         role: "error",
-        text: "Reopened while resolving URLs; message not sent.\n1 attachment(s) left out: total size limit.",
+        text: "Reopened while resolving URLs; message not sent.\n1 attachment left out: total size limit.",
       },
     ]);
   });
@@ -1431,5 +1432,16 @@ describe("idle close", () => {
     const state = h.controller.getState();
     expect(state.status).toBe("closed");
     expect(state.messages.length).toBe(before);
+  });
+});
+
+describe("droppedAttachmentsLine", () => {
+  test("has a real plural: a screen reader reads this sentence out", () => {
+    expect(droppedAttachmentsLine(1)).toBe(
+      "1 attachment left out: total size limit.",
+    );
+    expect(droppedAttachmentsLine(2)).toBe(
+      "2 attachments left out: total size limit.",
+    );
   });
 });

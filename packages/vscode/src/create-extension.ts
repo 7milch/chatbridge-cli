@@ -20,7 +20,10 @@ import {
   recommendedContributions,
 } from "./manifest.js";
 import { onSendResult } from "./send-result.js";
-import { SessionController } from "./session-controller.js";
+import {
+  SessionController,
+  droppedAttachmentsLine,
+} from "./session-controller.js";
 import { parseIdleTimeoutMin, parseTimeoutSec } from "./timeout-setting.js";
 import { type ExtensionUiOptions, resolveUiConfig } from "./ui-config.js";
 import { createVscodeUi } from "./vscode-ui.js";
@@ -120,7 +123,7 @@ export function createExtension(opts: CreateExtensionOptions) {
           bridge.pushTookBack(r.entries);
           if (r.droppedAttachments > 0) {
             void vscode.window.showWarningMessage(
-              `${r.droppedAttachments} attachment(s) left out: total size limit.`,
+              droppedAttachmentsLine(r.droppedAttachments),
             );
           }
         },
