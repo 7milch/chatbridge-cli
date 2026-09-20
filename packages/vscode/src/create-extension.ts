@@ -14,7 +14,11 @@ import { ChatViewBridge } from "./chat-view-bridge.js";
 import { ChatViewProvider } from "./chat-view-provider.js";
 import { type CommandHandlers, createCommands } from "./commands.js";
 import { installBrowser } from "./install-browser.js";
-import { COMMAND_NAMES, missingContributions } from "./manifest.js";
+import {
+  COMMAND_NAMES,
+  missingContributions,
+  recommendedContributions,
+} from "./manifest.js";
 import { SessionController } from "./session-controller.js";
 import { parseIdleTimeoutMin, parseTimeoutSec } from "./timeout-setting.js";
 import { type ExtensionUiOptions, resolveUiConfig } from "./ui-config.js";
@@ -64,6 +68,18 @@ export function createExtension(opts: CreateExtensionOptions) {
     if (missing.length > 0) {
       throw new Error(
         `${opts.displayName}: package.json lacks contributes entries for "${opts.id}": ${missing.join(", ")}`,
+      );
+    }
+    // Not fatal: an extension whose manifest predates the title-bar actions
+    // still gets the composer, the `/` menu and the notice card, and the
+    // `/` menu reaches every action the title bar would show.
+    const recommended = recommendedContributions(
+      context.extension.packageJSON,
+      opts.id,
+    );
+    if (recommended.length > 0) {
+      console.warn(
+        `${opts.displayName}: package.json lacks recommended contributes entries for "${opts.id}" (the view title bar stays empty): ${recommended.join(", ")}`,
       );
     }
     const uiConfig = resolveUiConfig(
