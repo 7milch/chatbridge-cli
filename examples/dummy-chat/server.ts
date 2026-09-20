@@ -31,11 +31,14 @@ export function dummyReply(text: string): string {
   ].join("\n");
 }
 
+/** Quotes included: a fence language reaches an attribute value, so a quote
+ * in it must not be able to close that attribute. */
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 /** Escape first, so a prompt can never reach the page as markup, then apply
@@ -177,16 +180,25 @@ function chatHtml(replyDelayMs: number, chunkDelayMs: number): string {
     log.dataset.state = "busy";
     const wait = text.startsWith("slow:") ? 5000 : delay;
     setTimeout(async () => {
-      const res = await fetch("/reply?text=" + encodeURIComponent(text));
-      const { chunks } = await res.json();
       const reply = document.createElement("div");
       reply.className = "message assistant";
       log.appendChild(reply);
-      for (const html of chunks) {
-        reply.innerHTML = html;
-        await new Promise((r) => setTimeout(r, chunkDelay));
+      try {
+        // POST, not a query string: a long prompt (an attached file) would
+        // otherwise overrun the server's request-line limit.
+        const res = await fetch("/reply", { method: "POST", body: text });
+        const { chunks } = await res.json();
+        for (const html of chunks) {
+          reply.innerHTML = html;
+          await new Promise((r) => setTimeout(r, chunkDelay));
+        }
+      } catch (err) {
+        reply.textContent = "reply failed: " + err;
+      } finally {
+        // Always: a turn that never leaves "busy" would burn the caller's
+        // whole timeout instead of failing.
+        log.dataset.state = "idle";
       }
-      log.dataset.state = "idle";
     }, wait);
   });
 </script>`;
@@ -219,7 +231,7 @@ export async function startDummyChat(port = 8735): Promise<DummyChat> {
 
   const server = Bun.serve({
     port,
-    fetch(req) {
+    async fetch(req) {
       const url = new URL(req.url);
       const { pathname } = url;
       if (pathname === "/login") {
@@ -258,8 +270,8 @@ export async function startDummyChat(port = 8735): Promise<DummyChat> {
         if (!hasSession(req)) {
           return new Response("unauthorized", { status: 401 });
         }
-        const text = url.searchParams.get("text") ?? "";
-        return Response.json({ chunks: replyChunks(text) });
+        // The prompt is the body: no length limit to run into.
+        return Response.json({ chunks: replyChunks(await req.text()) });
       }
       return new Response("not found", { status: 404 });
     },

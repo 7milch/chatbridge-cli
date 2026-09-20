@@ -118,18 +118,29 @@ describe("renderDummyMarkdown", () => {
       "<p>a &amp; &lt;img src=x&gt; <strong>b</strong></p>",
     );
   });
+
+  // A fence language comes from the prompt and lands in an attribute value,
+  // so a quote in it must not be able to close that attribute.
+  test("escapes quotes, including in a fence language", () => {
+    expect(renderDummyMarkdown('say "hi"')).toBe("<p>say &quot;hi&quot;</p>");
+    expect(renderDummyMarkdown('```ts" onload="x\ncode\n```')).toContain(
+      'class="language-ts&quot; onload=&quot;x"',
+    );
+  });
 });
 
-describe("GET /reply", () => {
+describe("POST /reply", () => {
   test("rejects a request without a session", async () => {
     const s = await startDummyChat(0);
     stop = s.stop;
-    const res = await fetch(`${s.url}/reply?text=hi`);
+    const res = await fetch(`${s.url}/reply`, { method: "POST", body: "hi" });
     expect(res.status).toBe(401);
   });
 
   async function chunksFor(url: string, text: string): Promise<string[]> {
-    const res = await fetch(`${url}/reply?text=${encodeURIComponent(text)}`, {
+    const res = await fetch(`${url}/reply`, {
+      method: "POST",
+      body: text,
       headers: { cookie: "session=ok" },
     });
     expect(res.status).toBe(200);
@@ -169,5 +180,13 @@ describe("GET /reply", () => {
     const last = chunks.at(-1) ?? "";
     expect(last).not.toContain("<img");
     expect(last).toContain("&lt;img src=x onerror=alert(1)&gt;");
+  });
+
+  test("answers a 50 KB prompt", async () => {
+    const s = await startDummyChat(0);
+    stop = s.stop;
+    const text = "x".repeat(50_000);
+    const chunks = await chunksFor(s.url, text);
+    expect(chunks.at(-1)).toBe(`<p>Echo: ${text}</p>`);
   });
 });
