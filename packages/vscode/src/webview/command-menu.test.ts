@@ -5,7 +5,9 @@ import {
 } from "@chatbridge/core/slash-commands";
 import {
   CommandMenuModel,
+  type MenuKeyEvent,
   buildSections,
+  buttonMenuAction,
   insertCommand,
 } from "./command-menu.js";
 
@@ -90,5 +92,59 @@ describe("insertCommand", () => {
   test("the cursor sits after the space, ready for arguments", () => {
     const { text, cursor } = insertCommand("x", "new");
     expect(text.slice(0, cursor)).toBe("/new ");
+  });
+});
+
+describe("buttonMenuAction", () => {
+  const key = (k: string, mods: Partial<MenuKeyEvent> = {}): MenuKeyEvent => ({
+    key: k,
+    shiftKey: false,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    isComposing: false,
+    keyCode: 0,
+    ...mods,
+  });
+
+  test("the arrows move and Enter chooses", () => {
+    expect(buttonMenuAction(key("ArrowDown"))).toBe("down");
+    expect(buttonMenuAction(key("ArrowUp"))).toBe("up");
+    expect(buttonMenuAction(key("Enter"))).toBe("choose");
+  });
+
+  test("Escape closes", () => {
+    expect(buttonMenuAction(key("Escape"))).toBe("close");
+  });
+
+  test("Tab is left alone, so it moves focus and the menu closes with it", () => {
+    expect(buttonMenuAction(key("Tab"))).toBe("pass");
+    expect(buttonMenuAction(key("Tab", { shiftKey: true }))).toBe("pass");
+  });
+
+  test("any other key is left alone", () => {
+    expect(buttonMenuAction(key("a"))).toBe("pass");
+    expect(buttonMenuAction(key(" "))).toBe("pass");
+    expect(buttonMenuAction(key("Home"))).toBe("pass");
+  });
+
+  test("an IME composition keeps every key, including Escape and the arrows", () => {
+    for (const k of ["ArrowDown", "ArrowUp", "Enter", "Escape"]) {
+      expect(buttonMenuAction(key(k, { isComposing: true }))).toBe("pass");
+      // Safari and older WebKit report the composition as keyCode 229 only.
+      expect(buttonMenuAction(key(k, { keyCode: 229 }))).toBe("pass");
+    }
+  });
+
+  test("Shift+Enter is a newline, never a choice", () => {
+    expect(buttonMenuAction(key("Enter", { shiftKey: true }))).toBe("pass");
+  });
+
+  test("a modified key belongs to the editor or the workbench", () => {
+    for (const mod of ["altKey", "ctrlKey", "metaKey", "shiftKey"] as const) {
+      for (const k of ["ArrowDown", "ArrowUp", "Enter", "Escape"]) {
+        expect(buttonMenuAction(key(k, { [mod]: true }))).toBe("pass");
+      }
+    }
   });
 });

@@ -54,6 +54,41 @@ export class CommandMenuModel {
   }
 }
 
+/** The part of a `KeyboardEvent` the menu decides on. An interface rather
+ * than the event itself so the decision is testable without a DOM. */
+export interface MenuKeyEvent {
+  key: string;
+  shiftKey: boolean;
+  altKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  isComposing: boolean;
+  keyCode: number;
+}
+
+/** What an open menu should do with a key. `"pass"` means the key is none of
+ * the menu's business: the handler must neither `preventDefault` nor
+ * `stopPropagation` it, so Tab still moves focus, Shift+Enter still makes a
+ * newline and an IME still owns its candidate list.
+ *
+ * Any modifier disqualifies a key. Alt/Ctrl/Meta chords belong to the
+ * workbench, and Shift turns Enter into a newline and the arrows into a
+ * selection — none of them is a menu gesture. */
+export function buttonMenuAction(
+  e: MenuKeyEvent,
+): "up" | "down" | "choose" | "close" | "pass" {
+  // `isComposing` is not set by every engine; WebKit reports a composing key
+  // as keyCode 229 instead. While an IME is composing, the arrows walk its
+  // candidate list and Escape cancels the composition.
+  if (e.isComposing || e.keyCode === 229) return "pass";
+  if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return "pass";
+  if (e.key === "ArrowDown") return "down";
+  if (e.key === "ArrowUp") return "up";
+  if (e.key === "Enter") return "choose";
+  if (e.key === "Escape") return "close";
+  return "pass";
+}
+
 /** Choosing an entry never runs it: it writes `/name ` in front of whatever
  * is already typed and leaves the cursor after the space, so arguments can
  * follow and Enter confirms exactly as when the command was typed. */

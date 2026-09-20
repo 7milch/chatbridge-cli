@@ -14,6 +14,7 @@ import type {
 import {
   CommandMenuModel,
   buildSections,
+  buttonMenuAction,
   insertCommand,
 } from "./command-menu.js";
 import {
@@ -499,6 +500,12 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
 // The model is shared with the typed-`/` completion (#86); everything
 // below is only the DOM around it.
 let menu: CommandMenuModel | undefined;
+/** The focused element an open menu belongs to. It carries `aria-expanded`
+ * and `aria-activedescendant`, and its keys — and the popup's — are the only
+ * ones the menu may take. Today only the `/` button opens the menu; #86
+ * opens the same one from `#input`, which then owns both, so the owner is a
+ * variable rather than hard-wired into each of these functions. */
+let menuOwner: HTMLElement = commandsButton;
 
 function paintSelection(): void {
   const selectedId =
@@ -513,28 +520,31 @@ function paintSelection(): void {
     node.setAttribute("aria-selected", String(on));
   }
   if (selectedId) {
-    commandsButton.setAttribute("aria-activedescendant", selectedId);
+    menuOwner.setAttribute("aria-activedescendant", selectedId);
     document.getElementById(selectedId)?.scrollIntoView({ block: "nearest" });
   } else {
-    commandsButton.removeAttribute("aria-activedescendant");
+    menuOwner.removeAttribute("aria-activedescendant");
   }
 }
 
-function closeMenu(focusInput = true): void {
+/** `focusTarget` is only ever given when the user's own gesture asks for the
+ * move — choosing an entry, or Escape. A menu dismissed by a click or a Tab
+ * elsewhere must not pull focus back. */
+function closeMenu(focusTarget?: HTMLElement): void {
   if (!menu) return;
   menu = undefined;
   commandMenu.hidden = true;
   commandMenu.replaceChildren();
-  commandsButton.setAttribute("aria-expanded", "false");
-  commandsButton.removeAttribute("aria-activedescendant");
-  if (focusInput) input.focus();
+  menuOwner.setAttribute("aria-expanded", "false");
+  menuOwner.removeAttribute("aria-activedescendant");
+  focusTarget?.focus();
 }
 
 function chooseCommand(index: number): void {
   const picked = menu?.items[index];
   if (!picked) return;
   const { text, cursor } = insertCommand(input.value, picked.name);
-  closeMenu(false);
+  closeMenu();
   input.value = text;
   input.focus();
   input.setSelectionRange(cursor, cursor);
@@ -547,6 +557,7 @@ function openMenu(): void {
   // The display name is only in the document title (buildHtml puts it
   // there); the protocol carries no provider name.
   menu = new CommandMenuModel(buildSections(document.title, providerCommands));
+  menuOwner = commandsButton;
   commandMenu.replaceChildren();
   let index = 0;
   for (const section of menu.sections) {
@@ -574,51 +585,69 @@ function openMenu(): void {
     commandMenu.appendChild(group);
   }
   commandMenu.hidden = false;
-  commandsButton.setAttribute("aria-expanded", "true");
+  menuOwner.setAttribute("aria-expanded", "true");
   paintSelection();
-  input.focus();
+  // Focus stays on the owner, never moves to the input: that is what makes
+  // `aria-activedescendant` announce the active option, and it leaves the
+  // composer's own Enter, arrows and IME untouched while the menu is open.
+  menuOwner.focus();
 }
 
 commandsButton.addEventListener("click", () => {
-  if (menu) closeMenu();
+  if (menu) closeMenu(input);
   else openMenu();
 });
 
-// While the menu is open the arrows and Enter belong to it, so this runs
-// before the composer's own keydown handling (it is registered on the
-// document, in the capture phase).
+/** Menu keys are only the ones pressed on the owner or inside the popup.
+ * The listener is document-wide, so without this an Enter on the focused
+ * send button would be swallowed and insert a command. */
+function isMenuKeyEvent(target: EventTarget | null): boolean {
+  const node = target as Node | null;
+  return (
+    node !== null && (menuOwner.contains(node) || commandMenu.contains(node))
+  );
+}
+
+// Registered on the document in the capture phase so the arrows and Enter
+// reach the menu before anything else claims them. `buttonMenuAction` decides
+// what is the menu's; everything else falls through untouched.
 document.addEventListener(
   "keydown",
   (e) => {
-    if (!menu) return;
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      e.preventDefault();
-      e.stopPropagation();
-      menu.move(e.key === "ArrowDown" ? 1 : -1);
+    if (!menu || !isMenuKeyEvent(e.target)) return;
+    const action = buttonMenuAction(e);
+    if (action === "pass") return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (action === "up" || action === "down") {
+      menu.move(action === "down" ? 1 : -1);
       paintSelection();
-      return;
-    }
-    if (e.key === "Enter" && !e.isComposing) {
-      e.preventDefault();
-      e.stopPropagation();
+    } else if (action === "choose") {
       chooseCommand(menu.selectedIndex);
-      return;
-    }
-    if (e.key === "Escape") {
-      e.preventDefault();
-      e.stopPropagation();
-      closeMenu();
+    } else {
+      closeMenu(input);
     }
   },
   true,
 );
 
+// Tab (or any other focus move) out of the owner and the popup leaves the
+// menu behind, still claiming `aria-expanded="true"`. Close it, and let the
+// focus go where it was headed.
+document.addEventListener("focusout", (e) => {
+  if (!menu) return;
+  const next = e.relatedTarget as Node | null;
+  if (next !== null && isMenuKeyEvent(next)) return;
+  closeMenu();
+});
+
 document.addEventListener("mousedown", (e) => {
   if (!menu) return;
-  const target = e.target as Node | null;
-  if (commandMenu.contains(target) || commandsButton.contains(target)) return;
+  if (isMenuKeyEvent(e.target)) return;
   // A click elsewhere in the view dismisses it without stealing focus.
-  closeMenu(false);
+  // `focusout` would catch most of these, but not a click on a part of the
+  // view that takes no focus at all.
+  closeMenu();
 });
 
 fitComposer();
