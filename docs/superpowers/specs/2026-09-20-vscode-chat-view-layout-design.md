@@ -21,7 +21,7 @@ A–D, then a detailed A+C sample covering six states).
 3. No change to session behaviour, to message rendering, or to the vendor `ui`
    options. Existing vendor extensions keep working without a manifest change.
 
-Non-goals: a completion popup while typing `/` (#86), Markdown rendering,
+Non-goals: Markdown rendering,
 per-message actions, a webview toolbar, restyling the history.
 
 ## 1. Native title bar
@@ -112,8 +112,9 @@ A listbox popup anchored above the action row, full box width:
   returns focus to the input. `role="listbox"` / `role="option"`,
   `aria-activedescendant` on the button, `aria-expanded` reflects the state.
 - The list-building and keyboard logic live in their own module
-  (`webview/command-menu.ts`) with no dependency on the button, so #86 can open
-  the same menu from typing `/`.
+  (`webview/command-menu.ts`) with no dependency on the button: #86 (same
+  milestone, `2026-09-20-slash-completion-design.md`) opens the same menu from
+  typing `/`.
 
 The built-in names and descriptions are `SLASH_COMMANDS` from
 `@chatbridge/core/slash-commands`, which the webview bundle already imports for
