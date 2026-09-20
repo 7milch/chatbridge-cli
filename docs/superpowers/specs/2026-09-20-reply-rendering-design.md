@@ -78,7 +78,7 @@ returns Markdown for the element's subtree:
 | `pre` (with or without inner `code`) | fenced block; language from a `language-xxx` / `lang-xxx` class on `code` or `pre`; content is `textContent` verbatim |
 | `ul` / `ol` (nested) | `- ` / `1. `, 2-space (ul) or 3-space (ol) indent per level, `start` honoured |
 | `blockquote` | `> ` prefix on every line |
-| `a[href]` | `[text](href)`; bare text when `href` is empty or `javascript:` |
+| `a[href]` | `[text](href)`; bare text when `href` is empty, `javascript:`, or contains whitespace or control characters |
 | `table` | GFM pipe table; first row is the header; `\|` escaped in cells |
 | `hr`, `br` | `---`, line break |
 | `img` | `![alt](src)` |
@@ -90,6 +90,14 @@ Markdown-significant characters in plain text are not escaped (a reply that
 shows a literal `*` keeps it; the rare mis-render is accepted over escaping
 noise in `/copy` output). The result is trimmed and has no more than one blank
 line in a row.
+
+A wrapper element the walker does not know — a custom element around a code
+block, a `span` or `details` around a list — is treated as a container rather
+than inline text once its subtree contains block content, so the blocks inside
+it keep their structure. Emphasis whose inner text is empty is dropped instead
+of emitting bare markers. Control characters are stripped from the finished
+string, tab and newline excepted, so tabs and blank lines inside `pre` survive
+while an escape sequence from a reply cannot reach a terminal or a clipboard.
 
 The walker is a single self-contained function (it is serialised into the
 page), so it may not reference module scope.

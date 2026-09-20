@@ -101,6 +101,47 @@ const CASES: Array<[name: string, html: string, expected: string]> = [
     "ab",
   ],
   ["no triple blank lines", "<p>a</p><div></div><div></div><p>b</p>", "a\n\nb"],
+  [
+    "a wrapper element around a code block keeps the fence",
+    '<code-block><div><span>python</span><button>Copy</button></div><pre><code class="language-python">def f():\n    return 1</code></pre></code-block>',
+    "python\n\n```python\ndef f():\n    return 1\n```",
+  ],
+  [
+    "a list wrapped in an inline element keeps its markers",
+    "<span><ul><li>a</li><li>b</li></ul></span>",
+    "- a\n- b",
+  ],
+  [
+    "details wrapper",
+    "<details><summary>S</summary><p>x</p></details>",
+    "S\n\nx",
+  ],
+  [
+    "a nested table does not leak rows into the outer one",
+    "<table><tr><th>h</th></tr><tr><td><table><tr><td>x</td></tr></table></td></tr></table>",
+    "| h |\n| --- |\n| x |",
+  ],
+  [
+    "control characters are stripped",
+    "<p>a\u001b]52;c;X\u0007b</p>",
+    "a]52;c;Xb",
+  ],
+  [
+    "a tab inside pre survives",
+    "<pre><code>a\tb</code></pre>",
+    "```\na\tb\n```",
+  ],
+  [
+    "href with a control character is bare text",
+    '<p><a href="https://example.com/\u0007x">t</a></p>',
+    "t",
+  ],
+  [
+    "href with whitespace is bare text",
+    '<p><a href="https://example.com/a b">t</a></p>',
+    "t",
+  ],
+  ["empty emphasis is dropped", "<p>a<strong></strong>b</p>", "ab"],
 ];
 
 describe("elementToMarkdown (headless Chromium)", () => {

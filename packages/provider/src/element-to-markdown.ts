@@ -65,18 +65,24 @@ function walk(root: Element): string {
     const tag = el.tagName.toUpperCase();
     if (SKIP.has(tag) || el.getAttribute("aria-hidden") === "true") return "";
     const inner = () => Array.from(el.childNodes).map(inline).join("");
+    // Empty emphasis is decoration, not text: `**`/`*`/`~~` around nothing
+    // would read as literal markers.
+    const mark = (delim: string): string => {
+      const text = inner().trim();
+      return text ? `${delim}${text}${delim}` : "";
+    };
     switch (tag) {
       case "BR":
         return "\n";
       case "STRONG":
       case "B":
-        return `**${inner().trim()}**`;
+        return mark("**");
       case "EM":
       case "I":
-        return `*${inner().trim()}*`;
+        return mark("*");
       case "DEL":
       case "S":
-        return `~~${inner().trim()}~~`;
+        return mark("~~");
       case "CODE": {
         const text = el.textContent ?? "";
         const f = fence(text, 1);
@@ -89,15 +95,27 @@ function walk(root: Element): string {
         const href = el.getAttribute("href") ?? "";
         const text = inner().trim();
         // A javascript: or empty href is UI, not a destination worth copying.
-        if (href === "" || /^\s*javascript:/i.test(href)) return text;
+        // Whitespace or control characters mean it is not a usable URL either,
+        // and a control character must never reach a terminal or a clipboard.
+        if (
+          href === "" ||
+          /^\s*javascript:/i.test(href) ||
+          // biome-ignore lint/suspicious/noControlCharactersInRegex: that is what this rejects.
+          /[\s\u0000-\u001f\u007f-\u009f]/.test(href)
+        )
+          return text;
         return `[${text}](${href})`;
       }
       case "IMG":
         return `![${el.getAttribute("alt") ?? ""}](${el.getAttribute("src") ?? ""})`;
       default:
-        // A block nested in inline context (a <p> inside an <li>): its
-        // blocks, joined, so the caller can indent them.
-        return BLOCK.has(tag) ? blocks(el).join("\n\n") : inner();
+        // A block nested in inline context (a <p> inside an <li>): rendered as
+        // itself, so a list keeps its markers, and joined so the caller can
+        // indent them. A table only reaches inline context from inside a cell,
+        // where a grid would not fit: flatten that one to its text.
+        return BLOCK.has(tag) && tag !== "TABLE"
+          ? blockOf(el).join("\n\n")
+          : inner();
     }
   };
 
@@ -124,7 +142,13 @@ function walk(root: Element): string {
   };
 
   const table = (el: Element): string => {
-    const rows = Array.from(el.querySelectorAll("tr")).map((tr) =>
+    // Scoped to this table: an unscoped `tr` query would pull a nested
+    // table's rows up into the outer grid.
+    const rows = Array.from(
+      el.querySelectorAll(
+        ":scope > tr, :scope > thead > tr, :scope > tbody > tr, :scope > tfoot > tr",
+      ),
+    ).map((tr) =>
       Array.from(tr.children).map((cell) =>
         inline(cell).trim().replace(/\|/g, "\\|").replace(/\n/g, " "),
       ),
@@ -160,41 +184,59 @@ function walk(root: Element): string {
       const tag = c.tagName.toUpperCase();
       if (SKIP.has(tag) || c.getAttribute("aria-hidden") === "true") continue;
       if (!BLOCK.has(tag)) {
-        run += inline(c);
+        // A wrapper the walker does not know — a custom element around a code
+        // block, a <span> or <details> around a list — is a container once its
+        // subtree holds block content, not a run of inline text.
+        if (
+          c.querySelector("pre,ul,ol,table,blockquote,h1,h2,h3,h4,h5,h6,p,hr")
+        ) {
+          flush();
+          out.push(...blocks(c));
+        } else {
+          run += inline(c);
+        }
         continue;
       }
       flush();
-      const heading = /^H([1-6])$/.exec(tag);
-      if (heading) {
-        out.push(`${"#".repeat(Number(heading[1]))} ${inlineOnly(c)}`);
-      } else if (tag === "PRE") {
-        const text = (c.textContent ?? "").replace(/\n$/, "");
-        const f = fence(text, 3);
-        out.push(`${f}${language(c)}\n${text}\n${f}`);
-      } else if (tag === "UL" || tag === "OL") {
-        const text = list(c, tag === "OL");
-        if (text) out.push(text);
-      } else if (tag === "BLOCKQUOTE") {
-        const text = blocks(c).join("\n\n");
-        if (text) {
-          out.push(
-            text
-              .split("\n")
-              .map((l) => (l === "" ? ">" : `> ${l}`))
-              .join("\n"),
-          );
-        }
-      } else if (tag === "TABLE") {
-        const text = table(c);
-        if (text) out.push(text);
-      } else if (tag === "HR") {
-        out.push("---");
-      } else {
-        out.push(...blocks(c));
-      }
+      out.push(...blockOf(c));
     }
     flush();
     return out;
+  }
+
+  /** The blocks this one block element stands for. Separate from `blocks`, its
+   * container counterpart, so inline context can render an element itself. */
+  function blockOf(el: Element): string[] {
+    const tag = el.tagName.toUpperCase();
+    const heading = /^H([1-6])$/.exec(tag);
+    if (heading) {
+      return [`${"#".repeat(Number(heading[1]))} ${inlineOnly(el)}`];
+    }
+    if (tag === "PRE") {
+      const text = (el.textContent ?? "").replace(/\n$/, "");
+      const f = fence(text, 3);
+      return [`${f}${language(el)}\n${text}\n${f}`];
+    }
+    if (tag === "UL" || tag === "OL") {
+      const text = list(el, tag === "OL");
+      return text ? [text] : [];
+    }
+    if (tag === "BLOCKQUOTE") {
+      const text = blocks(el).join("\n\n");
+      if (!text) return [];
+      return [
+        text
+          .split("\n")
+          .map((l) => (l === "" ? ">" : `> ${l}`))
+          .join("\n"),
+      ];
+    }
+    if (tag === "TABLE") {
+      const text = table(el);
+      return text ? [text] : [];
+    }
+    if (tag === "HR") return ["---"];
+    return blocks(el);
   }
 
   /** Inline content of a block whose children are all inline (a heading). */
@@ -206,5 +248,15 @@ function walk(root: Element): string {
   // join, never to the finished string: `blocks` already drops empty blocks,
   // and a global collapse would eat blank lines inside fenced code, whose
   // content is verbatim.
-  return blocks(root).join("\n\n").trim();
+  //
+  // Control characters are stripped last: the result is printed in a terminal
+  // and copied to a clipboard, where an escape sequence from a reply would be
+  // an injection. Tab and newline are content and stay.
+  return (
+    blocks(root)
+      .join("\n\n")
+      .trim()
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: that is the point.
+      .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "")
+  );
 }
