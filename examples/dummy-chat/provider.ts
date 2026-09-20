@@ -1,4 +1,8 @@
-import { type Provider, defineProvider } from "@chatbridge/provider";
+import {
+  type Provider,
+  defineProvider,
+  elementToMarkdown,
+} from "@chatbridge/provider";
 
 /** Reference Provider implementation, targeting the bundled dummy chat.
  * Real providers follow the same shape against real services. */
@@ -27,16 +31,34 @@ export function createDummyProvider(baseUrl: string): Provider {
       await page.locator("#send-button").click();
     },
 
+    responseFormat: "markdown",
+
     async waitForResponse(page) {
       const log = page.locator("#chat-log");
-      await log
-        .locator(".message.assistant")
-        .last()
-        .waitFor({ state: "visible" });
-      // Wait for the busy → idle transition so partial replies are impossible.
+      const last = log.locator(".message.assistant").last();
+      await last.waitFor({ state: "attached" });
+      // The busy → idle transition is the completion signal; partial text is
+      // what `streaming.responseText` is for.
       await page.waitForSelector('#chat-log[data-state="idle"]');
-      const text = await log.locator(".message.assistant").last().textContent();
-      return text ?? "";
+      return elementToMarkdown(last);
+    },
+
+    streaming: {
+      async responseText(page) {
+        // Only while busy: once idle, the last assistant node may belong to
+        // the previous turn until the next reply element is appended.
+        const log = page.locator("#chat-log");
+        if ((await log.getAttribute("data-state")) !== "busy") return undefined;
+        const last = log.locator(".message.assistant").last();
+        if ((await last.count()) === 0) return undefined;
+        // Busy with no new element yet: the last node is the previous turn's.
+        const users = await log.locator(".message.user").count();
+        const assistants = await log.locator(".message.assistant").count();
+        if (assistants < users) return undefined;
+        const text = await elementToMarkdown(last);
+        return text === "" ? undefined : text;
+      },
+      pollIntervalMs: 50,
     },
 
     async detectBlock(page) {
