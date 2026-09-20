@@ -12,6 +12,11 @@ import type {
   UiConfig,
 } from "../protocol.js";
 import {
+  CommandMenuModel,
+  buildSections,
+  insertCommand,
+} from "./command-menu.js";
+import {
   hintText,
   isActive,
   noticeFor,
@@ -35,6 +40,8 @@ const queue = document.getElementById("queue") as HTMLElement;
 const inlineError = document.getElementById("inline-error") as HTMLElement;
 const notice = document.getElementById("notice") as HTMLElement;
 const attachButton = document.getElementById("attach") as HTMLButtonElement;
+const commandsButton = document.getElementById("commands") as HTMLButtonElement;
+const commandMenu = document.getElementById("command-menu") as HTMLElement;
 const hint = document.getElementById("composer-hint") as HTMLElement;
 const sendIcon = sendButton.querySelector(".icon-send") as SVGElement;
 const queueIcon = sendButton.querySelector(".icon-queue") as SVGElement;
@@ -56,6 +63,8 @@ function fitComposer(): void {
 let config: UiConfig = {};
 /** The provider's command names, from the `config` message. */
 let commandNames: ReadonlySet<string> = new Set();
+/** The same commands, in order, for the `/` menu. */
+let providerCommands: readonly CommandInfo[] = [];
 let lastState: State | undefined;
 /** The last `progress` line, so a re-render keeps it instead of falling
  * back to the generic waiting text. Cleared when the status leaves the
@@ -65,6 +74,7 @@ let lastProgress: string | undefined;
 function applyConfig(c: UiConfig & { commands?: CommandInfo[] }): void {
   config = c;
   commandNames = new Set((c.commands ?? []).map((x) => x.name));
+  providerCommands = c.commands ?? [];
   if (c.sendButton?.background) {
     sendButton.style.setProperty("--cb-send-bg", c.sendButton.background);
   }
@@ -159,8 +169,16 @@ function renderStatus(s: State): void {
   );
 }
 
+/** What `renderNotice` last painted, serialized. The card carries
+ * `role="alert"`, so rebuilding an unchanged one would re-announce it and
+ * destroy the focus on a recovery button the user is tabbing through. */
+let lastNoticeKey: string | undefined;
+
 function renderNotice(s: State): void {
   const info = noticeFor(s);
+  const key = info === undefined ? undefined : JSON.stringify(info);
+  if (key === lastNoticeKey) return;
+  lastNoticeKey = key;
   notice.replaceChildren();
   notice.hidden = info === undefined;
   if (!info) return;
@@ -269,6 +287,15 @@ function showInlineError(text: string | undefined): void {
   inlineError.hidden = text === undefined;
 }
 
+/** Empties the composer after a send. Setting `.value` fires no `input`
+ * event, so the resize and the send button's state are refreshed here —
+ * otherwise the button stays enabled over an empty box. */
+function clearInput(): void {
+  input.value = "";
+  fitComposer();
+  if (lastState) renderComposer(lastState);
+}
+
 function submit(): void {
   const text = input.value;
   if (text.trim() === "" && attachments.childElementCount === 0) return;
@@ -283,8 +310,7 @@ function submit(): void {
   }
   showInlineError(undefined);
   if (slash) {
-    input.value = "";
-    fitComposer();
+    clearInput();
     if ("custom" in slash) {
       vscode.postMessage({
         type: "customCommand",
@@ -299,8 +325,7 @@ function submit(): void {
     return;
   }
   vscode.postMessage({ type: "send", text });
-  input.value = "";
-  fitComposer();
+  clearInput();
 }
 
 form.addEventListener("submit", (e) => {
@@ -468,6 +493,132 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
     if (lastState) renderComposer(lastState);
     input.focus();
   }
+});
+
+// --- `/` command menu -------------------------------------------------
+// The model is shared with the typed-`/` completion (#86); everything
+// below is only the DOM around it.
+let menu: CommandMenuModel | undefined;
+
+function paintSelection(): void {
+  const selectedId =
+    menu && menu.selectedIndex >= 0
+      ? `command-option-${menu.selectedIndex}`
+      : "";
+  // Array.from, not for...of: the webview tsconfig's lib has no DOM.Iterable,
+  // so a NodeList is not iterable there.
+  for (const node of Array.from(commandMenu.querySelectorAll(".menu-item"))) {
+    const on = node.id === selectedId;
+    node.classList.toggle("selected", on);
+    node.setAttribute("aria-selected", String(on));
+  }
+  if (selectedId) {
+    commandsButton.setAttribute("aria-activedescendant", selectedId);
+    document.getElementById(selectedId)?.scrollIntoView({ block: "nearest" });
+  } else {
+    commandsButton.removeAttribute("aria-activedescendant");
+  }
+}
+
+function closeMenu(focusInput = true): void {
+  if (!menu) return;
+  menu = undefined;
+  commandMenu.hidden = true;
+  commandMenu.replaceChildren();
+  commandsButton.setAttribute("aria-expanded", "false");
+  commandsButton.removeAttribute("aria-activedescendant");
+  if (focusInput) input.focus();
+}
+
+function chooseCommand(index: number): void {
+  const picked = menu?.items[index];
+  if (!picked) return;
+  const { text, cursor } = insertCommand(input.value, picked.name);
+  closeMenu(false);
+  input.value = text;
+  input.focus();
+  input.setSelectionRange(cursor, cursor);
+  // Setting `value` fires no `input` event; that listener is what clears
+  // the inline error, resizes the box and re-enables the send button.
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function openMenu(): void {
+  // The display name is only in the document title (buildHtml puts it
+  // there); the protocol carries no provider name.
+  menu = new CommandMenuModel(buildSections(document.title, providerCommands));
+  commandMenu.replaceChildren();
+  let index = 0;
+  for (const section of menu.sections) {
+    const group = el("div", "menu-group");
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-label", section.title);
+    const header = el("div", "menu-header", section.title);
+    header.setAttribute("aria-hidden", "true");
+    group.appendChild(header);
+    for (const item of section.items) {
+      const i = index++;
+      const node = el("div", "menu-item");
+      node.id = `command-option-${i}`;
+      node.setAttribute("role", "option");
+      node.appendChild(el("span", "menu-name", `/${item.name}`));
+      node.appendChild(el("span", "menu-desc", item.description));
+      // `mousedown`, not `click`: the button's own blur must not close the
+      // menu before the choice lands.
+      node.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        chooseCommand(i);
+      });
+      group.appendChild(node);
+    }
+    commandMenu.appendChild(group);
+  }
+  commandMenu.hidden = false;
+  commandsButton.setAttribute("aria-expanded", "true");
+  paintSelection();
+  input.focus();
+}
+
+commandsButton.addEventListener("click", () => {
+  if (menu) closeMenu();
+  else openMenu();
+});
+
+// While the menu is open the arrows and Enter belong to it, so this runs
+// before the composer's own keydown handling (it is registered on the
+// document, in the capture phase).
+document.addEventListener(
+  "keydown",
+  (e) => {
+    if (!menu) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      e.stopPropagation();
+      menu.move(e.key === "ArrowDown" ? 1 : -1);
+      paintSelection();
+      return;
+    }
+    if (e.key === "Enter" && !e.isComposing) {
+      e.preventDefault();
+      e.stopPropagation();
+      chooseCommand(menu.selectedIndex);
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      closeMenu();
+    }
+  },
+  true,
+);
+
+document.addEventListener("mousedown", (e) => {
+  if (!menu) return;
+  const target = e.target as Node | null;
+  if (commandMenu.contains(target) || commandsButton.contains(target)) return;
+  // A click elsewhere in the view dismisses it without stealing focus.
+  closeMenu(false);
 });
 
 fitComposer();
