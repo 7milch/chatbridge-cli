@@ -260,25 +260,28 @@ Q5 renderer.autoFocus option = false
 
 ## Consequences for the plan
 
-- **Task 8 (markdown reply rendering)** must not pass a bare
+- **Task 9 (markdown reply rendering)** must not pass a bare
   `SyntaxStyle.create()` if code blocks are meant to be coloured: it gives
   monochrome code. Build the style from the repo's existing theme with
   `SyntaxStyle.fromStyles(...)` / `SyntaxStyle.fromTheme(...)` instead
   (question 3).
-- **Task 8** must also accept that concealment is asynchronous and can fail
+- **Task 9** must also accept that concealment is asynchronous and can fail
   open: when tree-sitter cannot highlight, the reply shows raw `#` and `**`
   rather than an error. That is an acceptable degradation, but any
   assertion that "no markdown markers are visible" is not safe as a
-  correctness check (questions 1 and 3).
+  correctness check (questions 1 and 3). The failing-highlighter case above
+  was simulated with `MockTreeSitterClient`, not observed from a real
+  worker-load failure; a real tree-sitter worker crash under load was not
+  reproduced here.
 - **Tests written in tasks 8 and 9** cannot use a tight `renderOnce()` loop.
   They need real elapsed time between passes — `await t.renderOnce()`
   followed by `await sleep(50)`, repeated until the expected text appears
   (a `waitForFrame`-style helper). A bare `renderOnce()` or `flush()` loop
   never settles. Also, assertions must not treat the list bullet `- ` as
   leftover markdown syntax (question 1).
-- **Task 9 (streaming reply row)** can keep `streaming = true` while chunks
-  arrive and flip it to `false` at the end: the final frame is identical to
-  a fresh render, so no re-creation of the renderable is needed
+- **Task 8 (pending row / streaming reply text)** can keep `streaming = true`
+  while chunks arrive and flip it to `false` at the end: the final frame is
+  identical to a fresh render, so no re-creation of the renderable is needed
   (question 2).
 - **Task 12 (select-to-copy)** should subscribe to
   `CliRenderEvents.SELECTION` and copy `selection.getSelectedText()` on that
@@ -298,3 +301,9 @@ Q5 renderer.autoFocus option = false
   24 cannot construct a renderer at all (`OpenTUI native FFI is not
   available for this runtime yet`), and a Node >= 26.4 run of the rendering
   path was not verified here (question 3).
+
+**Follow-up (2026-09-21):** select-to-copy was later verified on a *started*
+renderer too — selection starts before `autoFocus` is consulted in OpenTUI's
+mouse path, so the two do not race. Tests exercising it must still read the
+selected row from a settled frame (question 1's caveat), not from the frame
+immediately after the mouse-up event.
