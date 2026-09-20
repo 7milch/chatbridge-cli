@@ -106,6 +106,40 @@ export async function run(): Promise<void> {
   assert.equal(handlers.pasted("unrelated\ntext"), false);
   controller.removeAttachment(0);
 
+  // Provider commands through a real ChatSession: `show` reads the page,
+  // `send` continues as an ordinary turn.
+  await handlers.customCommand("title", "", "/title");
+  await waitForIdle(controller);
+  s = controller.getState();
+  assert.deepEqual(s.messages.at(-2), {
+    role: "user",
+    text: "/title",
+    attachments: [],
+  });
+  assert.deepEqual(s.messages.at(-1), { role: "help", text: "Dummy Chat" });
+
+  await handlers.customCommand("shout", "hello", "/shout hello");
+  await waitForIdle(controller);
+  s = controller.getState();
+  assert.deepEqual(s.messages.at(-2), {
+    role: "user",
+    text: "/shout hello",
+    attachments: [],
+  });
+  assert.match(s.messages.at(-1)?.text ?? "", /^Echo: HELLO/);
+
+  // A URL hook that resolves: its content rides along as an attachment.
+  const goodUrl = `${process.env.DUMMY_CHAT_URL ?? "http://localhost:8735"}/login`;
+  const hooked = await controller.send(`read ${goodUrl}`);
+  assert.deepEqual(hooked, { ok: true });
+  await waitForIdle(controller);
+  s = controller.getState();
+  assert.deepEqual(
+    s.messages.at(-2)?.attachments?.map((a) => a.path),
+    ["Dummy: /login"],
+  );
+  assert.equal(s.messages.at(-1)?.role, "assistant");
+
   // A URL hook that refuses: nothing is sent and the result carries the
   // code the extension uses to put the text back in the composer.
   const badUrl = `${process.env.DUMMY_CHAT_URL ?? "http://localhost:8735"}/nope`;
