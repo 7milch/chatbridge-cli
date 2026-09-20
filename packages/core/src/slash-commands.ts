@@ -88,3 +88,46 @@ export function commandInfoOf(provider: {
     description,
   }));
 }
+
+/** The first whitespace ends the command word, newline included. */
+const WORD_END = /\s/;
+
+/** The leading `/word` the cursor sits in: `word` without the slash and
+ * `end`, the offset just after it, so a UI can replace exactly that much.
+ * Undefined when the text does not start with `/`, when the cursor is before
+ * the slash, or when it has moved past the word — `/new |` is a command with
+ * arguments, not a command being typed. */
+export function commandWordAt(
+  text: string,
+  cursor: number,
+): { word: string; end: number } | undefined {
+  if (!text.startsWith("/") || cursor < 1) return undefined;
+  const end = WORD_END.exec(text)?.index ?? text.length;
+  if (cursor > end) return undefined;
+  return { word: text.slice(1, end), end };
+}
+
+/** The command word being typed, without the slash, when `text` starts with
+ * "/" and the cursor is inside that first word (no whitespace before the
+ * cursor). Otherwise undefined. "/" alone yields "". The prefix stops at the
+ * cursor, so editing `/he|lp` completes from "he". */
+export function slashPrefixAt(
+  text: string,
+  cursor: number,
+): string | undefined {
+  return commandWordAt(text, cursor) === undefined
+    ? undefined
+    : text.slice(1, cursor);
+}
+
+/** Built-ins first, then the provider's, each group in declaration order,
+ * filtered to names starting with `prefix` (case-insensitive). */
+export function matchCommands(
+  prefix: string,
+  custom: readonly CommandInfo[] = [],
+): CommandInfo[] {
+  const p = prefix.toLowerCase();
+  return [...SLASH_COMMANDS, ...custom]
+    .filter((c) => c.name.toLowerCase().startsWith(p))
+    .map(({ name, description }) => ({ name, description }));
+}
