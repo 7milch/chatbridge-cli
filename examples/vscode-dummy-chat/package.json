@@ -57,7 +57,8 @@
       {
         "command": "chatbridge-dummy.reopen",
         "title": "Reopen Browser",
-        "category": "Dummy Chat"
+        "category": "Dummy Chat",
+        "icon": "$(refresh)"
       },
       {
         "command": "chatbridge-dummy.installBrowser",
@@ -78,6 +79,11 @@
         "command": "chatbridge-dummy.focus",
         "title": "Focus Chat",
         "category": "Dummy Chat"
+      },
+      {
+        "command": "chatbridge-dummy.help",
+        "title": "Help",
+        "category": "Dummy Chat"
       }
     ],
     "keybindings": [
@@ -93,7 +99,32 @@
         {
           "command": "chatbridge-dummy.newChat",
           "when": "view == chatbridge-dummy.chat",
-          "group": "navigation"
+          "group": "navigation@1"
+        },
+        {
+          "command": "chatbridge-dummy.reopen",
+          "when": "view == chatbridge-dummy.chat",
+          "group": "navigation@2"
+        },
+        {
+          "command": "chatbridge-dummy.login",
+          "when": "view == chatbridge-dummy.chat",
+          "group": "1_auth@1"
+        },
+        {
+          "command": "chatbridge-dummy.logout",
+          "when": "view == chatbridge-dummy.chat",
+          "group": "1_auth@2"
+        },
+        {
+          "command": "chatbridge-dummy.installBrowser",
+          "when": "view == chatbridge-dummy.chat",
+          "group": "2_setup@1"
+        },
+        {
+          "command": "chatbridge-dummy.help",
+          "when": "view == chatbridge-dummy.chat",
+          "group": "3_help@1"
         }
       ],
       "editor/context": [

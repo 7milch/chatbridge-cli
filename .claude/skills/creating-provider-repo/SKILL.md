@@ -143,8 +143,17 @@ ui: {
 Activation throws a message listing missing `contributes` IDs
 when the manifest and `id` disagree. Vendor extensions on
 `@chatbridge/vscode` >= 0.8.1 must also declare `<id>.reopen` (and should
-bind it to Ctrl+R); a manifest copied from an older example lacks it. Verify by hand: F5 in VSCode → Log in
-→ send → right-click a selection → send → New Chat → Log out.
+bind it to Ctrl+R); a manifest copied from an older example lacks it.
+
+From 0.9.1 the session actions also live in the view title bar. Those
+entries are recommended, not required: without them activation only logs a
+warning and the title bar stays empty. Copy the `commands` icons, the
+`<id>.help` command and the six `view/title` entries from
+"View title bar" in `packages/vscode/README.md` (the dummy extension's
+`package.json` is the working example).
+
+Verify by hand: F5 in VSCode → Log in → send → right-click a selection →
+send → New Chat → Log out.
 
 ### Building the `.vsix`
 

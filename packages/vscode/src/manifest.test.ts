@@ -132,4 +132,16 @@ describe("recommendedContributions", () => {
       expect(COMMAND_NAMES).not.toContain(name as never);
     }
   });
+
+  test("the dummy extension's manifest is complete", async () => {
+    const pkg = await Bun.file(
+      new URL(
+        "../../../examples/vscode-dummy-chat/package.json",
+        import.meta.url,
+      ),
+    ).json();
+    const id = "chatbridge-dummy";
+    expect(missingContributions(pkg, id)).toEqual([]);
+    expect(recommendedContributions(pkg, id)).toEqual([]);
+  });
 });

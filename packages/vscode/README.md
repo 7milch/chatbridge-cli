@@ -73,8 +73,15 @@ export const { activate, deactivate } = createExtension({
 - **Up** on an empty composer takes the last queued message back for
   editing; queued entries can also be removed individually.
 - **`/` commands** — `/login`, `/logout`, `/new`, `/reopen`, `/help`, the
-  same table the TUI uses. Only the bare form on its own counts, so
-  anything else (including `/usr/bin` style paths) is sent verbatim.
+  same table the TUI uses, plus whatever the provider adds. Only the bare
+  form on its own counts, so anything else (including `/usr/bin` style
+  paths) is sent verbatim. The `/` button in the action row lists them all;
+  choosing one writes `/name ` into the composer instead of running it, so
+  arguments can follow.
+- **`+`** opens the native file picker; the chosen files become the same
+  attachment chips a drop produces.
+- The send button is `↑` and turns into a queue icon while a turn is in
+  flight; it is disabled when there is nothing to send.
 - **Drop files** onto the composer to add them as attachment chips. Hold
   **Shift** while dropping: without it VSCode keeps the drag for itself and
   opens the file in an editor instead (the same rule as dropping into a text
@@ -102,6 +109,38 @@ missing ID:
   `id === <id>`
 - `contributes.views.<id>[]` contains an entry with `id === <id>.chat`
 - `contributes.commands[]` contains all eight `<id>.*` commands above
+
+### View title bar (recommended, never fatal)
+
+The session actions live in VSCode's own view title bar. They are declared
+by the manifest, so an extension that does not declare them simply shows an
+empty title bar — activation logs one `console.warn` naming each missing
+entry and carries on, and the composer's `/` menu still reaches every
+action. `<id>.help` is a tenth command: it focuses the view and prints the
+same listing `/help` does. It is registered whether or not the manifest
+declares it; declaring it only adds it to the palette and the menu.
+
+```json
+"commands": [
+  { "command": "<id>.newChat", "title": "New Chat", "category": "<Name>", "icon": "$(add)" },
+  { "command": "<id>.reopen", "title": "Reopen Browser", "category": "<Name>", "icon": "$(refresh)" },
+  { "command": "<id>.help", "title": "Help", "category": "<Name>" }
+],
+"menus": {
+  "view/title": [
+    { "command": "<id>.newChat", "when": "view == <id>.chat", "group": "navigation@1" },
+    { "command": "<id>.reopen", "when": "view == <id>.chat", "group": "navigation@2" },
+    { "command": "<id>.login", "when": "view == <id>.chat", "group": "1_auth@1" },
+    { "command": "<id>.logout", "when": "view == <id>.chat", "group": "1_auth@2" },
+    { "command": "<id>.installBrowser", "when": "view == <id>.chat", "group": "2_setup@1" },
+    { "command": "<id>.help", "when": "view == <id>.chat", "group": "3_help@1" }
+  ]
+}
+```
+
+The `navigation` group renders as icons and VSCode folds them into `…` by
+itself when the view is narrow; the other groups always live in `…`. Only
+the two `navigation` commands need an `icon`.
 
 A `keybindings` entry is recommended so Ctrl+R (Cmd+R on macOS) reopens the
 browser while the chat view is focused; it is not validated. The webview
