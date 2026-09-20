@@ -128,7 +128,7 @@ describe("buildHtml", () => {
       title: "t",
     });
     expect(html).toContain(
-      '<div id="command-menu" role="listbox" aria-label="Commands" hidden></div>',
+      '<div id="command-menu" role="listbox" aria-label="Command menu" hidden></div>',
     );
     expect(html.indexOf('id="composer"')).toBeLessThan(
       html.indexOf('id="command-menu"'),

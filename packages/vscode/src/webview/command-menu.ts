@@ -177,6 +177,21 @@ export function replaceCommandWord(
   };
 }
 
+/** The attributes the composer textarea carries *only* while the typing menu
+ * is open, in the order they are set. A `textbox` supports none of them on
+ * its own — `aria-expanded` on a bare textarea is invalid and is not
+ * announced — so for as long as the menu is there the textarea is a combobox
+ * with a listbox popup, which is the established pattern for slash
+ * completion. Closing the menu removes every name in this list, so no stale
+ * attribute is left behind. */
+export const TYPING_MENU_OWNER_ATTRS: readonly (readonly [string, string])[] = [
+  ["role", "combobox"],
+  ["aria-haspopup", "listbox"],
+  ["aria-expanded", "true"],
+  ["aria-controls", "command-menu"],
+  ["aria-autocomplete", "list"],
+];
+
 /** The prefix the typing menu should show for `text`, or undefined for no
  * menu at all. `dismissedText` is the text Escape closed the menu over: until
  * it is edited the menu stays shut, otherwise the very next caret event would

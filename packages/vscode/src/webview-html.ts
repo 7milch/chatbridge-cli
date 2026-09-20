@@ -47,7 +47,7 @@ export function buildHtml(i: HtmlInputs): string {
 <ul id="queue" hidden></ul>
 <div id="inline-error" hidden></div>
 <form id="composer">
-<div id="command-menu" role="listbox" aria-label="Commands" hidden></div>
+<div id="command-menu" role="listbox" aria-label="Command menu" hidden></div>
 <div id="composer-box">
 <div id="attachments"></div>
 <textarea id="input" rows="2" placeholder="Message&#8230;"></textarea>

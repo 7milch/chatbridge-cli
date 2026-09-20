@@ -13,6 +13,7 @@ import type {
 } from "../protocol.js";
 import {
   CommandMenuModel,
+  TYPING_MENU_OWNER_ATTRS,
   buildSections,
   buttonMenuAction,
   replaceCommandWord,
@@ -515,18 +516,14 @@ let menuOwner: HTMLElement = commandsButton;
 let dismissedText: string | undefined;
 
 /** The owner's state while the menu is open. On the textarea the combobox
- * attributes are added and removed with the menu — `#commands` carries its
- * own in the HTML, so there only `aria-expanded` flips. */
+ * attributes (TYPING_MENU_OWNER_ATTRS) are added and removed with the menu —
+ * `#commands` carries its own in the HTML, so there only `aria-expanded`
+ * flips. */
 function setOwnerExpanded(open: boolean): void {
   if (menuOwner === input) {
-    if (open) {
-      input.setAttribute("aria-expanded", "true");
-      input.setAttribute("aria-controls", "command-menu");
-      input.setAttribute("aria-autocomplete", "list");
-    } else {
-      input.removeAttribute("aria-expanded");
-      input.removeAttribute("aria-controls");
-      input.removeAttribute("aria-autocomplete");
+    for (const [name, value] of TYPING_MENU_OWNER_ATTRS) {
+      if (open) input.setAttribute(name, value);
+      else input.removeAttribute(name);
     }
   } else {
     menuOwner.setAttribute("aria-expanded", open ? "true" : "false");

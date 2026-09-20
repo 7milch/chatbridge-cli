@@ -6,6 +6,7 @@ import {
 import {
   CommandMenuModel,
   type MenuKeyEvent,
+  TYPING_MENU_OWNER_ATTRS,
   buildSections,
   buttonMenuAction,
   insertCommand,
@@ -339,5 +340,22 @@ describe("typingMenuPrefix", () => {
     // Only the text matters, not the caret: moving it back into the same
     // text must not reopen what Escape closed.
     expect(typingMenuPrefix("/lo", 2, "/lo")).toBeUndefined();
+  });
+});
+
+describe("TYPING_MENU_OWNER_ATTRS", () => {
+  test("announces the composer as an expanded combobox over a listbox", () => {
+    expect(TYPING_MENU_OWNER_ATTRS).toEqual([
+      ["role", "combobox"],
+      ["aria-haspopup", "listbox"],
+      ["aria-expanded", "true"],
+      ["aria-controls", "command-menu"],
+      ["aria-autocomplete", "list"],
+    ]);
+  });
+
+  test("every attribute has a name, so closing removes all of them", () => {
+    const names = TYPING_MENU_OWNER_ATTRS.map(([name]) => name);
+    expect(new Set(names).size).toBe(names.length);
   });
 });
