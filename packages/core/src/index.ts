@@ -8,6 +8,7 @@ export {
 export {
   ChatSession,
   type ChatSessionOptions,
+  IDLE_CLOSE_BUDGET_MS,
   type OpenOptions,
   type RuntimeLike,
   isRetryableOpenError,
