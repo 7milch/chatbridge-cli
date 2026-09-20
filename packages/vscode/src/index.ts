@@ -9,7 +9,6 @@ export {
   type SessionControllerOptions,
   type TakeBackResult,
 } from "./session-controller.js";
-export { REFUSED_CODES, onSendResult } from "./send-result.js";
 export {
   type ChildLike,
   installBrowser,

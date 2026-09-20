@@ -30,6 +30,19 @@ describe("onSendResult", () => {
   });
 
   test("REFUSED_CODES is what decides", () => {
-    expect([...REFUSED_CODES]).toEqual(["URL_HOOK"]);
+    expect(REFUSED_CODES.size).toBeGreaterThan(0);
+    for (const code of REFUSED_CODES) {
+      const s = spy();
+      onSendResult({ ok: false, code, message: "x" }, "a", s.push);
+      expect(s.calls).toEqual([[{ text: "a", attachments: [] }]]);
+    }
+    const other = spy();
+    expect(REFUSED_CODES.has("NOT_A_REFUSAL")).toBe(false);
+    onSendResult(
+      { ok: false, code: "NOT_A_REFUSAL", message: "x" },
+      "a",
+      other.push,
+    );
+    expect(other.calls).toEqual([]);
   });
 });
