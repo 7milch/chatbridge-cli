@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
   ChatSession,
+  DEFAULT_IDLE_TIMEOUT_MS,
   type Provider,
   commandInfoOf,
   createAuthStore,
@@ -15,7 +16,7 @@ import { type CommandHandlers, createCommands } from "./commands.js";
 import { installBrowser } from "./install-browser.js";
 import { COMMAND_NAMES, missingContributions } from "./manifest.js";
 import { SessionController } from "./session-controller.js";
-import { parseTimeoutSec } from "./timeout-setting.js";
+import { parseIdleTimeoutMin, parseTimeoutSec } from "./timeout-setting.js";
 import { type ExtensionUiOptions, resolveUiConfig } from "./ui-config.js";
 import { createVscodeUi } from "./vscode-ui.js";
 
@@ -118,6 +119,7 @@ export function createExtension(opts: CreateExtensionOptions) {
     );
 
     let warnedTimeout = false;
+    let warnedIdle = false;
     function settings() {
       const cfg = vscode.workspace.getConfiguration(opts.id);
       const fallbackMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -131,9 +133,23 @@ export function createExtension(opts: CreateExtensionOptions) {
           `${opts.displayName}: "${opts.id}.timeoutSec" must be a positive number; using ${fallbackMs / 1000} s.`,
         );
       }
+      // Unset means the provider's own default, then 24 h.
+      const idleFallbackMs =
+        opts.provider.idle?.timeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+      const idle = parseIdleTimeoutMin(
+        cfg.get<unknown>("idleTimeoutMinutes"),
+        idleFallbackMs,
+      );
+      if (idle.invalid && !warnedIdle) {
+        warnedIdle = true;
+        void vscode.window.showWarningMessage(
+          `${opts.displayName}: "${opts.id}.idleTimeoutMinutes" must be a non-negative number (0 disables); using ${idleFallbackMs / 60_000} minutes.`,
+        );
+      }
       return {
         headless: cfg.get<boolean>("headless", opts.headless ?? true),
         timeoutMs,
+        idle: { timeoutMs: idle.timeoutMs },
       };
     }
 
@@ -144,12 +160,13 @@ export function createExtension(opts: CreateExtensionOptions) {
     }
 
     controller = new SessionController({
-      openSession: () =>
+      openSession: (onIdleExpired) =>
         ChatSession.open({
           provider: opts.provider,
           authStore,
           ...settings(),
           onProgress: progress,
+          onIdleExpired,
         }),
       expandUrls: (text) =>
         resolveUrlHooks(text, opts.provider.urlHooks ?? [], {

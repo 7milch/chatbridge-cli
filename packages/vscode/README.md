@@ -87,7 +87,8 @@ The vendor's `package.json` must contribute, with `<id>` replaced by the
   entry)
 - Commands `<id>.login`, `<id>.logout`, `<id>.newChat`, `<id>.reopen`,
   `<id>.installBrowser`, `<id>.sendSelection`, `<id>.sendFile`, `<id>.focus`
-- Settings `<id>.headless` (boolean) and `<id>.timeoutSec` (number)
+- Settings `<id>.headless` (boolean), `<id>.timeoutSec` (number) and
+  `<id>.idleTimeoutMinutes` (number)
 
 Activation checks exactly three things and throws a message listing every
 missing ID:
@@ -112,9 +113,14 @@ also handles the shortcut itself when the composer has focus.
 ]
 ```
 
-`contributes.configuration` is not validated: a missing `<id>.headless` or
-`<id>.timeoutSec` setting simply falls back to the `createExtension`
-default.
+`contributes.configuration` is not validated: a missing `<id>.headless`,
+`<id>.timeoutSec` or `<id>.idleTimeoutMinutes` setting simply falls back to
+the `createExtension` default.
+
+`<id>.idleTimeoutMinutes` is how long the chat may sit without a turn before
+the browser is closed; the next message reopens it, with a `closed after
+idle` separator marking the new conversation. Unset means the provider's own
+`idle.timeoutMs`, then 24 hours. `0` disables the idle close.
 
 ## Packaging
 

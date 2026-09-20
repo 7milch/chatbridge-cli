@@ -12,3 +12,18 @@ export function parseTimeoutSec(
   }
   return { timeoutMs: seconds * 1000, invalid: false };
 }
+
+/** The idle-close setting, in minutes. Unlike the step timeout, 0 is a
+ * valid value: it turns the idle close off. `invalid` is true when a value
+ * was set but unusable, so the caller can warn once. */
+export function parseIdleTimeoutMin(
+  raw: unknown,
+  fallbackMs: number,
+): { timeoutMs: number; invalid: boolean } {
+  if (raw === undefined) return { timeoutMs: fallbackMs, invalid: false };
+  const minutes = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(minutes) || minutes < 0) {
+    return { timeoutMs: fallbackMs, invalid: true };
+  }
+  return { timeoutMs: minutes * 60_000, invalid: false };
+}

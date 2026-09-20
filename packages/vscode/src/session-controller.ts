@@ -32,6 +32,10 @@ export type SendResult =
 /** The separator pushed into the history by `reopen()`. */
 export const REOPENED_SEPARATOR = "reopened";
 
+/** Pushed when the idle timeout closed the browser; the next send reopens
+ * it lazily, so the user is told the conversation starts over. */
+export const IDLE_CLOSED_SEPARATOR = "closed after idle";
+
 /** Controller-internal queue entry: the attachments keep their content. */
 interface QueuedTurn {
   text: string;
@@ -60,8 +64,10 @@ export interface TakeBackResult {
 }
 
 export interface SessionControllerOptions {
-  /** Opens a ChatSession; called lazily on the first send after `closed`. */
-  openSession: () => Promise<ChatSessionLike>;
+  /** Opens a ChatSession; called lazily on the first send after `closed`.
+   * `onIdleExpired` is handed to the session so core can tell the
+   * controller it closed the browser after the idle timeout. */
+  openSession: (onIdleExpired: () => void) => Promise<ChatSessionLike>;
   /** How long newChat / discard / close wait before killing. Default 5 s. */
   closeTimeoutMs?: number;
   /** Called with the full state after every change. */
@@ -350,7 +356,7 @@ export class SessionController {
     generation: number,
   ): Promise<ChatSessionLike | undefined> {
     if (this.session !== undefined) return this.session;
-    const session = await this.trackOpen(this.opts.openSession());
+    const session = await this.trackOpen(this.open());
     // A reopen ran while we were opening: this browser is an orphan.
     // dropSession may have closed it already; close/kill are idempotent.
     if (generation !== this.generation) {
@@ -497,6 +503,34 @@ export class SessionController {
     }
   }
 
+  /** One open, wired so this session's idle expiry reaches the controller.
+   * The callback closes over a holder because the session does not exist
+   * yet; comparing by identity later is what makes a stale session's
+   * expiry a no-op. */
+  private open(): Promise<ChatSessionLike> {
+    let opened: ChatSessionLike | undefined;
+    return this.opts
+      .openSession(() => {
+        if (opened !== undefined) this.idleExpired(opened);
+      })
+      .then((session) => {
+        opened = session;
+        return session;
+      });
+  }
+
+  /** Core closed `session`'s browser after the idle timeout. It is already
+   * closing, so the session is only forgotten here; the lazy open on the
+   * next send does the rest. */
+  private idleExpired(session: ChatSessionLike): void {
+    if (this.session !== session) return; // stale: a reopen replaced it
+    this.session = undefined;
+    // A fresh chat must not re-send a prompt from before the break.
+    this.lastPrompt = undefined;
+    this.messages.push({ role: "separator", text: IDLE_CLOSED_SEPARATOR });
+    this.setStatus("closed");
+  }
+
   private async dropSession(): Promise<void> {
     // An open still in flight would assign `this.session` after we return,
     // so wait for it and close the browser it produced here: the caller
@@ -535,7 +569,7 @@ export class SessionController {
     this.setStatus("reopening");
     await this.dropSession();
     try {
-      const session = await this.trackOpen(this.opts.openSession());
+      const session = await this.trackOpen(this.open());
       // `close()` (deactivate) ran while the browser was opening: this one
       // is an orphan, and the controller is closed. dropSession may have
       // closed it already; close/kill are idempotent.

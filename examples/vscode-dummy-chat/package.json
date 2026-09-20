@@ -122,6 +122,11 @@
           "type": "number",
           "default": 120,
           "description": "Seconds to wait for each browser step."
+        },
+        "chatbridge-dummy.idleTimeoutMinutes": {
+          "type": "number",
+          "default": 1440,
+          "description": "Minutes of inactivity before the browser is closed; 0 disables."
         }
       }
     }

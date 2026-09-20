@@ -12,6 +12,7 @@ import {
 } from "@chatbridge/core";
 import {
   type ChatSessionLike,
+  IDLE_CLOSED_SEPARATOR,
   REOPENED_SEPARATOR,
   SessionController,
   type SessionControllerOptions,
@@ -1045,5 +1046,129 @@ describe("URL hooks", () => {
     ]);
     h.replies[0]?.resolve("ok");
     await settle();
+  });
+});
+
+describe("idle close", () => {
+  /** A controller whose opens hand back each session's expiry callback. */
+  function idleHarness() {
+    const sessions: ChatSessionLike[] = [];
+    const expire: Array<() => void> = [];
+    const states: string[] = [];
+    const sent: string[] = [];
+    const replies: Array<ReturnType<typeof deferred<string>>> = [];
+    const closed = { count: 0 };
+    const controller = new SessionController({
+      closeTimeoutMs: 20,
+      onChange: (state) => states.push(state.status),
+      openSession: async (onIdleExpired) => {
+        expire.push(onIdleExpired);
+        const session: ChatSessionLike = {
+          async send(prompt) {
+            sent.push(prompt);
+            const d = deferred<string>();
+            replies.push(d);
+            return d.promise;
+          },
+          async close() {
+            closed.count++;
+          },
+          async kill() {},
+        };
+        sessions.push(session);
+        return session;
+      },
+    });
+    return { controller, sessions, expire, states, sent, replies, closed };
+  }
+
+  /** The nth entry, failing loudly when it was never created. */
+  function at<T>(list: readonly T[], i: number): T {
+    const entry = list[i];
+    if (entry === undefined) throw new Error(`no entry at index ${i}`);
+    return entry;
+  }
+
+  /** Waits for a real state change rather than a guessed number of ticks. */
+  async function waitFor(what: string, cond: () => boolean): Promise<void> {
+    for (let i = 0; i < 100 && !cond(); i++) await settle();
+    if (!cond()) throw new Error(`timed out waiting for ${what}`);
+  }
+
+  /** One completed turn: the session is open, idle, and one reply is in. */
+  async function firstTurn(h: ReturnType<typeof idleHarness>): Promise<void> {
+    void h.controller.send("one");
+    await waitFor("the first send", () => h.replies.length === 1);
+    at(h.replies, 0).resolve("reply");
+    await waitFor(
+      "the turn to finish",
+      () => h.controller.getState().status === "idle",
+    );
+  }
+
+  test("expiry: status closed, separator pushed, browser not closed again", async () => {
+    const h = idleHarness();
+    await firstTurn(h);
+    at(h.expire, 0)();
+    const state = h.controller.getState();
+    expect(state.status).toBe("closed");
+    expect(state.messages.at(-1)).toEqual({
+      role: "separator",
+      text: IDLE_CLOSED_SEPARATOR,
+    });
+    // Core is closing it; the controller must not close it a second time.
+    expect(h.closed.count).toBe(0);
+  });
+
+  test("the next send opens lazily and pushes nothing further", async () => {
+    const h = idleHarness();
+    await firstTurn(h);
+    at(h.expire, 0)();
+    const before = h.controller.getState().messages.length;
+    void h.controller.send("two");
+    await waitFor("the lazy reopen", () => h.sessions.length === 2);
+    await waitFor("the queued prompt", () => h.sent.length === 2);
+    expect(h.sent.at(-1)).toBe("two");
+    // user entry only: no extra separator for the lazy reopen.
+    expect(h.controller.getState().messages.length).toBe(before + 1);
+    at(h.replies, 1).resolve("reply two");
+    await settle();
+  });
+
+  test("a stale session's expiry is ignored", async () => {
+    const h = idleHarness();
+    await firstTurn(h);
+    await h.controller.reopen();
+    const status = h.controller.getState().status;
+    at(h.expire, 0)(); // the session the reopen already dropped
+    expect(h.controller.getState().status).toBe(status);
+    expect(
+      h.controller
+        .getState()
+        .messages.filter((m) => m.text === IDLE_CLOSED_SEPARATOR).length,
+    ).toBe(0);
+  });
+
+  test("retryLast after an idle close does not resend the old prompt", async () => {
+    const h = idleHarness();
+    await firstTurn(h);
+    at(h.expire, 0)();
+    expect(await h.controller.retryLast()).toEqual({
+      ok: false,
+      code: "EMPTY",
+      message: "Nothing to send.",
+    });
+    expect(h.sent).toEqual(["one"]);
+  });
+
+  test("an expiry after close() is ignored", async () => {
+    const h = idleHarness();
+    await firstTurn(h);
+    await h.controller.close();
+    const before = h.controller.getState().messages.length;
+    at(h.expire, 0)();
+    const state = h.controller.getState();
+    expect(state.status).toBe("closed");
+    expect(state.messages.length).toBe(before);
   });
 });
