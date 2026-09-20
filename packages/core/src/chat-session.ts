@@ -340,6 +340,9 @@ export class ChatSession {
    * while the idle close is still saving the auth state waits for it rather
    * than exiting underneath it. */
   async close(): Promise<void> {
+    // Before the join: a kill leaves the earlier close parked forever on the
+    // hung page, and joining it would cost the caller another close budget.
+    if (this.killed) return;
     if (this.closing !== undefined) return this.closing;
     if (this.closed) return;
     this.closed = true;

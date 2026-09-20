@@ -934,6 +934,27 @@ describe("ChatSession: idle close", () => {
     expect(h.saved).toBe(1);
   });
 
+  test("close() after a kill returns instead of joining the parked close", async () => {
+    const h = harness();
+    const c = clock();
+    const { options } = idleOpts(h, c);
+    const session = await ChatSession.open(options);
+    // From here isLoggedIn never answers: the first close parks on it.
+    h.loginGate = new Promise<void>(() => {});
+    const parked = session.close();
+    await ticks();
+    await session.kill();
+    // Bounded race: a close that joins the parked one never settles.
+    const late = await Promise.race([
+      session.close().then(() => "closed"),
+      new Promise((resolve) => setTimeout(() => resolve("hung"), 200)),
+    ]);
+    expect(late).toBe("closed");
+    expect(h.killed).toBe(1);
+    // The original close is still parked; nothing about it was awaited.
+    void parked.catch(() => {});
+  });
+
   test("the close budget is 5 s", () => {
     expect(IDLE_CLOSE_BUDGET_MS).toBe(5000);
   });
