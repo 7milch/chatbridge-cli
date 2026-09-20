@@ -536,6 +536,16 @@ describe("commands", () => {
     expect(f.log).toEqual(["pickFiles"]);
   });
 
+  test("a VscodeUi without pickFiles makes the command a no-op", async () => {
+    // `pickFiles` is optional so a vendor's own VscodeUi, written against
+    // 0.9.0, keeps compiling and activating on a patch bump.
+    const f = fake();
+    const { pickFiles: _omitted, ...ui } = f.ui;
+    f.ui = ui as typeof f.ui;
+    await commands(f).pickFiles();
+    expect(f.log).toEqual([]);
+  });
+
   test("pickFiles reports what it could not read, like a drop does", async () => {
     const f = fake();
     f.picked = ["file:///dir"];

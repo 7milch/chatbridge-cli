@@ -233,7 +233,9 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
     attachUris,
 
     async pickFiles() {
-      const uris = await ui.pickFiles();
+      // No picker on this UI (a vendor's own, written against 0.9.0): the
+      // command does nothing rather than throwing.
+      const uris = (await ui.pickFiles?.()) ?? [];
       // Cancelling is not an error and must not clear anything.
       if (uris.length === 0) return;
       await attachUris(uris);

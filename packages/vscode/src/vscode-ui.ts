@@ -35,8 +35,10 @@ export interface VscodeUi {
   openDocument(uri: unknown): Promise<{ path: string; text: string }>;
   focusView(): void;
   /** Native file picker for the composer's `+`. The URIs are returned as
-   * strings so they take the same path as a drop; empty when cancelled. */
-  pickFiles(): Promise<string[]>;
+   * strings so they take the same path as a drop; empty when cancelled.
+   * Optional: a vendor's own VscodeUi written against 0.9.0 has none, and
+   * the `+` command is then a no-op. */
+  pickFiles?(): Promise<string[]>;
 }
 
 export function createVscodeUi(api: typeof vscode, id: string): VscodeUi {
