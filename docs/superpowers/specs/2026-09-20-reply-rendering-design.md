@@ -138,7 +138,7 @@ and resolves the deferred in a `finally`. The promise never rejects.
   A timeout takes the existing `teardownExitMessage` / `process.exit(1)` path.
 - VSCode: `SessionController.idleExpired` stores it; `close()` (deactivate)
   awaits it under `closeTimeoutMs` before resolving.
-- A later successful open clears the stored promise once it has settled.
+- Each UI clears the stored promise once it settles.
 
 This is the one VSCode change in this spec; it is a correctness fix, not a
 rendering feature.
@@ -147,13 +147,14 @@ rendering feature.
 
 ### The turn in flight lives outside the transcript
 
-`ChatModel` gains `pending: { startedAt: number; label: string; partial?: string } | undefined`,
-set when a turn starts, updated by `onPartial`, cleared when the turn settles.
-It is never part of `messages`, so it cannot reach `/copy` or any future
-transcript persistence.
+`ChatModel` gains `partial: string | undefined`: the reply text so far of the
+turn in flight, updated by `onPartial` and cleared when the turn settles or a
+reset makes it stale. It is never part of `messages`, so it cannot reach `/copy`
+or any future transcript persistence. The elapsed timer and the spinner label
+stay in `ChatView`, where they already live.
 
-`ChatView` paints `pending` as the last child of the history scroll box, with
-`selectable: false`:
+While the model is `busy`, `ChatView` paints a pending row as the last child of
+the history scroll box, with `selectable: false`:
 
 - no partial yet: one row, `<frame> <label>  <elapsed>s` (the #96 indicator);
 - partial present: the assistant label, the body (Markdown or text, see below),
@@ -172,7 +173,7 @@ status line drops the frame and label and shows
 The scroll box keeps `stickyScroll` / `stickyStart: "bottom"`; a user who has
 scrolled up is not pulled back down by partial updates.
 
-If a turn fails while `pending.partial` is set, the partial is appended to
+If a turn fails while `partial` is set, the partial is appended to
 `messages` as an assistant message with `incomplete: true`, rendered with a
 muted `(incomplete)` line under it, followed by the error entry. This keeps the
 text when only completion detection timed out. `/copy` skips incomplete
@@ -188,8 +189,8 @@ the assistant message is created) and `incomplete?: true`.
   `false` once settled. Tables use the OpenTUI default.
 - Everything else (user, error, help, shell, separators, and assistant messages
   of `"text"` providers) renders exactly as today.
-- `theme.ts` gains `markdownSyntaxStyle()`, built from the existing palette and
-  honouring the existing no-colour handling.
+- `theme.ts` gains `markdownSyntaxStyle()`, built from the same ANSI indexed
+  colours as the rest of the theme, so the terminal palette applies.
 - Code-block highlighting uses OpenTUI's tree-sitter client when it loads under
   the running runtime (Bun and Node are both supported hosts); when it does not,
   code blocks render unhighlighted. The first plan task verifies which it is on

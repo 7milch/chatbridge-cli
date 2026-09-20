@@ -30,7 +30,7 @@ has native selection), and clipboard *reads*.
 copyToClipboard(text: string, deps: ClipboardDeps): Promise<boolean>;
 ```
 
-`ClipboardDeps` carries `env`, `platform`, `spawn` (test seam) and
+`ClipboardDeps` carries `env`, `platform`, `process` (the child-process seam) and
 `osc52: (text: string) => boolean` (bound to `renderer.copyToClipboardOSC52`),
 so the module itself does not import OpenTUI.
 
@@ -66,9 +66,11 @@ verifies that it is on and sets `useMouse: true` explicitly if it is not.
 
 ## 3. Focus stays on the input (#99)
 
-`ChatView` hands focus back: when the input reports a blur and the view is not
-destroyed, it calls `this.input.focus()` again. Other renderables stay
-clickable (the history still starts a selection and scrolls by wheel).
+Either the renderer is created with `autoFocus: false`, so a click never moves
+focus, or `ChatView` hands focus back when the input reports a blur. The plan's
+first task verifies which one works with selection and wheel scrolling intact,
+and the implementation uses exactly one. Other renderables stay clickable (the
+history still starts a selection and scrolls by wheel).
 
 History scrolling by key must keep working with the input focused. The plan
 checks whether PgUp/PgDn currently depend on the scroll box having focus; if
@@ -94,10 +96,12 @@ unaffected.
 - TUI: `ChatModel` handles it through an injected `copy: (text) => Promise<boolean>`
   that `runInteractive` binds to `copyToClipboard`; feedback goes to the status
   line, not the history.
-- VSCode: `SessionController` takes `writeClipboard: (text: string) => Thenable<void>`;
-  `create-extension.ts` passes `vscode.env.clipboard.writeText`. Feedback uses
-  the view's existing notice. No webview change beyond what the shared command
-  list already drives.
+- VSCode: `SessionController` exposes `lastReply()`; the `copy` handler lives in
+  `commands.ts` with the other command handlers and takes an injected
+  `writeClipboard: (text: string) => Thenable<void>`, which `create-extension.ts`
+  binds to `vscode.env.clipboard.writeText`. Feedback is an information message
+  (a warning when the write fails). `copy` joins `WebviewCommand`; it is a view
+  command only, not a palette command, so the manifest is unchanged.
 
 ## 5. Documentation
 
@@ -111,8 +115,11 @@ that some terminals disable OSC 52).
   forces OSC 52, fallback on missing command and on non-zero exit, timeout.
 - `ChatModel`: `/copy` picks the newest complete reply, skips incomplete ones,
   reports `nothing to copy yet`, adds no message and opens no session.
-- `SessionController`: same cases through `writeClipboard`.
+- VSCode: `SessionController.lastReply()`, and the `copy` handler in
+  `commands.ts` through an injected `writeClipboard` (copied, nothing to copy,
+  write failed, no `writeClipboard` wired).
 - `defineProvider`: a provider command named `copy` is rejected.
 - `ChatView` (test renderer): selection end triggers a copy with the selected
-  text; non-message renderables are not selectable; blur refocuses the input;
+  text; non-message renderables are not selectable; a click elsewhere leaves
+  typing in the input;
   PgUp/PgDn scroll the history with the input focused.
