@@ -357,7 +357,10 @@ collide with a built-in (`login`, `logout`, `new`, `reopen`, `help`), or that
 repeat. A `show` result is printed; a `send` result is sent as an ordinary
 turn while the history keeps the `/command` line you typed. A URL hook runs
 under the session timeout and its result is subject to the same size limits
-as `@file` attachments.
+as `@file` attachments. URLs are detected in the text as typed, and the
+punctuation prose puts after a link (`.,;:!?'"]>`) is trimmed off before
+`match` sees it; a `)` is trimmed only when it does not close a `(` from
+inside the URL, so `https://wiki.example.com/Foo_(bar)` arrives intact.
 
 A provider may also set two defaults for the framework's browser handling:
 
