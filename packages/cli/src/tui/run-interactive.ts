@@ -3,7 +3,6 @@ import {
   type ChatSessionOptions,
   closeWithTimeout,
   commandInfoOf,
-  expandUrlHooks,
   runLogin,
 } from "@chatbridge/core";
 import {
@@ -11,7 +10,6 @@ import {
   type KeyEvent,
   createCliRenderer,
 } from "@opentui/core";
-import { expandMentions } from "../mentions/expand-mentions.js";
 import { FileIndex } from "../mentions/file-index.js";
 import type { ShellConfig } from "../shell/shell-config.js";
 import type { BannerOptions } from "./banner-options.js";
@@ -22,6 +20,7 @@ import {
   type ChatSessionLike,
 } from "./chat-model.js";
 import { ChatView } from "./chat-view.js";
+import { expandInput } from "./expand-input.js";
 import { type SpinnerOptions, resolveSpinner } from "./spinner.js";
 
 export interface InteractiveOptions extends ChatSessionOptions {
@@ -190,25 +189,12 @@ export async function runInteractive(
       clearAuth: () => opts.authStore.clear(),
       shell: opts.shell,
       commands,
-      expand: async (text) => {
-        const cwd = process.cwd();
-        const mentions = await expandMentions(text, cwd);
-        const hooks = opts.provider.urlHooks ?? [];
-        if (hooks.length === 0) return mentions;
-        const already = mentions.attachments.reduce((n, a) => n + a.bytes, 0);
-        // Scanned against the typed text, not the expanded prompt: a URL
-        // inside an attached file is the file's content, not a request.
-        const urls = await expandUrlHooks(text, hooks, {
+      expand: (text) =>
+        expandInput(text, {
+          cwd: process.cwd(),
+          hooks: opts.provider.urlHooks ?? [],
           timeoutMs: opts.timeoutMs,
-          alreadyBytes: already,
-        });
-        // "" or the "\n\n### ..." sections the hooks appended.
-        const extra = urls.prompt.slice(text.length);
-        return {
-          prompt: mentions.prompt + extra,
-          attachments: [...mentions.attachments, ...urls.attachments],
-        };
-      },
+        }),
     });
     view = new ChatView(renderer, model, {
       title: opts.title,
