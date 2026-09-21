@@ -51,7 +51,7 @@ export const IDLE_CLOSE_BUDGET_MS = 5_000;
 export const DEFAULT_POLL_INTERVAL_MS = 250;
 
 /** How long a turn may wait for the provider to name its conversation. */
-export const HANDLE_BUDGET_MS = 5_000;
+const HANDLE_BUDGET_MS = 5_000;
 
 /** Resolves `fallback` when `p` has not settled within `ms`. The two
  * `conversation` hooks are best effort and run on a page the framework does
