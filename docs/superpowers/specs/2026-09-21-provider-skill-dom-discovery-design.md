@@ -393,3 +393,52 @@ the refresh command.
    "adopt Markdown replies".
 10. Whole-branch review, PR labelled `enhancement` (the published package
     changes).
+
+## 9. As built — where the implementation departs from the sections above
+
+The design held; these details changed under review and under the RED/GREEN
+runs recorded in #113. Where this section and an earlier one disagree, this
+section describes what shipped.
+
+- **Two MCP servers (§3 step 1–2).** `templates/mcp.json` defines `playwright`
+  (persistent profile, the human logs in here) and `playwright-guest`
+  (`--isolated`, never logged in). The baseline showed that a profile that is
+  already logged in makes the logged-out page unobservable and the login signal
+  is then guessed wrong. The guest census runs on the entry URL (step 2) and
+  again on `CHAT_URL` (step 4); the login signal is the difference between the
+  guest and the member on `CHAT_URL`.
+- **Step 5 decides how to send before sending.** No label matching: the visible
+  buttons with an empty composer are compared with those after typing one
+  character; one new button is the send control, none means Enter, several means
+  asking the human. `SEND_BUTTON` / `STOP_BUTTON` come from the recording's
+  `buttonsSwapped`; `STOP_BUTTON` is never `verify()`'d (it lives ~0.5 s).
+- **Probe API (§2, §7.4).** `recordTurn.stop().summary` also carries
+  `streamingCollection { selector, count, note? }` — the stable selector for
+  every turn of that shape, the source of `ASSISTANT_MESSAGE`; `streamingElement`
+  is an instance locator and is never copied — and `sent: boolean`. The
+  observer ignores mutations inside a composer. `textGrowth[].collection`,
+  `added[].isControl`, `attrs[].detached` exist. `replyShape()` also returns
+  `contentRootWithin` (relative to the turn: the source of
+  `ASSISTANT_MESSAGE_BODY`; `""` = the turn is the content, `null` = none).
+  `verify()` accepts `{ selector, within, many? }` (evaluated inside the last
+  match of `within`, so `:scope` works) and reports an empty selector as
+  `skipped`. `ASSISTANT_MESSAGE_BODY` is not in `MANY`.
+- **What never reaches probe output.** Beyond §2: a form control's value
+  (only a `<textarea>`'s is read, as `{length, head}`), `value` / `data-value`
+  attributes and mutations, per-turn identity attributes in collection or
+  body selectors, ids and label attributes in `contentRootWithin`.
+- **Templates (§4).** Tests skip while every selector is empty so a fresh
+  scaffold passes `check`; `SEND_BUTTON`, `STOP_BUTTON`, `NEW_CHAT_BUTTON` and
+  `SIGN_IN_CONTROL` may stay empty where a decision row says so (`isLoggedIn`
+  guards the empty case). The template `biome.json` ignores `.auth` and
+  `.playwright-mcp`: a formatter run once rewrote a live browser profile. The
+  E2E template has a "a guest is not logged in" test. The pin placeholder is
+  `<playwright-core>`, resolved from the runtime's `playwright` dependency.
+- **Upgrade guide (§7.3).** No `0.10.1` entry: the release number is decided at
+  release time. Entries 0.10.0 / 0.9.1 / 0.9.0; 0.10.0 has two Required items
+  taken from its release notes. A section for repositories that predate the
+  templates maps names by role and offers "Re-derive the login signal".
+- **Verification (§6).** The skill runs used `claude -p --model sonnet` in an
+  arena whose `.mcp.json` is the template's (plus `--headless`), not a
+  subagent with an injected probe. Known limitation filed as #114
+  (`elementToMarkdown` cannot skip a code-block header label).
