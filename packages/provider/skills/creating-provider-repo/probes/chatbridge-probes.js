@@ -628,6 +628,34 @@
 
   const CONTENT = "p, pre, ul, ol, table, blockquote, h1, h2, h3, h4, h5, h6";
 
+  /** A selector for `el` that is evaluated *inside* `root`, the way a provider
+   * uses a body selector: locator(turn).last().locator(body).first(). The whole
+   * point is that it carries no ancestor above the turn, so it keeps working on
+   * every later turn. `""` means "the root itself"; `null` means there is no
+   * such selector. Queries are scoped to `root`, so the count cache used for
+   * document-wide uniqueness does not apply and is left alone. */
+  const relativeTo = (root, el) => {
+    if (!el || !root) return null;
+    if (el === root) return "";
+    if (!root.contains(el)) return null;
+    const hit = (selector) => {
+      try {
+        return root.querySelector(selector) === el;
+      } catch {
+        return false;
+      }
+    };
+    for (const s of selectorsOf(el)) if (hit(s)) return s;
+    const tag = el.tagName.toLowerCase();
+    const child = el.parentElement === root;
+    const combinator = child ? ":scope > " : ":scope ";
+    const role = el.getAttribute("role");
+    if (short(role) && hit(`${combinator}${tag}[role=${q(role)}]`))
+      return `${combinator}${tag}[role=${q(role)}]`;
+    if (hit(`${combinator}${tag}`)) return `${combinator}${tag}`;
+    return null;
+  };
+
   const replyShape = (selector) => cached(() => replyShapeUncached(selector));
 
   function replyShapeUncached(selector) {
@@ -711,6 +739,7 @@
     }));
     return {
       root: describeEl(root),
+      contentRootWithin: relativeTo(root, contentRootEl),
       tagCensus,
       chrome,
       codeLanguage,
@@ -728,16 +757,46 @@
   function verify(selectors) {
     const out = {};
     for (const [key, value] of Object.entries(selectors ?? {})) {
-      const many =
-        typeof value === "object" && value !== null && value.many === true;
+      const object = typeof value === "object" && value !== null;
+      const many = object && value.many === true;
+      const within = object && value.within ? value.within : null;
       const selector = typeof value === "string" ? value : value?.selector;
+      // A constant a VARIANT deliberately leaves empty is not a broken
+      // selector; the caller knows which names that is allowed for.
+      if (selector === "" || selector === undefined || selector === null) {
+        out[key] = {
+          count: 0,
+          visibleCount: 0,
+          ok: true,
+          skipped: "empty — allowed only where a VARIANT says so",
+        };
+        continue;
+      }
       try {
-        const els = Array.from(document.querySelectorAll(selector));
+        // `within` reproduces how a provider uses a body selector:
+        // page.locator(TURN).last().locator(BODY).first(). Scoping the query
+        // to that last element is what makes a `:scope > …` form work here.
+        let root = document;
+        if (within) {
+          const hosts = document.querySelectorAll(within);
+          if (hosts.length === 0) {
+            out[key] = {
+              count: 0,
+              visibleCount: 0,
+              ok: false,
+              error: `within matched nothing: ${within}`,
+            };
+            continue;
+          }
+          root = hosts[hosts.length - 1];
+        }
+        const els = Array.from(root.querySelectorAll(selector));
         const visibleCount = els.filter(visible).length;
         out[key] = {
           count: els.length,
           visibleCount,
-          ok: many ? els.length >= 1 : els.length === 1,
+          // A scoped selector is taken with .first(), so one match is enough.
+          ok: many || within ? els.length >= 1 : els.length === 1,
         };
       } catch {
         out[key] = {

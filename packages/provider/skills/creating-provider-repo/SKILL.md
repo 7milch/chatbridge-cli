@@ -120,7 +120,7 @@ Two optional fields tune browser handling:
 
 ## VSCode extension
 
-Follow `vscode-extension.md`; templates in `templates/vscode/`.
+Optional; follow `vscode-extension.md`, templates in `templates/vscode/`.
 
 ## Traps seen in the wild
 

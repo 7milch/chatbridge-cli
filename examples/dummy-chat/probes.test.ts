@@ -354,6 +354,29 @@ describe("replyShape", () => {
     );
     expect(s.codeLanguage).toBe("class");
     expect(s.chromeInsideContent.join(" ")).toContain("code-header");
+    // The selector a provider actually uses: relative to one turn, so it
+    // carries nothing that identifies this turn.
+    expect(s.contentRootWithin).toBe('[data-part="content"]');
+    await page.context().close();
+  });
+
+  test("names the content root relative to the turn when it has no attributes", async () => {
+    const page = await open(true);
+    await sendTurn(page, "one");
+    // A turn whose body child carries only a class: the only honest relative
+    // selector is the direct-child form.
+    await page.evaluate(`(() => {
+      const turn = document.createElement("article");
+      turn.className = "css-9z8y7x";
+      turn.innerHTML = '<div class="css-1a2b3c"><p>hello</p><ul><li>a</li></ul></div>';
+      document.querySelector('[role="log"]').appendChild(turn);
+      window.__plainTurn = turn;
+    })()`);
+    const s = await probe(
+      page,
+      "window.__cbProbe.replyShape('[role=\"log\"] > article:last-child')",
+    );
+    expect(s.contentRootWithin).toBe(":scope > div");
     await page.context().close();
   });
 });
@@ -384,6 +407,43 @@ describe("verify", () => {
     });
     expect(v.broken.ok).toBe(false);
     expect(v.broken.error).toContain("invalid selector");
+    await page.context().close();
+  });
+
+  test("scopes a `within` selector to the last matching element", async () => {
+    const page = await open(true);
+    await sendTurn(page, "md: sample");
+    const v = await probe(
+      page,
+      `window.__cbProbe.verify({
+        body: { selector: ':scope > [data-part="content"]', within: 'article[data-turn="assistant"]' },
+        plainBody: { selector: '[data-part="content"]', within: 'article[data-turn="assistant"]' },
+        noHost: { selector: 'p', within: '[data-testid="nowhere"]' },
+      })`,
+    );
+    // `:scope` is meaningless against the document; scoping makes it work.
+    expect(v.body).toEqual({ count: 1, visibleCount: 1, ok: true });
+    expect(v.plainBody.ok).toBe(true);
+    expect(v.noHost).toEqual({
+      count: 0,
+      visibleCount: 0,
+      ok: false,
+      error: 'within matched nothing: [data-testid="nowhere"]',
+    });
+    await page.context().close();
+  });
+
+  test("an empty selector is skipped, not reported broken", async () => {
+    const page = await open(true);
+    const v = await probe(
+      page,
+      "window.__cbProbe.verify({ SEND_BUTTON: '', STOP_BUTTON: { selector: '', many: true } })",
+    );
+    for (const name of ["SEND_BUTTON", "STOP_BUTTON"]) {
+      expect(v[name].ok).toBe(true);
+      expect(v[name].count).toBe(0);
+      expect(v[name].skipped).toContain("VARIANT");
+    }
     await page.context().close();
   });
 });

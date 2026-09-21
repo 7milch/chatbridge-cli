@@ -69,8 +69,8 @@ Not yet observed.
 ASSISTANT_MESSAGE is recordTurn.stop().summary.streamingCollection.selector,
 the stable selector for "every assistant turn"; if a placeholder turn is
 reported, exclude it with `:not([…])` on the attribute that marks it.
-ASSISTANT_MESSAGE_BODY is replyShape().contentRoot made relative to one turn
-(drop the leading turn part, so it matches inside a single turn).
+ASSISTANT_MESSAGE_BODY is replyShape().contentRootWithin, already relative to
+one turn (a ":scope > tag" form is valid; verify() checks it with `within`).
 Observed: YYYY-MM-DD
 | Constant | Selector | verify() count | visible |
 |---|---|---|---|

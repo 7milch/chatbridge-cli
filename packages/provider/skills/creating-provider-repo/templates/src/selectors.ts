@@ -23,14 +23,13 @@ export const ASSISTANT_MESSAGE = "";
 /** dom-notes §Messages — every user turn. */
 export const USER_MESSAGE = "";
 /** dom-notes §Messages — inside one assistant turn: content without chrome
- * (replyShape().contentRoot). */
+ * (replyShape().contentRootWithin). Evaluated under ASSISTANT_MESSAGE, so a
+ * `:scope > …` form is valid; verify() checks it with `within`, not `many`. */
 export const ASSISTANT_MESSAGE_BODY = "";
 /** dom-notes §Errors and rate limits — document.title of a bot challenge. */
 export const CHALLENGE_TITLE = "Just a moment...";
 
-/** Selectors that match a collection; verify() accepts `count >= 1` for them. */
-export const MANY = [
-  "ASSISTANT_MESSAGE",
-  "USER_MESSAGE",
-  "ASSISTANT_MESSAGE_BODY",
-] as const;
+/** Selectors that match a collection; verify() accepts `count >= 1` for them.
+ * ASSISTANT_MESSAGE_BODY is not here: it is verified with
+ * `{ selector, within: ASSISTANT_MESSAGE }`, which already accepts `count >= 1`. */
+export const MANY = ["ASSISTANT_MESSAGE", "USER_MESSAGE"] as const;

@@ -75,9 +75,10 @@ section.
 
 Change:
 
-1. `src/selectors.ts`: add `ASSISTANT_MESSAGE_BODY` — `replyShape().contentRoot`
-   made relative to one assistant turn by step 6's three mapping rules — and add
-   its name to the `MANY` array. Compare with
+1. `src/selectors.ts`: add `ASSISTANT_MESSAGE_BODY` —
+   `replyShape().contentRootWithin`, which is already relative to one assistant
+   turn (step 6). Do **not** add it to `MANY`: it is verified with
+   `{ selector, within: <ASSISTANT_MESSAGE> }`. Compare with
    `../creating-provider-repo/templates/src/selectors.ts`. Record it in
    `docs/dom-notes.md` §Messages, and record `contentRoot`, `codeLanguage` and
    `chromeInsideContent` in §Streaming behaviour.

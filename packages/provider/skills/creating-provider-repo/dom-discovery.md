@@ -246,7 +246,10 @@ one-word reply shows none of them.
    { "element": "message composer", "target": "[data-testid=\"composer-input\"]",
      "text": ".", "submit": false }
    ```
-   (`target` takes a CSS selector — use your `COMPOSER` value.)
+   (`target` takes a CSS selector — use your `COMPOSER` value. Without
+   `"slowly": true`, `browser_type` **fills**: it replaces whatever the
+   composer holds, so call 4 below overwrites this `.` rather than appending
+   to it. No clearing step is needed.)
 3. `browser_evaluate` — look for the send control while it exists:
    ```json
    { "function": "() => window.__cbProbe.census().buttons.filter(b => /send|submit|送信/i.test((b.ariaLabel ?? '') + (b.text?.head ?? '') + b.locators.join(' ')))" }
@@ -254,14 +257,11 @@ one-word reply shows none of them.
    Take the first `locators` entry of the first match.
 
    These words are English and Japanese. If `census().lang` from step 4 is
-   **neither** `en` nor `ja`, do not filter by label at all: run
-   `{ "function": "() => window.__cbProbe.census().buttons" }` and keep the
-   candidates whose `locators` start with the same ancestor as your `COMPOSER`
-   candidate's (the controls next to the composer). Either way the recorded
-   turn, not the label, is the authority — call 7 below settles it.
+   **neither** `en` nor `ja`, skip this call: do not try to pick a button by
+   label. Go straight to call 4b.
 
-   If the result is `[]`, do not hunt for the button. Take call 4b instead and
-   derive `SEND_BUTTON` from `buttonsSwapped` afterwards.
+   If the result is `[]`, do the same. Either way the recorded turn, not the
+   label, is the authority for `SEND_BUTTON` — call 7 settles it.
 4. Send the real prompt, one of two ways.
 
    **4a — there is a send control.** `browser_type`:
@@ -275,19 +275,34 @@ one-word reply shows none of them.
    { "element": "send button", "target": "[data-testid=\"send-button\"]" }
    ```
 
-   **4b — call 3 returned `[]`.** One `browser_type`, submitting with Enter:
+   **4b — call 3 was skipped or returned `[]`.** One `browser_type`,
+   submitting with Enter:
    ```json
    { "element": "message composer", "target": "[data-testid=\"composer-input\"]",
      "text": "List 30 short facts about the solar system as a numbered list, one line each.",
      "submit": true }
    ```
+   Enter is not always what sends. Check with `browser_evaluate`:
+   ```json
+   { "function": "() => window.__cbProbe.census().composer.map(c => c.text?.length ?? 0)" }
+   ```
+   A composer that is still non-empty means Enter did **not** send. Then, and
+   only then, list the controls that exist *because* the composer is non-empty:
+   ```json
+   { "function": "() => window.__cbProbe.census().buttons.filter(b => b.visible)" }
+   ```
+   and keep the candidates whose `locators[0]` does **not** appear in step 4's
+   census (that census was taken with an empty composer). Click the single
+   survivor with `browser_click`. If there is more than one, ask the user:
+   "Which of these controls sends the message?" and list their `ariaLabel` /
+   `text` values.
 5. `browser_evaluate`, immediately, while the reply is being written — look for
    the stop control:
    ```json
    { "function": "() => window.__cbProbe.census().buttons.filter(b => /stop|cancel|abort|停止|中止/i.test((b.ariaLabel ?? '') + (b.text?.head ?? '') + b.locators.join(' ')))" }
    ```
-   The same rule applies: an unknown `lang`, or an empty result, is not a
-   problem — `buttonsSwapped` in call 7 names it.
+   With an unknown `lang`, skip this call too. An empty result is not a
+   problem either: `buttonsSwapped` in call 7 names the stop control.
 6. `browser_wait_for`:
    ```json
    { "time": 20 }
@@ -390,33 +405,27 @@ argument it uses the element that just streamed):
               { "locator": "button[aria-label=\"Copy\"]", "kind": "button" } ],
   "codeLanguage": "class",
   "contentRoot": "[data-part=\"content\"]",
+  "contentRootWithin": "[data-part=\"content\"]",
   "chromeInsideContent": ["code-header: [data-part=\"code-header\"]"] }
 ```
 
-- `contentRoot` → **`ASSISTANT_MESSAGE_BODY`**, made relative to one turn. The
-  template applies it as
+- `contentRootWithin` → **`ASSISTANT_MESSAGE_BODY`**, as printed. The probe
+  computes it *inside* the reply element, so it never carries anything from
+  above the turn and it works on every later turn. The template uses it as
   `page.locator(ASSISTANT_MESSAGE).last().locator(ASSISTANT_MESSAGE_BODY).first()`,
-  so what you write must match a **descendant of one turn**. Turn `contentRoot`
-  into that mechanically:
+  and step 9 verifies it the same way, with `within`. Three shapes come back:
 
-  1. Split `contentRoot` on its combinators (spaces and `>`). If its **first**
-     segment is the turn itself — the `root` value of this same output, or a
-     selector carrying the turn's identity such as `[data-message-id="m1"]` —
-     drop that segment and keep the rest, re-attaching a leading `>` as
-     `:scope >`.
-  2. Otherwise keep `contentRoot` unchanged.
-  3. If nothing remains after step 1 (`contentRoot` *is* the turn root), the
-     reply has no content child. Set `ASSISTANT_MESSAGE_BODY` to the same value
-     as `ASSISTANT_MESSAGE` and take the `newestBody` VARIANT in
-     `templates/src/provider.ts`, which drops the second `.locator()` call.
+  | `contentRootWithin` | Write |
+  |---|---|
+  | `[data-part="content"]` | that value |
+  | `:scope > div` (the content child has no attribute of its own) | that value — `:scope` is valid because the selector is always evaluated under one turn |
+  | `""` (empty: the turn element *is* the content) | `ASSISTANT_MESSAGE`'s own value, plus the `newestBody` VARIANT in `templates/src/provider.ts` |
+  | `null` (no relative selector exists) | see the decision table |
 
-  Worked examples:
-
-  | `root` | `contentRoot` | `ASSISTANT_MESSAGE_BODY` |
-  |---|---|---|
-  | `[data-message-id="m1"]` | `[data-part="content"]` | `[data-part="content"]` |
-  | `[data-message-id="m1"]` | `[data-message-id="m1"] > div` | `:scope > div` |
-  | `[data-message-id="m1"]` | `[data-message-id="m1"]` | same as `ASSISTANT_MESSAGE`, plus the `newestBody` VARIANT |
+  `contentRoot` is the same element written as a page-wide locator. Read it to
+  understand the reply; never copy it into `src/selectors.ts` — it can be
+  anchored on an ancestor **above** the turn (`[data-testid="thread"] > div`),
+  which matches the first turn only.
 - `chrome` lists what is decoration rather than content; `chromeInsideContent`
   lists the ones still inside `contentRoot`, i.e. what will leak into the
   Markdown.
@@ -427,7 +436,7 @@ argument it uses the element that just streamed):
 - `contentRoot: null` means the reply has no block-level content yet; re-run
   after the reply is complete.
 
-**Write** — §Streaming behaviour: `contentRoot`, `codeLanguage`,
+**Write** — §Streaming behaviour: `contentRootWithin`, `codeLanguage`,
 `chromeInsideContent`. §Messages: `ASSISTANT_MESSAGE_BODY`.
 
 ### Step 7 — a second turn
@@ -474,29 +483,41 @@ empty afterwards.
 ### Step 9 — verify every constant
 
 **Do** — fill `src/selectors.ts` completely, then, on the logged-in chat page
-with at least one completed turn, call `verify()` with every constant through
-`browser_evaluate` in `playwright`. Build the
-call mechanically from the file: each `export const NAME = "…"` becomes
-`NAME: '…'`, and each name listed in the file's `MANY` array becomes
-`NAME: { selector: '…', many: true }`. `CHALLENGE_TITLE` is a document title,
-not a selector — leave it out.
+with at least one completed turn, call `verify()` through `browser_evaluate` in
+`playwright`. Build the call mechanically from the file, three rules and no
+others:
+
+- a name listed in the file's `MANY` array → `NAME: { selector: '…', many: true }`;
+- `ASSISTANT_MESSAGE_BODY` → `{ selector: '…', within: '<your ASSISTANT_MESSAGE>' }`,
+  always, because that is how the provider evaluates it (under the last turn),
+  and it is the only form in which a `:scope > …` value can match;
+- every other name → `NAME: '…'`.
+
+`CHALLENGE_TITLE` is a document title, not a selector — leave it out.
 
 ```json
-{ "function": "() => window.__cbProbe.verify({ SIGN_IN_CONTROL: '[data-testid=\"sign-in\"]', ACCOUNT_CONTROL: '[data-testid=\"account-menu\"]', COMPOSER: '[data-testid=\"composer-input\"]', SEND_BUTTON: '[data-testid=\"send-button\"]', STOP_BUTTON: '[data-testid=\"stop-button\"]', NEW_CHAT_BUTTON: '[data-testid=\"new-chat\"]', ASSISTANT_MESSAGE: { selector: 'article[data-turn=\"assistant\"]', many: true }, USER_MESSAGE: { selector: 'article[data-turn=\"user\"]', many: true }, ASSISTANT_MESSAGE_BODY: { selector: '[data-part=\"content\"]', many: true } })" }
+{ "function": "() => window.__cbProbe.verify({ SIGN_IN_CONTROL: '[data-testid=\"sign-in\"]', ACCOUNT_CONTROL: '[data-testid=\"account-menu\"]', COMPOSER: '[data-testid=\"composer-input\"]', SEND_BUTTON: '[data-testid=\"send-button\"]', STOP_BUTTON: '[data-testid=\"stop-button\"]', NEW_CHAT_BUTTON: '[data-testid=\"new-chat\"]', ASSISTANT_MESSAGE: { selector: 'article[data-turn=\"assistant\"]', many: true }, USER_MESSAGE: { selector: 'article[data-turn=\"user\"]', many: true }, ASSISTANT_MESSAGE_BODY: { selector: ':scope > [data-part=\"content\"]', within: 'article[data-turn=\"assistant\"]' } })" }
 ```
 
 **Read** — each name gets `{ count, visibleCount, ok }`. `ok` is `count === 1`
-for a plain selector and `count >= 1` for a `many` one.
+for a plain selector, and `count >= 1` for a `many` or a `within` one.
 
 - `SIGN_IN_CONTROL` is expected to be **not** `ok` here (`count: 0`): it exists
   only when logged out, and you confirmed it in step 2. Everything else must be
   `ok`.
+- `skipped: "empty — allowed only where a VARIANT says so"` with `ok: true` is
+  what an empty constant returns. It is legitimate for exactly three names —
+  `SEND_BUTTON`, `STOP_BUTTON`, `NEW_CHAT_BUTTON` — and only when a decision
+  row told you to leave that one empty and take a VARIANT. Any other `skipped`
+  means you have not filled the constant yet: go back to the step that owns it.
 - `SEND_BUTTON` and `STOP_BUTTON` only exist at particular moments. Verify
   `SEND_BUTTON` with one character typed into the composer, and `STOP_BUTTON`
   during a long turn — re-run the call with just that one name at that moment
   rather than trying to get them all in one snapshot.
 - `count: 2` with `visibleCount: 1` means you picked the selector that also
   matches a hidden twin. Go back to step 4's `composer` list.
+- `error: "within matched nothing: …"` means your `ASSISTANT_MESSAGE` is wrong,
+  not your body selector: fix it first and re-run.
 - `error: "invalid selector: …"` is a syntax error in what you wrote.
 
 **Write** — the `verify() count` and `visible` columns of every table in
@@ -521,8 +542,8 @@ Read the left column off probe output; do exactly what the right column says.
 | `buttonsSwapped` shows send gone → stop appeared → stop gone, and `doneCandidates[0]` is `button gone: …` | Done = the stop control gone. `STOP_BUTTON` is that selector. Do not wait for the send button to come back: many services render it only while the composer is non-empty |
 | `attrs` shows a `data-state` / `aria-busy` flipping back at the end, and it is in `doneCandidates` | Done = that attribute's idle value. Take the `waitForResponse` VARIANT in `templates/src/provider.ts` — decision table **"state attribute"** |
 | `doneCandidates` lists **both** a state attribute and a button swap | Prefer the state attribute for the done signal (VARIANT), and keep the button as `STOP_BUTTON` for `sendMessage`'s "generation started" wait |
-| `doneCandidates` is empty | There is no done signal. Say so in §Generation indicator, leave `STOP_BUTTON` empty and rely on the stability read alone — expect slower, occasionally truncated turns |
-| No send button in step 5's call 3 filter, and no send-control row in `buttonsSwapped` | Take the `sendMessage` VARIANT in `templates/src/provider.ts` — decision table **"no send button"** — `page.keyboard.press("Enter")`. Leave `SEND_BUTTON` empty and say so in §Composer. Step 5's call 4b already sent this way, so you know it works |
+| `doneCandidates` is empty | There is no done signal. Say so in §Generation indicator, leave `STOP_BUTTON` empty (step 9 reports it as `skipped`) and rely on the stability read alone — expect slower, occasionally truncated turns |
+| No send button in step 5's call 3 filter, and no send-control row in `buttonsSwapped` | Take the `sendMessage` VARIANT in `templates/src/provider.ts` — decision table **"no send button"** — `page.keyboard.press("Enter")`. Leave `SEND_BUTTON` empty — step 9 reports it as `skipped` — and say so in §Composer. Step 5's call 4b already sent this way, so you know it works |
 | `textGrowth` is empty after a long prompt | The reply is not streamed into the DOM (it is replaced whole), so there is no `streamingElement` and no `streamingCollection`. Take `ASSISTANT_MESSAGE` from the `added[]` row for the assistant turn instead: turn its **descriptive** `shape` into a selector the same way as for `USER_MESSAGE` (`article[data-message-id][data-turn]` → `article[data-turn="assistant"]`, dropping identity attributes), and confirm it in step 9 as a `many` selector whose `count` equals the number of replies on the page. Say in §Streaming behaviour that nothing grew; `streaming.responseText` still works off the count |
 | `replyShape().chromeInsideContent` is non-empty | `ASSISTANT_MESSAGE_BODY` still points at `contentRoot`; list the leaking chrome in §Streaming behaviour so the E2E's expectations are read with it in mind |
 | `replyShape().contentRoot` is `null` while a reply is still streaming | `streaming.responseText` returns `undefined` until it exists — the template already returns `undefined` when the body matches nothing |
@@ -530,8 +551,9 @@ Read the left column off probe output; do exactly what the right column says.
 | The Markdown reply carries a stray line just before a fence (the code header's label) | Known framework limitation: `elementToMarkdown` has no skip option. **Accept it** — record it in §Streaming behaviour; do not write a work-around into the provider. Assert Markdown *structure* in the E2E, never exact text |
 | `lang` is not `en`, or button names are localized | Prefer `data-*` selectors over `aria-label` ones, and record the locale in §Chat page — a language change would otherwise break every label-based selector |
 | `title` is `"Just a moment..."`, or the page is an IdP refusal | Keep `CHALLENGE_TITLE` as the interstitial's title, `detectBlock` returns `"challenge page"`, the CLI tells the user to try `--headful`. Record it in §Errors and rate limits. Bot-protection evasion is out of scope: no stealth plugins, no UA spoofing, no attaching to a personal Chrome profile |
-| No new-chat control in `census().buttons`, or clicking it navigates (step 8's `url` changed) | New chat is a URL. Take the `startNewChat` VARIANT in `templates/src/provider.ts` — decision table **"new chat is a URL"** — and replace the click with `page.goto(<that URL>)`. Record the URL, not a selector, in §New chat, and leave `NEW_CHAT_BUTTON` empty |
-| `replyShape().contentRoot` equals its `root` (the reply element has no content child) | The turn element *is* the content. Set `ASSISTANT_MESSAGE_BODY` to the same value as `ASSISTANT_MESSAGE` and take the `newestBody` VARIANT in `templates/src/provider.ts` — decision table **"the reply has no content child"** — which drops the second `.locator()` call |
+| No new-chat control in `census().buttons`, or clicking it navigates (step 8's `url` changed) | New chat is a URL. Take the `startNewChat` VARIANT in `templates/src/provider.ts` — decision table **"new chat is a URL"** — and replace the click with `page.goto(<that URL>)`. Record the URL, not a selector, in §New chat, and leave `NEW_CHAT_BUTTON` empty; step 9 reports it as `skipped` |
+| `replyShape().contentRootWithin` is `""` (the reply element has no content child) | The turn element *is* the content. Set `ASSISTANT_MESSAGE_BODY` to the same value as `ASSISTANT_MESSAGE` and take the `newestBody` VARIANT in `templates/src/provider.ts` — decision table **"the reply has no content child"** — which drops the second `.locator()` call |
+| `replyShape().contentRootWithin` is `null` | No selector describes the content child from inside the turn. Use `ASSISTANT_MESSAGE`'s own value for `ASSISTANT_MESSAGE_BODY` with the `newestBody` VARIANT, and record in §Messages that the reply's chrome (`chrome`) will appear in the Markdown |
 | The login page is on the chat page's own origin | Say so in §Login. The off-origin check in `isLoggedIn` is then a no-op and the sign-in / account pair decides alone. Do not replace the pair with a URL test |
 
 ## When a locator stops matching later
