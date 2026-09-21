@@ -9,6 +9,7 @@ import {
   type ProviderCommandResult,
   ResponseTimeoutError,
   UrlHookError,
+  restoreNote,
 } from "@chatbridge/core";
 import {
   type ChatSessionLike,
@@ -1512,5 +1513,260 @@ describe("droppedAttachmentsLine", () => {
     expect(droppedAttachmentsLine(2)).toBe(
       "2 attachments left out: total size limit.",
     );
+  });
+});
+
+describe("SessionController: streaming and the conversation handle", () => {
+  /** What one opened session reports; a test sets it before the open (or,
+   * for `conversation`, before the turn whose handle it stands for). */
+  interface FakeSpec {
+    conversation?: string;
+    restored?: boolean;
+    responseFormat?: "markdown" | "text";
+  }
+
+  /** A controller whose opens record the handle they were handed, and whose
+   * sends keep their `onPartial` so a test can stream into the turn.
+   * `openedWith[0]` is the first open, so a reopen's handle is `[1]` on. */
+  function streamHarness() {
+    const specs: FakeSpec[] = [{}, {}, {}, {}];
+    const openedWith: Array<string | undefined> = [];
+    const expire: Array<() => void> = [];
+    const sent: string[] = [];
+    const replies: Array<ReturnType<typeof deferred<string>>> = [];
+    const streams: Array<(text: string) => void> = [];
+    const partials: Array<{ text: string; format: string }> = [];
+    const controller = new SessionController({
+      closeTimeoutMs: 20,
+      onPartial: (text, format) => partials.push({ text, format }),
+      openSession: async (onIdleExpired, conversation) => {
+        const spec = specs[openedWith.length] ?? {};
+        openedWith.push(conversation);
+        expire.push(() => onIdleExpired(Promise.resolve()));
+        return {
+          get conversation() {
+            return spec.conversation;
+          },
+          get restored() {
+            return spec.restored;
+          },
+          get responseFormat() {
+            return spec.responseFormat;
+          },
+          async send(
+            prompt: string,
+            opts?: { onPartial?: (t: string) => void },
+          ) {
+            sent.push(prompt);
+            if (opts?.onPartial) streams.push(opts.onPartial);
+            const d = deferred<string>();
+            replies.push(d);
+            return d.promise;
+          },
+          async close() {},
+          async kill() {},
+        } satisfies ChatSessionLike;
+      },
+    });
+    return {
+      controller,
+      specs,
+      openedWith,
+      expire,
+      sent,
+      replies,
+      streams,
+      partials,
+    };
+  }
+
+  type Stream = ReturnType<typeof streamHarness>;
+
+  /** The nth entry, failing loudly when it was never created. */
+  function nth<T>(list: readonly T[], i: number): T {
+    const entry = list[i];
+    if (entry === undefined) throw new Error(`no entry at index ${i}`);
+    return entry;
+  }
+
+  /** Starts a send and waits until the session has it. */
+  async function startSend(h: Stream, text: string): Promise<number> {
+    const n = h.replies.length;
+    void h.controller.send(text);
+    await waitFor(() => h.replies.length === n + 1);
+    return n;
+  }
+
+  /** One complete turn. */
+  async function turn(h: Stream, text: string, reply: string): Promise<void> {
+    const i = await startSend(h, text);
+    nth(h.replies, i).resolve(reply);
+    await waitFor(() => h.controller.getState().status === "idle");
+  }
+
+  test("partials reach onPartial and the reply keeps its markdown format", async () => {
+    const h = streamHarness();
+    nth(h.specs, 0).responseFormat = "markdown";
+    const i = await startSend(h, "hi");
+    nth(h.streams, i)("he");
+    nth(h.streams, i)("hello");
+    expect(h.partials).toEqual([
+      { text: "he", format: "markdown" },
+      { text: "hello", format: "markdown" },
+    ]);
+    nth(h.replies, i).resolve("hello");
+    await waitFor(() => h.controller.getState().status === "idle");
+    expect(h.controller.getState().messages.at(-1)).toEqual({
+      role: "assistant",
+      text: "hello",
+      format: "markdown",
+    });
+  });
+
+  test("a text provider streams as text and its reply carries no format", async () => {
+    const h = streamHarness();
+    const i = await startSend(h, "hi");
+    nth(h.streams, i)("he");
+    expect(h.partials).toEqual([{ text: "he", format: "text" }]);
+    nth(h.replies, i).resolve("hello");
+    await waitFor(() => h.controller.getState().status === "idle");
+    expect(h.controller.getState().messages.at(-1)).toEqual({
+      role: "assistant",
+      text: "hello",
+    });
+  });
+
+  test("a turn that fails after a partial keeps it as an incomplete reply", async () => {
+    const h = streamHarness();
+    nth(h.specs, 0).responseFormat = "markdown";
+    const i = await startSend(h, "hi");
+    nth(h.streams, i)("half");
+    nth(h.replies, i).reject(new ResponseTimeoutError("Timed out."));
+    await waitFor(() => h.controller.getState().status === "idle");
+    const messages = h.controller.getState().messages;
+    expect(messages.at(-2)).toEqual({
+      role: "assistant",
+      text: "half",
+      format: "markdown",
+      incomplete: true,
+    });
+    expect(messages.at(-1)?.role).toBe("error");
+  });
+
+  test("a turn that fails with nothing streamed pushes only the error", async () => {
+    const h = streamHarness();
+    const i = await startSend(h, "hi");
+    nth(h.replies, i).reject(new ResponseTimeoutError("Timed out."));
+    await waitFor(() => h.controller.getState().status === "idle");
+    const messages = h.controller.getState().messages;
+    expect(messages.at(-1)?.role).toBe("error");
+    expect(messages.some((m) => m.role === "assistant")).toBe(false);
+  });
+
+  test("a partial from a turn a reopen made stale is not forwarded", async () => {
+    const h = streamHarness();
+    const i = await startSend(h, "hi");
+    await h.controller.reopen();
+    nth(h.streams, i)("late");
+    expect(h.partials).toEqual([]);
+  });
+
+  test("a reopen returns to the last turn's conversation and notes it", async () => {
+    const h = streamHarness();
+    nth(h.specs, 0).conversation = "H1";
+    await turn(h, "one", "reply");
+    nth(h.specs, 1).restored = true;
+
+    await h.controller.reopen();
+
+    expect(h.openedWith).toEqual([undefined, "H1"]);
+    expect(h.controller.getState().messages.at(-1)).toEqual({
+      role: "separator",
+      text: `${REOPENED_SEPARATOR} · ${restoreNote(true)}`,
+    });
+  });
+
+  test("a session that reports no restore gets a plain separator", async () => {
+    const h = streamHarness();
+    nth(h.specs, 0).conversation = "H1";
+    await turn(h, "one", "reply");
+
+    await h.controller.reopen();
+
+    expect(h.controller.getState().messages.at(-1)).toEqual({
+      role: "separator",
+      text: REOPENED_SEPARATOR,
+    });
+  });
+
+  test("a refused restore says so and is not tried again", async () => {
+    const h = streamHarness();
+    nth(h.specs, 0).conversation = "H1";
+    await turn(h, "one", "reply");
+    nth(h.specs, 1).restored = false;
+
+    await h.controller.reopen();
+    expect(h.controller.getState().messages.at(-1)).toEqual({
+      role: "separator",
+      text: `${REOPENED_SEPARATOR} · ${restoreNote(false)}`,
+    });
+
+    await h.controller.reopen();
+    expect(h.openedWith).toEqual([undefined, "H1", undefined]);
+  });
+
+  test("the lazy open after an idle close restores the conversation", async () => {
+    const h = streamHarness();
+    nth(h.specs, 0).conversation = "H1";
+    await turn(h, "one", "reply");
+    nth(h.specs, 1).restored = true;
+
+    nth(h.expire, 0)();
+    await startSend(h, "x");
+
+    expect(h.openedWith).toEqual([undefined, "H1"]);
+    expect(h.controller.getState().messages.slice(-3)).toEqual([
+      { role: "separator", text: IDLE_CLOSED_SEPARATOR },
+      { role: "separator", text: restoreNote(true) as string },
+      { role: "user", text: "x", attachments: [] },
+    ]);
+  });
+
+  test("newChat and discard forget the conversation", async () => {
+    const h = streamHarness();
+    nth(h.specs, 0).conversation = "H1";
+    await turn(h, "one", "reply");
+    // Even a session that claims a restore cannot decorate these: nothing
+    // was handed to it to restore.
+    nth(h.specs, 1).restored = true;
+    expect(await h.controller.newChat()).toBe(true);
+    await turn(h, "two", "reply two");
+    expect(h.controller.getState().messages.at(-3)).toEqual({
+      role: "separator",
+      text: "New chat",
+    });
+
+    const other = streamHarness();
+    nth(other.specs, 0).conversation = "H1";
+    await turn(other, "one", "reply");
+    expect(await other.controller.discard("Logged out")).toBe(true);
+    await turn(other, "two", "reply two");
+
+    expect(h.openedWith).toEqual([undefined, undefined]);
+    expect(other.openedWith).toEqual([undefined, undefined]);
+  });
+
+  test("a failed turn does not overwrite the remembered handle", async () => {
+    const h = streamHarness();
+    nth(h.specs, 0).conversation = "H1";
+    await turn(h, "one", "reply");
+
+    nth(h.specs, 0).conversation = "H2";
+    const i = await startSend(h, "two");
+    nth(h.replies, i).reject(new ResponseTimeoutError("Timed out."));
+    await waitFor(() => h.controller.getState().status === "idle");
+
+    await h.controller.reopen();
+    expect(h.openedWith).toEqual([undefined, "H1"]);
   });
 });

@@ -23,6 +23,7 @@ export interface ChatViewHandlers {
   customCommand(name: string, args: string, text: string): void;
   attachUris(uris: string[]): void;
   pasted(id: number, text: string): void;
+  copyText(text: string): void;
 }
 
 /** Every command the webview may post; the bridge rejects the rest. */
@@ -66,6 +67,8 @@ function isToHost(m: unknown): m is ToHost {
       );
     case "pasted":
       return typeof msg.id === "number" && typeof msg.text === "string";
+    case "copyText":
+      return typeof msg.text === "string";
     default:
       return false;
   }
@@ -124,6 +127,9 @@ export class ChatViewBridge {
         case "pasted":
           this.handlers.pasted(raw.id, raw.text);
           break;
+        case "copyText":
+          this.handlers.copyText(raw.text);
+          break;
       }
     });
     return {
@@ -144,6 +150,12 @@ export class ChatViewBridge {
 
   pushTookBack(entries: QueueEntry[]): void {
     void this.webview?.postMessage({ type: "tookBack", entries });
+  }
+
+  /** The reply streaming right now, whole text so far. Posted far more
+   * often than a state frame, which is why it carries no history. */
+  postPartial(text: string, format: "markdown" | "text"): void {
+    void this.webview?.postMessage({ type: "partial", text, format });
   }
 
   pushProgress(text: string): void {
