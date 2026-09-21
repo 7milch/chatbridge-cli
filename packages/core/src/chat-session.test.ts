@@ -3,6 +3,7 @@ import type {
   Page,
   Provider,
   ProviderCommandResult,
+  ProviderConversation,
 } from "@chatbridge/provider";
 import type { AuthStore } from "@chatbridge/runtime";
 import {
@@ -22,6 +23,8 @@ import {
 } from "./errors.js";
 import { formatIdleDuration } from "./idle-watch.js";
 
+const CHAT_URL = "http://127.0.0.1:1/chat";
+
 /** Deferred promise so a test can decide when waitForResponse resolves. */
 function deferred<T>() {
   let resolve!: (v: T) => void;
@@ -33,10 +36,18 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function fakePage(): Page {
+/** The page starts on the chat URL; `goto` moves it, so `url()` answers
+ * whatever the last navigation asked for. `gotos`, when given, records them. */
+function fakePage(gotos?: string[]): Page {
+  let current = CHAT_URL;
   return {
     setDefaultTimeout() {},
-    goto: async () => null,
+    goto: async (url: string) => {
+      gotos?.push(url);
+      current = url;
+      return null;
+    },
+    url: () => current,
   } as unknown as Page;
 }
 
@@ -60,6 +71,10 @@ interface Harness {
   commandCalls: Array<{ name: string; args: string }>;
   /** What "probe" returns, or throws when it is an Error. */
   commandResult: ProviderCommandResult | Error;
+  /** How often startNewChat ran. */
+  newChats: number;
+  /** Every URL the pages of this harness were told to go to. */
+  gotos: string[];
 }
 
 function harness(): Harness {
@@ -77,18 +92,22 @@ function harness(): Harness {
     loginGate: undefined,
     commandCalls: [],
     commandResult: { kind: "show", text: "ok" },
+    newChats: 0,
+    gotos: [],
     provider: undefined as unknown as Provider,
     launch: undefined as unknown as Harness["launch"],
   };
   h.provider = {
     name: "fake",
-    chatUrl: "http://127.0.0.1:1/chat",
+    chatUrl: CHAT_URL,
     async navigateToLogin() {},
     async isLoggedIn() {
       if (h.loginGate !== undefined) await h.loginGate;
       return h.loggedIn;
     },
-    async startNewChat() {},
+    async startNewChat() {
+      h.newChats++;
+    },
     async sendMessage(_page, prompt) {
       h.sent.push(prompt);
     },
@@ -120,7 +139,7 @@ function harness(): Harness {
     },
   });
   h.launch = async () => ({
-    page: fakePage(),
+    page: fakePage(h.gotos),
     saveAuthState: async () => {
       if (h.saveShouldFail) throw new Error("disk full");
       h.saved++;
@@ -1184,5 +1203,221 @@ describe("ChatSession: streaming partials", () => {
     const md = await ChatSession.open(opts(h));
     expect(md.responseFormat).toBe("markdown");
     await md.close();
+  });
+});
+
+describe("conversation restore and handle refresh", () => {
+  interface ConvoSpy {
+    /** Every handle `open` was called with, in order. */
+    opens: string[];
+    /** How often `handle` ran. */
+    handles: number;
+    /** What `open` does; the default leaves the page on the chat URL. */
+    openImpl: (page: Page, handle: string) => Promise<void>;
+    /** What `handle` answers. */
+    handleImpl: (page: Page) => Promise<string | undefined>;
+  }
+
+  function withConversation(h: Harness): ConvoSpy {
+    const spy: ConvoSpy = {
+      opens: [],
+      handles: 0,
+      openImpl: async () => {},
+      handleImpl: async () => "H-AFTER",
+    };
+    const conversation: ProviderConversation = {
+      async open(page, handle) {
+        spy.opens.push(handle);
+        await spy.openImpl(page, handle);
+      },
+      async handle(page) {
+        spy.handles++;
+        return spy.handleImpl(page);
+      },
+    };
+    (h.provider as { conversation?: ProviderConversation }).conversation =
+      conversation;
+    return spy;
+  }
+
+  /** Starts a turn; the caller resolves the provider reply. */
+  function turn(session: ChatSession): Promise<string> {
+    return session.send("hi");
+  }
+
+  test("no conversation option starts a new chat and attempts no restore", async () => {
+    const h = harness();
+    const spy = withConversation(h);
+    const s = await ChatSession.open(opts(h));
+    expect(h.newChats).toBe(1);
+    expect(spy.opens).toEqual([]);
+    expect(s.restored).toBeUndefined();
+    expect(s.conversation).toBeUndefined();
+    await s.kill();
+  });
+
+  test("a conversation option is ignored by a provider without `conversation`", async () => {
+    const h = harness();
+    const s = await ChatSession.open({ ...opts(h), conversation: "H-1" });
+    expect(h.newChats).toBe(1);
+    expect(s.restored).toBeUndefined();
+    expect(s.conversation).toBeUndefined();
+    await s.kill();
+  });
+
+  test("a restored conversation skips startNewChat and keeps the handle", async () => {
+    const h = harness();
+    const spy = withConversation(h);
+    const s = await ChatSession.open({ ...opts(h), conversation: "H-1" });
+    expect(spy.opens).toEqual(["H-1"]);
+    expect(h.newChats).toBe(0);
+    expect(s.restored).toBe(true);
+    expect(s.conversation).toBe("H-1");
+    await s.kill();
+  });
+
+  test("a throwing open falls back to the chat page and a new chat", async () => {
+    const h = harness();
+    const spy = withConversation(h);
+    spy.openImpl = async () => {
+      throw new Error("no such conversation");
+    };
+    const s = await ChatSession.open({ ...opts(h), conversation: "H-1" });
+    expect(h.gotos).toEqual([CHAT_URL, CHAT_URL]);
+    expect(h.newChats).toBe(1);
+    expect(s.restored).toBe(false);
+    expect(s.conversation).toBeUndefined();
+    await s.kill();
+  });
+
+  test("an open that never settles falls back after the opening timeout", async () => {
+    const h = harness();
+    const spy = withConversation(h);
+    spy.openImpl = () => new Promise<void>(() => {});
+    const s = await ChatSession.open({
+      ...opts(h),
+      open: { timeoutMs: 30, retries: 0 },
+      conversation: "H-1",
+    });
+    expect(h.newChats).toBe(1);
+    expect(s.restored).toBe(false);
+    await s.kill();
+  });
+
+  test("an open that parks the page on another origin is a failed restore", async () => {
+    const h = harness();
+    const spy = withConversation(h);
+    spy.openImpl = async (page) => {
+      await page.goto("https://other.test/x");
+    };
+    const s = await ChatSession.open({ ...opts(h), conversation: "H-1" });
+    expect(h.newChats).toBe(1);
+    expect(s.restored).toBe(false);
+    expect(h.gotos.at(-1)).toBe(CHAT_URL);
+    await s.kill();
+  });
+
+  test("a successful turn refreshes the handle", async () => {
+    const h = harness();
+    const spy = withConversation(h);
+    const s = await ChatSession.open(opts(h));
+    const p = turn(s);
+    (await replyOf(h, 0)).resolve("reply");
+    expect(await p).toBe("reply");
+    expect(spy.handles).toBe(1);
+    expect(s.conversation).toBe("H-AFTER");
+    await s.kill();
+  });
+
+  test("a throwing handle leaves the turn and the previous handle alone", async () => {
+    const h = harness();
+    const spy = withConversation(h);
+    const s = await ChatSession.open({ ...opts(h), conversation: "H-1" });
+    spy.handleImpl = async () => {
+      throw new Error("detached");
+    };
+    const p = turn(s);
+    (await replyOf(h, 0)).resolve("reply");
+    expect(await p).toBe("reply");
+    expect(s.conversation).toBe("H-1");
+    await s.kill();
+  });
+
+  test("a handle of undefined keeps the previous one", async () => {
+    const h = harness();
+    const spy = withConversation(h);
+    const s = await ChatSession.open({ ...opts(h), conversation: "H-1" });
+    spy.handleImpl = async () => undefined;
+    const p = turn(s);
+    (await replyOf(h, 0)).resolve("reply");
+    await p;
+    expect(s.conversation).toBe("H-1");
+    await s.kill();
+  });
+
+  test("no progress message and no surfaced error carries the handle", async () => {
+    const h = harness();
+    const spy = withConversation(h);
+    spy.handleImpl = async () => "H-SECRET";
+    const progress: string[] = [];
+    const s = await ChatSession.open({
+      ...opts(h),
+      conversation: "H-SECRET",
+      onProgress: (m) => progress.push(m),
+      onOpenProgress: (m) => progress.push(m),
+    });
+    const p = turn(s);
+    (await replyOf(h, 0)).resolve("reply");
+    await p;
+    await s.close();
+    expect(progress.length).toBeGreaterThan(0);
+    for (const message of progress) expect(message).not.toContain("H-SECRET");
+
+    // The failed-restore path swallows the provider's error; it must not
+    // reach the caller with the handle in it either.
+    const h2 = harness();
+    const spy2 = withConversation(h2);
+    spy2.openImpl = async (_page, handle) => {
+      throw new Error(`cannot open ${handle}`);
+    };
+    const open2: string[] = [];
+    const s2 = await ChatSession.open({
+      ...opts(h2),
+      conversation: "H-SECRET",
+      onProgress: (m) => open2.push(m),
+      onOpenProgress: (m) => open2.push(m),
+    });
+    expect(s2.restored).toBe(false);
+    for (const message of open2) expect(message).not.toContain("H-SECRET");
+    await s2.kill();
+  });
+
+  test("a retried opening phase restores on the second attempt too", async () => {
+    const h = harness();
+    const spy = withConversation(h);
+    let gotos = 0;
+    const real = h.launch;
+    h.launch = async (o) => {
+      const rt = await real(o);
+      const inner = rt.page.goto.bind(rt.page);
+      rt.page.goto = (async (url: string) => {
+        gotos++;
+        if (gotos === 1) {
+          const e = new Error("t/o");
+          e.name = "TimeoutError";
+          throw e;
+        }
+        return inner(url);
+      }) as unknown as typeof rt.page.goto;
+      return rt;
+    };
+    const s = await ChatSession.open({
+      ...opts(h),
+      open: { timeoutMs: 1000, retries: 1 },
+      conversation: "H-1",
+    });
+    expect(spy.opens).toEqual(["H-1"]);
+    expect(s.restored).toBe(true);
+    await s.kill();
   });
 });

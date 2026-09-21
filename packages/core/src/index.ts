@@ -9,12 +9,19 @@ export {
   ChatSession,
   type ChatSessionOptions,
   DEFAULT_POLL_INTERVAL_MS,
+  HANDLE_BUDGET_MS,
   IDLE_CLOSE_BUDGET_MS,
   type SendOptions,
   type OpenOptions,
   type RuntimeLike,
   isRetryableOpenError,
 } from "./chat-session.js";
+export {
+  NOT_RESTORED_NOTE,
+  RESTORED_NOTE,
+  restoreNote,
+  withRestoreNote,
+} from "./conversation-note.js";
 export { launchRuntime } from "./launch-runtime.js";
 export { createAuthStore } from "./create-auth-store.js";
 export {
