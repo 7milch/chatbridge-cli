@@ -7,7 +7,11 @@
  * between two reply chunks), setBlocked() (serves a challenge page instead of
  * the chat), a message starting with "slow:" (that one reply takes 5 s
  * regardless of the delay), and a message starting with "md:" (the reply is a
- * multi-block Markdown document instead of one line). */
+ * multi-block Markdown document instead of one line).
+ * GET /hard/chat, /hard/login — the same chat behind a realistic DOM (see
+ * hard-skin.ts). */
+
+import { HARD_LOGIN_HTML, hardChatHtml } from "./hard-skin";
 
 /** The Markdown source of the reply to `text`. The first line keeps the
  * historical "Echo: " shape every existing test asserts on. */
@@ -245,13 +249,35 @@ export async function startDummyChat(port = 8735): Promise<DummyChat> {
       }
       if (pathname === "/do-login" && req.method === "POST") {
         sessionsValid = true;
+        // Only the two known chat pages: never an open redirect.
+        const next =
+          url.searchParams.get("next") === "/hard/chat"
+            ? "/hard/chat"
+            : "/chat";
         return new Response(null, {
           status: 302,
           headers: {
-            location: "/chat",
+            location: next,
             "set-cookie": "session=ok; Path=/; HttpOnly",
           },
         });
+      }
+      if (pathname === "/hard/login") {
+        return new Response(HARD_LOGIN_HTML, {
+          headers: { "content-type": "text/html; charset=utf-8" },
+        });
+      }
+      if (pathname === "/hard/chat") {
+        if (blocked) {
+          return new Response(CHALLENGE_HTML, {
+            headers: { "content-type": "text/html" },
+          });
+        }
+        // Guests get the page too: this skin offers guest chat.
+        return new Response(
+          hardChatHtml(hasSession(req), replyDelayMs, chunkDelayMs),
+          { headers: { "content-type": "text/html; charset=utf-8" } },
+        );
       }
       if (pathname === "/chat") {
         if (blocked) {
