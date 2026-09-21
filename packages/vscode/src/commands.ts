@@ -33,7 +33,8 @@ export interface CommandHandlers {
    * it, onto the system clipboard. Nothing is sent and nothing is logged. */
   copy(): Promise<void>;
   /** From the webview's copy button: a part of a reply the view picked
-   * out. Same clipboard, same failure warning, same silence in the logs. */
+   * out. Same clipboard, same failure warning, same silence in the logs.
+   * No success toast: the button itself flips to "Copied". */
   copyText(text: string): Promise<void>;
   /** From the webview's `/help`: the listing joins the history. */
   help(): void;
@@ -59,12 +60,15 @@ export interface CommandHandlers {
 
 /** Everything both copy paths share: a missing or rejecting clipboard is a
  * warning the user can act on, never an unhandled rejection. The text
- * itself never reaches a message, a log or the warning. */
+ * itself never reaches a message, a log or the warning. `announce` raises
+ * the success toast; the copy button flips to "Copied" in the view on its
+ * own, so that path stays quiet and several copies do not stack toasts. */
 async function writeToClipboard(
   write: ((text: string) => Thenable<void>) | undefined,
   text: string,
   ui: VscodeUi,
   subject: string,
+  announce: boolean,
 ): Promise<void> {
   if (write === undefined) {
     ui.showWarningMessage(`Could not copy ${subject}.`);
@@ -76,7 +80,7 @@ async function writeToClipboard(
     ui.showWarningMessage(`Could not copy ${subject}.`);
     return;
   }
-  ui.showInformationMessage(`Copied ${subject}.`);
+  if (announce) ui.showInformationMessage(`Copied ${subject}.`);
 }
 
 function utf8Bytes(text: string): number {
@@ -96,8 +100,12 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
 
   /** `deps.writeClipboard` is read per call: the seam is optional and the
    * two copy paths must report the same way when it is missing. */
-  const copyToClipboard = (text: string, subject: string): Promise<void> =>
-    writeToClipboard(deps.writeClipboard, text, ui, subject);
+  const copyToClipboard = (
+    text: string,
+    subject: string,
+    announce: boolean,
+  ): Promise<void> =>
+    writeToClipboard(deps.writeClipboard, text, ui, subject, announce);
 
   function isBusy(): boolean {
     const status = controller.getState().status;
@@ -223,10 +231,10 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
         ui.showInformationMessage("Nothing to copy yet.");
         return;
       }
-      await copyToClipboard(reply, "the last reply");
+      await copyToClipboard(reply, "the last reply", true);
     },
 
-    copyText: (text) => copyToClipboard(text, "the text"),
+    copyText: (text) => copyToClipboard(text, "the text", false),
 
     help,
 

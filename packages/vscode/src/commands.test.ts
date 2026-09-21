@@ -214,7 +214,7 @@ describe("commands", () => {
     expect(f.log).toEqual(["warn:Could not copy the last reply."]);
   });
 
-  test("copyText writes exactly the text it was given", async () => {
+  test("copyText writes exactly the text it was given, announcing nothing", async () => {
     const f = fake();
     f.reply = "Echo: hello";
     await commands(f, {
@@ -223,7 +223,9 @@ describe("commands", () => {
       },
     }).copyText("const x = 1;");
     expect(f.clipboard).toEqual(["const x = 1;"]);
-    expect(f.log).toEqual(["info:Copied the text."]);
+    // The copy button flips to "Copied" in the view; a toast on top of it
+    // would stack once per block copied.
+    expect(f.log).toEqual([]);
   });
 
   test("copyText warns instead of rejecting when the clipboard fails", async () => {
