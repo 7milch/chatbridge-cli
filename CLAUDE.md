@@ -141,3 +141,9 @@ Milestone lifecycle, driven by the `starting-next-milestone` skill:
   make sense to someone who has not seen the code, and every PR carries one of
   `enhancement`, `bug`, `accessibility` or `documentation`. See `docs/PUBLISHING.md`.
 - Squash-merge. A release commit is the one exception that lands directly on main.
+- A PR that changes what a vendor sees — the `Provider` type, `createCli` or
+  `createExtension` options, the VSCode `contributes` a vendor manifest must
+  carry, or the templates — adds its entry to
+  `packages/provider/skills/upgrading-provider-repo/upgrade-guide.md` in the same
+  PR. Vendors upgrade by that file alone, with a smaller model; release notes
+  are not enough. The whole-branch review checks it.

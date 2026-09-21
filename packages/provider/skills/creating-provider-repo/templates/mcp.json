@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "@playwright/mcp@latest",
+        "--user-data-dir",
+        ".auth/mcp-profile",
+        "--init-script",
+        ".claude/skills/creating-provider-repo/probes/chatbridge-probes.js"
+      ]
+    },
+    "playwright-guest": {
+      "command": "npx",
+      "args": [
+        "@playwright/mcp@latest",
+        "--isolated",
+        "--init-script",
+        ".claude/skills/creating-provider-repo/probes/chatbridge-probes.js"
+      ]
+    }
+  }
+}

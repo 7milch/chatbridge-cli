@@ -6,8 +6,9 @@
       "dist",
       "*.tsbuildinfo",
       ".claude",
-      ".vscode-test",
-      ".tmp-template-*"
+      ".auth",
+      ".playwright-mcp",
+      ".vscode-test"
     ]
   },
   "formatter": { "enabled": true, "indentStyle": "space" },

@@ -1,0 +1,10 @@
+[test]
+# The vendor-repo templates shipped inside the skills are not this
+# repository's code: they carry placeholders and empty selectors, so their
+# smoke tests only pass once a vendor has filled them in.
+# `examples/dummy-chat/templates.test.ts` is what exercises them here, and
+# `.tmp-template-*` is that test's scratch copy of them.
+pathIgnorePatterns = [
+  "**/skills/*/templates/**",
+  "**/.tmp-template-*/**",
+]

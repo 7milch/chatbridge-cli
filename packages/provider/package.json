@@ -14,7 +14,7 @@
   "exports": {
     ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": ["dist", "skills", "README.md", "LICENSE"],
   "publishConfig": { "access": "public" },
   "peerDependencies": { "playwright-core": ">=1.48 <2" },
   "devDependencies": { "playwright-core": "1.63.0" }

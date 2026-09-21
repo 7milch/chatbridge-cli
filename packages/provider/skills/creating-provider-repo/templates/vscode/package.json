@@ -1,0 +1,171 @@
+{
+  "name": "chatbridge-<vendor>",
+  "displayName": "<Vendor>",
+  "description": "VSCode extension for <Vendor>, built with @chatbridge/vscode",
+  "private": true,
+  "version": "0.0.0",
+  "publisher": "<publisher>",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.100.0",
+    "node": ">=20"
+  },
+  "main": "./dist/extension.cjs",
+  "type": "module",
+  "activationEvents": [],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "<vendor>",
+          "title": "<Vendor>",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "<vendor>": [
+        {
+          "id": "<vendor>.chat",
+          "name": "Chat",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "<vendor>.login",
+        "title": "Log in",
+        "category": "<Vendor>"
+      },
+      {
+        "command": "<vendor>.logout",
+        "title": "Log out",
+        "category": "<Vendor>"
+      },
+      {
+        "command": "<vendor>.newChat",
+        "title": "New Chat",
+        "category": "<Vendor>",
+        "icon": "$(add)"
+      },
+      {
+        "command": "<vendor>.reopen",
+        "title": "Reopen Browser",
+        "category": "<Vendor>",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "<vendor>.installBrowser",
+        "title": "Install Browser",
+        "category": "<Vendor>"
+      },
+      {
+        "command": "<vendor>.sendSelection",
+        "title": "Send Selection to <Vendor>",
+        "category": "<Vendor>"
+      },
+      {
+        "command": "<vendor>.sendFile",
+        "title": "Send File to <Vendor>",
+        "category": "<Vendor>"
+      },
+      {
+        "command": "<vendor>.focus",
+        "title": "Focus Chat",
+        "category": "<Vendor>"
+      },
+      {
+        "command": "<vendor>.help",
+        "title": "Help",
+        "category": "<Vendor>"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "<vendor>.reopen",
+        "key": "ctrl+r",
+        "mac": "cmd+r",
+        "when": "focusedView == <vendor>.chat"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "<vendor>.newChat",
+          "when": "view == <vendor>.chat",
+          "group": "navigation@1"
+        },
+        {
+          "command": "<vendor>.reopen",
+          "when": "view == <vendor>.chat",
+          "group": "navigation@2"
+        },
+        {
+          "command": "<vendor>.login",
+          "when": "view == <vendor>.chat",
+          "group": "1_auth@1"
+        },
+        {
+          "command": "<vendor>.logout",
+          "when": "view == <vendor>.chat",
+          "group": "1_auth@2"
+        },
+        {
+          "command": "<vendor>.installBrowser",
+          "when": "view == <vendor>.chat",
+          "group": "2_setup@1"
+        },
+        {
+          "command": "<vendor>.help",
+          "when": "view == <vendor>.chat",
+          "group": "3_help@1"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "<vendor>.sendSelection",
+          "group": "chatbridge"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "<vendor>.sendFile",
+          "when": "!explorerResourceIsFolder",
+          "group": "chatbridge"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "<Vendor>",
+      "properties": {
+        "<vendor>.headless": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run the browser without a window."
+        },
+        "<vendor>.timeoutSec": {
+          "type": "number",
+          "description": "Seconds to wait for each browser step. Unset: the provider's own value. Declaring a \"default\" here would override the provider's value, so this setting deliberately has none."
+        },
+        "<vendor>.idleTimeoutMinutes": {
+          "type": "number",
+          "description": "Minutes of inactivity before the browser is closed; 0 disables. Unset: the provider's own value, normally 1440. Declaring a \"default\" here would override the provider's value, so this setting deliberately has none."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "package": "bunx @vscode/vsce package --no-dependencies --out dist/"
+  },
+  "dependencies": {
+    "playwright": "<latest>"
+  },
+  "devDependencies": {
+    "@chatbridge/vscode": "<latest>",
+    "@types/vscode": "<latest>",
+    "@vscode/vsce": "<latest>",
+    "esbuild": "<latest>"
+  }
+}
