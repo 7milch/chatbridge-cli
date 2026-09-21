@@ -106,6 +106,74 @@ describe("creating-provider-repo", () => {
   });
 });
 
+describe("upgrading-provider-repo", () => {
+  const guide = () => read("upgrading-provider-repo/upgrade-guide.md");
+
+  test("has an entry for the current minor version, newest first", () => {
+    const { version } = JSON.parse(
+      readFileSync(join(import.meta.dir, "package.json"), "utf8"),
+    );
+    const minor = version.split(".").slice(0, 2).join(".");
+    const headings = Array.from(
+      guide().matchAll(/^## (\d+\.\d+\.\d+)$/gm),
+      (m) => m[1] ?? "",
+    );
+    expect(headings.some((h) => h.startsWith(`${minor}.`))).toBe(true);
+    const sorted = [...headings].sort((a, b) =>
+      b.localeCompare(a, undefined, { numeric: true }),
+    );
+    expect(headings).toEqual(sorted);
+  });
+
+  test("every entry has the fixed shape", () => {
+    const entries = guide()
+      .split(/^## \d+\.\d+\.\d+$/m)
+      .slice(1);
+    expect(entries.length).toBeGreaterThanOrEqual(3);
+    for (const entry of entries) {
+      expect(entry).toMatch(/^\*\*Required:\*\*/m);
+      expect(entry).toMatch(/^\*\*Optional:\*\*/m);
+      expect(entry).toMatch(/^\*\*VSCode manifest:\*\*/m);
+    }
+  });
+
+  test("optional features say whether they need DOM observation and how to verify", () => {
+    for (const feature of guide().split(/^### /m).slice(1)) {
+      expect(feature).toMatch(/^Needs DOM observation: (yes|no)/m);
+      expect(feature).toMatch(/^Verify:/m);
+    }
+  });
+
+  test("the skill is short and links to its sibling by relative path", () => {
+    const skill = read("upgrading-provider-repo/SKILL.md");
+    expect(words(skill)).toBeLessThanOrEqual(600);
+    expect(skill).toContain("../creating-provider-repo/");
+    expect(skill).toContain("node_modules/@chatbridge/provider/skills");
+  });
+
+  test("every sibling step and template path it cites exists", () => {
+    const discovery = read("creating-provider-repo/dom-discovery.md");
+    const steps = new Set(
+      Array.from(discovery.matchAll(/^### Step (\d+) — /gm), (m) => m[1] ?? ""),
+    );
+    expect(steps.size).toBeGreaterThan(5);
+    for (const file of ["SKILL.md", "upgrade-guide.md"]) {
+      const body = read(`upgrading-provider-repo/${file}`);
+      for (const m of body.matchAll(
+        /`\.\.\/creating-provider-repo\/((?:templates|probes)\/[^`\s]+)`/g,
+      )) {
+        const path = (m[1] ?? "").replace(/\*$/, "");
+        expect(
+          existsSync(join(SKILLS, "creating-provider-repo", path)),
+          `${file}: ${path}`,
+        ).toBe(true);
+      }
+      for (const m of body.matchAll(/dom-discovery\.md`\s+steps?\s+(\d+)/g))
+        expect(steps.has(m[1] ?? ""), `${file}: step ${m[1]}`).toBe(true);
+    }
+  });
+});
+
 describe("packaging", () => {
   test("the tarball carries the skills", async () => {
     const out = await $`bun pm pack --dry-run`.cwd(import.meta.dir).text();
@@ -124,6 +192,8 @@ describe("packaging", () => {
       "skills/creating-provider-repo/templates/vscode/package.json",
       "skills/creating-provider-repo/templates/vscode/vscodeignore",
       "skills/creating-provider-repo/templates/vscode/media/icon.svg",
+      "skills/upgrading-provider-repo/SKILL.md",
+      "skills/upgrading-provider-repo/upgrade-guide.md",
     ];
     for (const path of required) expect(packed.has(path), path).toBe(true);
     expect(out).not.toContain("skills.test.ts");
@@ -138,6 +208,14 @@ describe("packaging", () => {
     );
     expect(readlinkSync(link)).toBe(
       "../../packages/provider/skills/creating-provider-repo",
+    );
+    const upgradeLink = join(root, ".claude/skills/upgrading-provider-repo");
+    expect(lstatSync(upgradeLink).isSymbolicLink()).toBe(true);
+    expect(realpathSync(upgradeLink)).toBe(
+      realpathSync(join(SKILLS, "upgrading-provider-repo")),
+    );
+    expect(readlinkSync(upgradeLink)).toBe(
+      "../../packages/provider/skills/upgrading-provider-repo",
     );
     const agentsLink = join(root, ".agents/skills");
     expect(lstatSync(agentsLink).isSymbolicLink()).toBe(true);

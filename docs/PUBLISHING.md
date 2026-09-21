@@ -22,6 +22,11 @@ Packages: `@chatbridge/provider`, `@chatbridge/runtime`, `@chatbridge/core`,
 
 ## Cutting a release
 
+0. Check that
+   `packages/provider/skills/upgrading-provider-repo/upgrade-guide.md` has an
+   entry for the version being cut (a test enforces one for the current minor).
+   Write `**Required:** none.` / `**Optional:** none.` /
+   `**VSCode manifest:** none.` when nothing changed for vendors.
 1. On `main`, bump `version` in the five `package.json` files to the same
    value, then run `rm bun.lock && bun install` and commit the regenerated
    lock together with the bump. This is required because `bun pm pack`
