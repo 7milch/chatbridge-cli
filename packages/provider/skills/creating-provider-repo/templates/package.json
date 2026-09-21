@@ -14,7 +14,7 @@
     "@chatbridge/cli": "<latest>",
     "@chatbridge/core": "<latest>",
     "@chatbridge/provider": "<latest>",
-    "playwright-core": "<runtime's playwright-core>"
+    "playwright-core": "<playwright-core>"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
