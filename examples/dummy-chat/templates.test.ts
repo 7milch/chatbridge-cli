@@ -47,7 +47,8 @@ function instantiate(fill: Record<string, string>): string {
     const before = selectors;
     selectors = selectors.replace(
       new RegExp(`export const ${name} = "[^"]*";`),
-      `export const ${name} = ${JSON.stringify(value)};`,
+      // Quoted the way the template's formatter wants it.
+      `export const ${name} = ${value.includes('"') && !value.includes("'") ? `'${value}'` : JSON.stringify(value)};`,
     );
     if (selectors === before) throw new Error(`no placeholder for ${name}`);
   }
@@ -237,27 +238,14 @@ describe("template files", () => {
     }
   });
 
-  test("the templates type-check against the workspace packages", () => {
-    const root = instantiate({
-      ENTRY_URL: "https://example.com/login",
-      CHAT_URL: "https://example.com/chat",
-      SIGN_IN_CONTROL: '[data-testid="sign-in"]',
-      ACCOUNT_CONTROL: '[data-testid="account"]',
-      COMPOSER: '[data-testid="composer"]',
-      SEND_BUTTON: '[data-testid="send"]',
-      STOP_BUTTON: '[data-testid="stop"]',
-      NEW_CHAT_BUTTON: '[data-testid="new-chat"]',
-      ASSISTANT_MESSAGE: '[data-turn="assistant"]',
-      USER_MESSAGE: '[data-turn="user"]',
-      ASSISTANT_MESSAGE_BODY: '[data-part="content"]',
-    });
-    // bin.ts reads its own package's version through `../package.json`.
+  /** What a vendor repo has after `bun install`: a package.json for bin.ts to
+   * read its version from, and the dependency tree. */
+  const installed = (root: string) => {
     writeFileSync(
       join(root, "package.json"),
-      JSON.stringify({ name: "scratch", version: "0.0.0", type: "module" }),
+      fillPlaceholders(readFileSync(join(TEMPLATES, "package.json"), "utf8")),
       { flag: "wx" },
     );
-    // The dependency tree a vendor repo has after `bun install`.
     mkdirSync(join(root, "node_modules/@chatbridge"), { recursive: true });
     for (const pkg of ["cli", "core", "provider"])
       symlinkSync(
@@ -268,6 +256,56 @@ describe("template files", () => {
       join(import.meta.dir, "node_modules/playwright-core"),
       join(root, "node_modules/playwright-core"),
     );
+    return root;
+  };
+  const run = (root: string, file: string, args: string[]) => {
+    try {
+      return execFileSync(file, args, {
+        cwd: root,
+        stdio: "pipe",
+        encoding: "utf8",
+      });
+    } catch (error) {
+      const e = error as { stdout?: string; stderr?: string };
+      throw new Error(`${file} ${args.join(" ")}:\n${e.stdout}\n${e.stderr}`);
+    }
+  };
+
+  test("a fresh scaffold, selectors still empty, passes its own tests", () => {
+    const root = installed(instantiate({}));
+    run(root, process.execPath, [
+      "test",
+      "src/selectors.test.ts",
+      "src/provider.test.ts",
+    ]);
+  }, 60_000);
+
+  test("the templates type-check and lint clean against the workspace packages", () => {
+    const root = installed(
+      instantiate({
+        ENTRY_URL: "https://example.com/login",
+        CHAT_URL: "https://example.com/chat",
+        SIGN_IN_CONTROL: '[data-testid="sign-in"]',
+        ACCOUNT_CONTROL: '[data-testid="account"]',
+        COMPOSER: '[data-testid="composer"]',
+        SEND_BUTTON: '[data-testid="send"]',
+        STOP_BUTTON: '[data-testid="stop"]',
+        NEW_CHAT_BUTTON: '[data-testid="new-chat"]',
+        ASSISTANT_MESSAGE: '[data-turn="assistant"]',
+        USER_MESSAGE: '[data-turn="user"]',
+        ASSISTANT_MESSAGE_BODY: '[data-part="content"]',
+      }),
+    );
+    // The template's own lint config over the substituted files: a rule that
+    // only fires once `<VENDOR>` is a real name is caught here. The browser
+    // profile and the MCP output must be invisible to it — a formatter run
+    // over a live profile corrupts it.
+    cpSync(join(TEMPLATES, "biome.json"), join(root, "biome.json"));
+    for (const dir of [".auth/mcp-profile", ".playwright-mcp"]) {
+      mkdirSync(join(root, dir), { recursive: true });
+      writeFileSync(join(root, dir, "x.json"), '{"a":1,\n\n      "b":[1,2]}');
+    }
+    run(root, join(ROOT, "node_modules/.bin/biome"), ["check", "."]);
     const options = JSON.parse(
       readFileSync(join(TEMPLATES, "tsconfig.json"), "utf8"),
     ).compilerOptions;
@@ -287,16 +325,7 @@ describe("template files", () => {
         include: ["src"],
       }),
     );
-    try {
-      execFileSync(join(ROOT, "node_modules/.bin/tsc"), ["-p", root], {
-        stdio: "pipe",
-        encoding: "utf8",
-      });
-    } catch (error) {
-      throw new Error(
-        `tsc rejected the templates:\n${(error as { stdout?: string }).stdout ?? String(error)}`,
-      );
-    }
+    run(root, join(ROOT, "node_modules/.bin/tsc"), ["-p", root]);
   }, 120_000);
 });
 

@@ -53,7 +53,7 @@
   /** Where the user types. Shared by census() and by recordTurn, which ignores
    * everything that happens inside one. */
   const COMPOSER =
-    'textarea, [contenteditable="true"], [contenteditable=""], [role="textbox"]';
+    'textarea, [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"], [role="textbox"]';
 
   const q = (v) => `"${String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 

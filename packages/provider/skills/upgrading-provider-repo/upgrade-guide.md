@@ -94,7 +94,7 @@ name:
   its placeholders: `<vendor>` in `createAuthStore({ configDir: "<vendor>" })`
   becomes the `configDir` — or, when `configDir` is not passed, the `name` —
   given to `createCli` in `src/bin.ts`, and `<VENDOR>` in
-  `process.env["<VENDOR>_E2E"]` becomes this repository's env-var prefix. The
+  `const GATE = "<VENDOR>_E2E"` becomes this repository's env-var prefix. The
   `<vendor> real service` describe title is cosmetic; use the CLI name.
 - When `src/provider.e2e.test.ts` exists with a harness of its own, do **not**
   copy the template file over it. Copy only the test bodies. In each template

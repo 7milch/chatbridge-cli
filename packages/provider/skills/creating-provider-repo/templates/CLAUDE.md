@@ -32,6 +32,8 @@ the pin here.
   `data-*` and ARIA over generated class names. Record the observation in
   `docs/dom-notes.md` first, then write the selector.
 - `bun run check` passes before every commit.
+- Never run a formatter, a codemod or any other write over `.auth/` or
+  `.playwright-mcp/`: `.auth/mcp-profile` is a live browser profile.
 - Everything committed is English.
 
 ## Commands

@@ -3,7 +3,9 @@ import provider from "./provider.js";
 
 test("provider shape", () => {
   expect(provider.name).toBe("<vendor>");
-  expect(new URL(provider.chatUrl).protocol).toBe("https:");
+  // Empty only in a fresh scaffold, before DOM discovery.
+  if (provider.chatUrl !== "")
+    expect(new URL(provider.chatUrl).protocol).toBe("https:");
   for (const method of [
     "navigateToLogin",
     "isLoggedIn",

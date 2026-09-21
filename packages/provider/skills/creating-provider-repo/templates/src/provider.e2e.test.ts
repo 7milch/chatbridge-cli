@@ -9,7 +9,8 @@ const authStore = createAuthStore({
   configDir: "<vendor>",
   providerName: provider.name,
 });
-const enabled = process.env["<VENDOR>_E2E"] === "1" && authStore.has();
+const GATE = "<VENDOR>_E2E";
+const enabled = process.env[GATE] === "1" && authStore.has();
 
 // A structural sample: the assertions check Markdown structure, never the
 // service's wording, so a chatty model still passes.

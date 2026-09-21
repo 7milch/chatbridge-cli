@@ -6,6 +6,8 @@
       "dist",
       "*.tsbuildinfo",
       ".claude",
+      ".auth",
+      ".playwright-mcp",
       ".vscode-test"
     ]
   },

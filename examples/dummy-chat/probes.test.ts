@@ -379,6 +379,31 @@ describe("recordTurn", () => {
     await page.context().close();
   });
 
+  test("a plaintext-only composer is a composer too", async () => {
+    const page = await open(true);
+    const r = await probe(
+      page,
+      `(async () => {
+        const c = document.createElement("div");
+        c.setAttribute("contenteditable", "plaintext-only");
+        c.setAttribute("data-testid", "plain-composer");
+        document.body.appendChild(c);
+        window.__cbProbe.recordTurn.start();
+        c.appendChild(document.createElement("div"));
+        await new Promise((r) => setTimeout(r, 20));
+        const record = window.__cbProbe.recordTurn.stop();
+        return { record, composer: window.__cbProbe.census().composer };
+      })()`,
+    );
+    expect(r.record.summary.sent).toBe(false);
+    expect(
+      r.composer.some((c: { locators: string[] }) =>
+        c.locators.includes('[data-testid="plain-composer"]'),
+      ),
+    ).toBe(true);
+    await page.context().close();
+  });
+
   test("never records a value attribute", async () => {
     const page = await open(true);
     const r = await probe(
