@@ -16,8 +16,9 @@ repository sees, newest first.
    because a release note sounds attractive; only this file says what to change.
 5. **VSCode manifest** applies only when the repository has a `vscode/`
    directory. `none.` means nothing to do there.
-6. Run each entry's `Verify:` line before moving to the next entry, and commit
-   per entry.
+6. Run each `Verify:` line before moving on. Commits: an entry's **Required**
+   steps (with its VSCode manifest change) share one commit; every adopted
+   **Optional** feature gets its own, because each has its own `Verify:`.
 
 Paths written as `../creating-provider-repo/…` are in the sibling skill
 directory; the two skills are always copied together.
@@ -34,16 +35,21 @@ An entry marked `Needs DOM observation: yes` starts from an **open, logged-in
 chat page in the `playwright` MCP server**. Produce it once per session, in
 this order, before the step the entry names:
 
-1. **MCP servers.** If the repository has no `.mcp.json`, copy
-   `../creating-provider-repo/templates/mcp.json` to `.mcp.json`, add `.auth/`
-   and `.playwright-mcp/` to `.gitignore`, and ask the user to restart Claude
+1. **MCP servers.** In every case, first make sure `.gitignore` lists `.auth/`
+   and `.playwright-mcp/`, and that the repository's own `biome.json` (or other
+   formatter config) ignores `.auth` and `.playwright-mcp` as
+   `../creating-provider-repo/templates/biome.json` does: `.auth/mcp-profile`
+   is a live browser profile, and a `--write` run over it corrupts it. Then, if
+   the repository has no `.mcp.json`, copy
+   `../creating-provider-repo/templates/mcp.json` to `.mcp.json` and ask the user to restart Claude
    Code (or run `/mcp` and reconnect) so the two Playwright servers load.
    Nothing below works until they have. Then follow the "Set up" section of
    `../creating-provider-repo/dom-discovery.md`, including its
    `() => typeof window.__cbProbe` check, which must return `"object"`.
-2. **Entry URL.** Use `ENTRY_URL` from `src/selectors.ts` — it is already
-   there. `../creating-provider-repo/dom-discovery.md` step 1 only applies when
-   the repository has no `ENTRY_URL` yet.
+2. **Entry URL.** Use the constant your `navigateToLogin` passes to
+   `page.goto` (the template calls it `ENTRY_URL`) — it is already there.
+   `../creating-provider-repo/dom-discovery.md` step 1 only applies when the
+   repository has no such constant yet.
 3. **A logged-in page.** Run `../creating-provider-repo/dom-discovery.md`
    step 3: `browser_navigate` the `playwright` server to the entry URL, then
    ask the human to log in by hand in that window and wait for their reply.
@@ -56,7 +62,8 @@ this order, before the step the entry names:
 `../creating-provider-repo/dom-discovery.md` steps 2, 4 and 8 — the logged-out
 census, the logged-in census and the new-chat discovery — are **not** needed
 when upgrading. They exist to find selectors from scratch; run one only when
-the constant an entry builds on is missing or came back stale.
+the constant an entry builds on is missing or came back stale, or for
+"Re-derive the login signal" below.
 
 After adopting the constant an entry adds, confirm it with
 `../creating-provider-repo/dom-discovery.md` step 9 on the logged-in chat page
@@ -106,6 +113,15 @@ name:
   them is the test: the `MARKDOWN_SAMPLE` constant, the `session.send(…)` calls
   including the `{ onPartial }` option, and every `expect(…)`. Copy those
   unchanged — the assertions are structural and do not mention any service.
+- When the harness has no `ChatSession` at all and calls the provider's
+  methods on a page directly, `session.send(prompt)` reads as
+  `await provider.sendMessage(page, prompt)` then
+  `await provider.waitForResponse(page)`. The streaming test then has no
+  `onPartial`: between those two calls start
+  `setInterval(() => void provider.streaming?.responseText(page).then((t) => { if (t) partials.push(t); }).catch(() => {}), 250)`,
+  clear it once `waitForResponse` has resolved, and keep the template's three
+  assertions — the second answer differs from the first, at least one partial
+  was seen, no partial equals the first answer.
 - When an entry says "record it in dom-notes §X" and your `docs/dom-notes.md`
   has no such section, append a section with that heading in the format of
   `../creating-provider-repo/templates/docs/dom-notes.md`. A selector with no
@@ -113,7 +129,34 @@ name:
 - Before adopting an entry that needs DOM observation, re-check the selectors
   you already have: run `../creating-provider-repo/dom-discovery.md` step 9
   (`verify()`) against the current `src/selectors.ts`. A constant that comes
-  back `count: 0` is stale and must be re-observed before you build on it.
+  back `count: 0` is stale and must be re-observed before you build on it. The
+  stop-button constant is not part of that call — it exists too briefly; the
+  `buttonsSwapped` rows of `../creating-provider-repo/dom-discovery.md` step 5
+  re-derive it.
+
+### Re-derive the login signal
+
+Optional, for any version: a repository that predates the templates often
+treats "a composer is visible" or a URL as logged in, which is true for guests
+too.
+
+Needs DOM observation: yes. `.mcp.json` must define the `playwright-guest`
+server (copy it from `../creating-provider-repo/templates/mcp.json`). Run
+`../creating-provider-repo/dom-discovery.md` steps 2, 3 and 4: the login signal
+is the difference between the chat URL seen as a guest and as a member.
+
+Change: `src/selectors.ts` gets the sign-in and account constants; `isLoggedIn`
+becomes the template's — off the chat origin → `false`; one bounded wait for
+the sign-in **or** the account control to be visible; `true` only when the
+account control is present **and** the sign-in control absent; any error →
+`false`. Compare with `../creating-provider-repo/templates/src/provider.ts`
+line by line, and add the "a guest is not logged in" test from
+`../creating-provider-repo/templates/src/provider.e2e.test.ts`. Record both
+constants in `docs/dom-notes.md` §Login.
+
+Verify: `<VENDOR>_E2E=1 bun test src/provider.e2e.test.ts` — "a guest is not
+logged in" passes: a fresh browser context on the chat URL reads as logged
+out, while the two-turn test still reads the saved state as logged in.
 
 ## 0.10.0
 
@@ -187,7 +230,7 @@ Pitfalls, all three seen in real adoptions:
   re-run `replyShape()` on a completed reply rather than guessing a selector.
 
 Verify: `<VENDOR>_E2E=1 bun test src/provider.e2e.test.ts` with a saved auth
-state — the "Markdown fidelity" test passes, meaning the reply carries a `#`
+state — the "Markdown fidelity" test passes, meaning the reply carries a
 heading line, an indented nested list item, a ` ```ts ` fence, a `|---|` table
 row, `**bold**` and a link. Then `bun run check`. One manual look, which no
 test replaces: run the CLI interactively and ask for a bulleted list and a code
@@ -219,12 +262,16 @@ Change:
    as the **first** statement of `sendMessage`, both from
    `../creating-provider-repo/templates/src/provider.ts` (which also declares
    `import type { Locator, Page } from "playwright-core"`). Then make
-   `waitForResponse` read it back: its first two lines in that template are
-   `const before = countBefore.get(page) ?? 0;` and the `const deadline = …`
-   bound, and its `page.waitForFunction` call compares
-   `document.querySelectorAll(selector).length > count` against that `before`.
-   Replace whatever your `waitForResponse` uses to recognise the new turn with
-   those lines.
+   `waitForResponse` recognise the new turn by that count and nothing else:
+   `const before = countBefore.get(page) ?? 0;` as its first line, and a
+   `page.waitForFunction` that compares
+   `document.querySelectorAll(selector).length > count` against `before`, placed
+   **after** the done-signal wait. Replace whatever your `waitForResponse` used
+   to recognise the new turn with that. Separately, and unchanged by this
+   feature: every wait in `waitForResponse` carries an explicit `timeout`, and
+   the template's `const deadline = …` bounds the stability loop only — it is
+   set at the top so the whole method shares one budget, as the template's
+   comment explains.
 2. `src/provider.ts`: add the `streaming: { async responseText(page) { … } }`
    field from `../creating-provider-repo/templates/src/provider.ts`. It must, in
    this order: read `countBefore.get(page) ?? 0`; return `undefined` while

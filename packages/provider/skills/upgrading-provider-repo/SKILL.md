@@ -39,14 +39,16 @@ vendor repository. Release notes do not; never adopt a feature from them.
 3. **Work the guide.** Open `upgrade-guide.md`, take every entry above the old
    pin up to the target, oldest first. Do each entry's **Required** steps
    without asking. List its **Optional** steps to the user, one line each, and
-   do the ones they pick. Apply **VSCode manifest** only when a `vscode/`
+   do the ones they pick. If `isLoggedIn` is not the template's (it trusts a
+   composer or a URL), also list the guide's "Re-derive the login signal". Apply **VSCode manifest** only when a `vscode/`
    directory exists.
 
 4. **Verify.** Run the entry's own `Verify:` line, then `bun run check`, then
    the gated E2E (`<VENDOR>_E2E=1 bun test src/provider.e2e.test.ts`, which
    needs a saved auth state from `auth login`).
 
-5. **Commit one entry at a time**, naming the version in the message.
+5. **Commit** an entry's Required steps together, and each adopted Optional
+   feature on its own, naming the version in the message.
 
 ## Red flags
 

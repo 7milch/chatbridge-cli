@@ -69,7 +69,7 @@ Both windows are **headed** — a human can log in in them.
 
 Tool names are prefixed with the server name: `mcp__playwright__browser_navigate`,
 `mcp__playwright-guest__browser_navigate`, and the same for `browser_evaluate`,
-`browser_click`, `browser_type`, `browser_snapshot`, `browser_wait_for`. If
+`browser_click`, `browser_type`, `browser_wait_for`. If
 those tools are not in your tool list, load them first with ToolSearch:
 `select:mcp__playwright__browser_evaluate,mcp__playwright-guest__browser_evaluate`
 and so on.
@@ -309,8 +309,9 @@ it works the same in every language.
    ```json
    { "time": 20 }
    ```
-   then `browser_snapshot`. If the reply is still being written, wait again. If
-   there is no new turn at all, do not wait again — go on to call 7, which tells
+   Its result already carries the page snapshot (inline, or as a file to
+   read): no separate snapshot call. If the reply is still being written, wait
+   again. If there is no new turn at all, do not wait again — go on to call 7, which tells
    you whether anything was sent.
 7. `browser_evaluate`:
    ```json
@@ -378,9 +379,11 @@ Field by field:
   gone by the time the record was rendered.
 - `buttonsSwapped` — the send → stop → nothing sequence, captured at event
   time. It is the authority for both button constants:
-  - **`SEND_BUTTON`** = the `gone` locator of the row just *before* the user
-    turn was added (`{ "t": 33, "gone": "[data-testid=\"send-button\"]" }`
-    above). A send control that stays on the page all along produces no such
+  - **`SEND_BUTTON`** = the `gone` row with the **largest `t` that is ≤ the
+    `t` of the user turn's `added[]` row**
+    (`{ "t": 33, "gone": "[data-testid=\"send-button\"]" }` against the user
+    turn's `"t": 34` above; an earlier `gone` / `appeared` pair of the same
+    button is only the composer re-rendering while it was filled). A send control that stays on the page all along produces no such
     row; it names itself instead through a `changed` row whose `disabled` or
     `aria-disabled` flips at that same moment —
     `{ "t": 33, "changed": "[data-testid=\"send\"] disabled: null → " }` —
@@ -530,11 +533,11 @@ empty afterwards.
 for a plain selector, and `count >= 1` for a `many` or a `within` one.
 
 - `SIGN_IN_CONTROL` is expected to be **not** `ok` here (`count: 0`): it exists
-  only when logged out, and you confirmed it in step 2. Everything else must be
+  only when logged out, and you confirmed it in step 4's guest census of `CHAT_URL`. Everything else must be
   `ok`.
 - `skipped: "empty — allowed only where a VARIANT says so"` with `ok: true` is
-  what an empty constant returns. It is legitimate for exactly two names —
-  `SEND_BUTTON`, `NEW_CHAT_BUTTON` — and only when a decision row told you to
+  what an empty constant returns. It is legitimate for exactly three names —
+  `SIGN_IN_CONTROL`, `SEND_BUTTON`, `NEW_CHAT_BUTTON` — and only when a decision row told you to
   leave that one empty and take a VARIANT. Any other `skipped` means you have
   not filled the constant yet: go back to the step that owns it.
 - `count: 2` with `visibleCount: 1` means you picked the selector that also
@@ -559,6 +562,7 @@ Read the left column off probe output; do exactly what the right column says.
 |---|---|
 | Step 4's guest census stayed on `CHAT_URL` and its `composer` is non-empty | Guest chat exists. Login signal stays `ACCOUNT_CONTROL` present AND `SIGN_IN_CONTROL` absent, both from step 4's pair. A composer is never a login signal |
 | Step 4's guest census stayed on `CHAT_URL` and its `composer` is `[]` | No guest chat, the chat page itself shows the sign-in control. Same pair, nothing else to do |
+| Step 4's guest census has `signIn: []` on the page it shows (a label the probe's word list misses) | In the guest census's `buttons`, keep the `visible` entries whose `locators[0]` is absent from the member census's `buttons`. Exactly one → that is `SIGN_IN_CONTROL`. None or several (the census lists buttons, not plain links) → leave `SIGN_IN_CONTROL` empty: `isLoggedIn` in `templates/src/provider.ts` — decision table **"no sign-in control found"** — then lets `ACCOUNT_CONTROL` decide alone. Record it in §Login; step 9 reports it as `skipped` |
 | Step 4's guest census has a different `url` (redirected to a login page or an IdP) | No guest chat. `SIGN_IN_CONTROL` = `locators[0]` of a `signIn` candidate of that guest census (the page it landed on); `ACCOUNT_CONTROL` as usual. If the landed `url` is on another origin, say so in §Login: the off-origin check in `isLoggedIn` answers before `SIGN_IN_CONTROL` is ever looked at |
 | `composer` has a `visible: false` entry | Take the `visible: true` candidate's own `locators[0]`; never a selector that also matches the hidden twin |
 | A candidate has `locators: []` | Anchor it: `<locator of an ancestor from messageLists> <tag>` |
