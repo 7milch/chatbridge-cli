@@ -299,3 +299,72 @@ describe("template files", () => {
     }
   }, 120_000);
 });
+
+describe("VSCode template", () => {
+  test("contributes the same IDs as the working example", () => {
+    const read = (p: string) => JSON.parse(readFileSync(p, "utf8"));
+    const example = read(
+      new URL("../vscode-dummy-chat/package.json", import.meta.url).pathname,
+    );
+    const template = read(join(TEMPLATES, "vscode/package.json"));
+
+    // Normalise the example's contributes the way a vendor's would read once
+    // copied from the template: its own id in place of "chatbridge-dummy".
+    // Human-readable text (title/description/category) legitimately differs
+    // per vendor, so it is stripped before comparing, along with
+    // idleTimeoutMinutes/timeoutSec defaults (ruling 4: the template
+    // deliberately omits them so the provider's own default is not
+    // silently overridden; the example still declares them for its own
+    // demo purposes).
+    const strip = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(strip);
+      if (value && typeof value === "object") {
+        const out: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+          if (k === "title" || k === "description" || k === "category")
+            continue;
+          out[k] = strip(v);
+        }
+        return out;
+      }
+      return value;
+    };
+    const normalise = (contributes: unknown) =>
+      strip(
+        JSON.parse(
+          JSON.stringify(contributes).replaceAll(
+            "chatbridge-dummy",
+            "<vendor>",
+          ),
+        ),
+      ) as Record<string, unknown>;
+
+    const normalisedExample = normalise(example.contributes) as {
+      configuration: { properties: Record<string, { default?: unknown }> };
+    };
+    const normalisedTemplate = strip(template.contributes) as {
+      configuration: { properties: Record<string, { default?: unknown }> };
+    };
+
+    // idleTimeoutMinutes/timeoutSec: no default in the template, on purpose.
+    expect(
+      normalisedTemplate.configuration.properties[
+        "<vendor>.idleTimeoutMinutes"
+      ],
+    ).not.toHaveProperty("default");
+    expect(
+      normalisedTemplate.configuration.properties["<vendor>.timeoutSec"],
+    ).not.toHaveProperty("default");
+    for (const key of ["<vendor>.idleTimeoutMinutes", "<vendor>.timeoutSec"]) {
+      normalisedExample.configuration.properties[key].default = undefined;
+      normalisedTemplate.configuration.properties[key].default = undefined;
+    }
+
+    expect(normalisedTemplate).toEqual(normalisedExample);
+    expect(template.dependencies).toHaveProperty("playwright");
+    expect(template.dependencies).not.toHaveProperty("@chatbridge/vscode");
+    expect(template.devDependencies).toHaveProperty("@chatbridge/vscode");
+    expect(template.devDependencies).toHaveProperty("esbuild");
+    expect(template.devDependencies).toHaveProperty("@vscode/vsce");
+  });
+});
