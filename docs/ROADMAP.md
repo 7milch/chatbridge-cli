@@ -264,3 +264,13 @@ for it.
 - Auth *state* is stored (storage state, 600/700 permissions, never logged); credentials never are.
 - Dependency direction is one-way: `cli → core → runtime → provider`.
 - Every document pushed to the remote is in English; GitHub issue/PR comments too.
+
+### 18. Provider skills kit — done (issue #113, PR #116, 2026-09-21)
+
+The provider-author skills ship inside `@chatbridge/provider` and are written
+for a smaller model working alone: a nine-step DOM discovery procedure through
+Playwright MCP driven by one probe script (`window.__cbProbe`), vendor repo
+templates with a contract-complete provider, and `upgrading-provider-repo` with
+a fixed-shape upgrade guide for existing vendor repos. Verified by running a
+Sonnet model against a realistic `/hard` skin of the dummy chat (#113);
+follow-ups #114, #115. Ships as v0.10.1.

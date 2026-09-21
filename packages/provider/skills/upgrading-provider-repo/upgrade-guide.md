@@ -158,6 +158,33 @@ Verify: `<VENDOR>_E2E=1 bun test src/provider.e2e.test.ts` — "a guest is not
 logged in" passes: a fresh browser context on the chat URL reads as logged
 out, while the two-turn test still reads the saved state as logged in.
 
+## 0.10.1
+
+**Required:** none. No runtime code changed; 0.10.1 only adds the skills to the
+`@chatbridge/provider` package.
+
+**Optional:**
+
+### Provider skills in the package
+Needs DOM observation: no.
+Change:
+1. Copy the skills from the package (the refresh that `SKILL.md` asks for after
+   every bump; from this version on `node_modules/@chatbridge/provider/skills/`
+   exists):
+   `mkdir -p .claude/skills && rm -rf .claude/skills/creating-provider-repo .claude/skills/upgrading-provider-repo && cp -R node_modules/@chatbridge/provider/skills/. .claude/skills/`
+2. If `.mcp.json` is missing, copy
+   `../creating-provider-repo/templates/mcp.json` to `.mcp.json`. Add `.auth/`
+   and `.playwright-mcp/` to `.gitignore`, and `.auth`, `.playwright-mcp` to
+   the ignore list of `biome.json`: a formatter must never write into `.auth/`,
+   a live browser profile.
+3. If this repository predates the templates, read "If your repository
+   predates the templates" above and offer "Re-derive the login signal" to the
+   user.
+Verify: `ls .claude/skills/creating-provider-repo/probes/chatbridge-probes.js .claude/skills/upgrading-provider-repo/upgrade-guide.md`
+prints both paths, and `bun run check` passes.
+
+**VSCode manifest:** none.
+
 ## 0.10.0
 
 **Required:**

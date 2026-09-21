@@ -1,6 +1,6 @@
 {
   "name": "@chatbridge/vscode",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "VSCode extension factory for chatbridge: a sidebar chat view on top of ChatSession",
   "license": "MIT",
   "repository": {
