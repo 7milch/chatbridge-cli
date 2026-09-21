@@ -63,7 +63,10 @@ export function urlConversation(options: {
 ```
 
 - `urlConversation().handle` returns `page.url()` when it satisfies `match`,
-  otherwise `undefined`. `open` calls `page.goto(handle)`.
+  otherwise `undefined`. `open` rejects a handle that does not satisfy `match`,
+  calls `page.goto(handle)`, and throws when the page did not end on a URL that
+  satisfies `match` — a service answers an unknown id by redirecting to the
+  plain chat page, and that must read as a failed restore.
 - `defineProvider` validates that `conversation.handle` and `conversation.open`
   are functions. `urlConversation` rejects a `match` RegExp carrying the `g` or
   `y` flag, as URL hooks do, and throws at construction time.
@@ -108,8 +111,9 @@ Both the TUI `ChatModel` and the VSCode `SessionController`:
 - `Message` gains `format?: "markdown" | "text"` and `incomplete?: true`. The host
   copies `session.responseFormat` onto assistant messages only; user, error,
   separator and help messages render verbatim as today.
-- `ToWebview` gains `{ type: "partial"; text: string }`, carrying the full
-  in-progress text of the assistant reply being streamed. It is deliberately not a
+- `ToWebview` gains `{ type: "partial"; text: string; format: "markdown" | "text" }`,
+  carrying the full in-progress text of the assistant reply being streamed and
+  how to render it. It is deliberately not a
   field of `State`: a state frame carries the whole history, and sending it at
   polling frequency would be wasteful and would drive full re-renders.
 - `ChatSessionLike` widens to `send(prompt, options?: { onPartial? })` and exposes
@@ -160,8 +164,9 @@ DOM layer in `main.ts`:
   animation frame. The Markdown tree is rebuilt from the full partial each time.
   The existing at-bottom scroll guard decides whether to follow.
 - A code block gets a header with the language label, when present, and a copy
-  button. Copy uses `navigator.clipboard.writeText`, falling back to a new
-  `{ type: "copy"; text }` message handled by the host with
+  button. Copy always goes through the host, with a new
+  `{ type: "copyText"; text }` message (the existing `copy` command means "copy
+  the last reply") handled with
   `vscode.env.clipboard`.
 - An incomplete message gets a class and a short trailing marker.
 - Styles are classes in `style.css` using VSCode theme variables. No inline
@@ -194,7 +199,6 @@ DOM layer in `main.ts`:
 | Turn fails after partials | Partial kept as an `incomplete` assistant message, then the error |
 | Partial arrives for a stale generation | Dropped by the host |
 | Malformed or truncated Markdown | Rendered best-effort; `toTree` never throws |
-| Clipboard API unavailable in the webview | Host-side copy through the `copy` message |
 
 ## Testing
 
@@ -208,7 +212,7 @@ DOM layer in `main.ts`:
 - `cli` TUI `ChatModel`: remember, pass, forget; separator wording.
 - `vscode` host: `onPartial` → `partial` frames, stale partial dropped,
   `incomplete` on failure, `format` copied onto assistant messages, handle
-  remember/pass/forget, separator wording, `copy` message.
+  remember/pass/forget, separator wording, `copyText` message.
 - `vscode` webview: `markdown-tree.test.ts` (each construct, every safety rule,
   truncated input, samples of `elementToMarkdown` output) and
   `stream-state.test.ts` (settled nodes kept, partial replaced by the settled
