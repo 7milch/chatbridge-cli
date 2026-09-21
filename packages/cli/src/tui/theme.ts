@@ -15,7 +15,14 @@ import type { SpinnerColor } from "./spinner.js";
  * (see `text.ts`). */
 export type Styler = (text: string) => TextChunk;
 
-const ANSI = { red: 1, green: 2, yellow: 3, blue: 4, brightBlack: 8 } as const;
+const ANSI = {
+  red: 1,
+  green: 2,
+  yellow: 3,
+  blue: 4,
+  brightBlack: 8,
+  brightWhite: 15,
+} as const;
 
 // `__isChunk: true` is OpenTUI's runtime discriminator for TextChunk
 // (0.5.10). A rename would not be caught by the type-check, so re-check
@@ -34,6 +41,17 @@ const make =
 /** The terminal's own foreground. OpenTUI (0.5.10) otherwise draws unstyled
  * text in truecolour white, which is invisible on a light background. */
 export const DEFAULT_FG: RGBA = RGBA.defaultForeground();
+
+/** A mouse selection. OpenTUI's default swaps fg and bg, which draws nothing
+ * once fg is the terminal default, so both are named: blue is dark and
+ * bright white is light in every common palette. */
+export const SELECTION_BG: RGBA = RGBA.fromIndex(ANSI.blue);
+export const SELECTION_FG: RGBA = RGBA.fromIndex(ANSI.brightWhite);
+
+/** The input cursor until the terminal reports its foreground (see
+ * `adoptTerminalCursor`): the cursor colour is sent to the terminal as RGB,
+ * so it cannot be an indexed or default colour. Mid-grey shows on both. */
+export const CURSOR_FALLBACK = "#808080";
 
 /** Border and placeholder colour (those take an RGBA, not a chunk style). */
 export const MUTED_COLOR: RGBA = RGBA.fromIndex(ANSI.brightBlack);

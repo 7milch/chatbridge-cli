@@ -40,7 +40,7 @@ import { POPUP_HINT } from "./mention-popup.js";
 import { RENDERER_OPTIONS } from "./run-interactive.js";
 import { type ResolvedSpinner, resolveSpinner } from "./spinner.js";
 import { modelWith } from "./test-helpers.js";
-import { styled, theme } from "./theme.js";
+import { SELECTION_BG, SELECTION_FG, styled, theme } from "./theme.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -2419,11 +2419,71 @@ describe("ChatView: light terminals", () => {
     expect(fixedWhite(t)).toEqual([]);
   });
 
-  test("the input cursor is not fixed white", async () => {
+  test("the input cursor starts mid-grey, visible on light and dark", async () => {
     const t = await setup();
     const input = t.renderer.root.findDescendantById("input") as unknown as {
-      cursorColor: { intent: string };
+      cursorColor: { toInts(): number[] };
     };
-    expect(input.cursorColor.intent).toBe("default");
+    expect(input.cursorColor.toInts().slice(0, 3)).toEqual([128, 128, 128]);
   });
+
+  /** Spans painted with the selection colours after dragging over rows. */
+  async function selectedText(
+    t: Awaited<ReturnType<typeof setup>>,
+    needle: string,
+  ): Promise<string> {
+    const lines = t.captureCharFrame().split("\n");
+    const row = lines.findIndex((l) => l.includes(needle));
+    expect(row).toBeGreaterThan(-1);
+    // From the text itself: a drag that starts on a table border selects
+    // nothing.
+    const col = (lines[row] ?? "").indexOf(needle);
+    await t.mockMouse.drag(col, row, 79, row);
+    for (let i = 0; i < 10; i++) {
+      await sleep(20);
+      await t.renderOnce();
+    }
+    return (t.captureSpans().lines[row]?.spans ?? [])
+      .filter(
+        (s) =>
+          s.bg.intent === "indexed" &&
+          s.bg.slot === SELECTION_BG.slot &&
+          s.fg.intent === "indexed" &&
+          s.fg.slot === SELECTION_FG.slot,
+      )
+      .map((s) => s.text)
+      .join("");
+  }
+
+  test("a selection over a plain reply is painted in palette colours", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    await t.frameWith("Echo: hi");
+    expect(await selectedText(t, "Echo: hi")).toContain("Echo: hi");
+  });
+
+  test.each([
+    ["prose", "plain prose"],
+    ["code block", "const a = 1;"],
+    ["table cell", "cellvalue"],
+  ])(
+    "a selection over markdown %s is painted in palette colours",
+    async (_n, needle) => {
+      const t = await setup({
+        session: {
+          responseFormat: "markdown",
+          async send() {
+            return "## Title\n\nplain prose\n\n```ts\nconst a = 1;\n```\n\n| k | v |\n|---|---|\n| x | cellvalue |";
+          },
+          async close() {},
+          async kill() {},
+        },
+      });
+      await t.mockInput.typeText("hi");
+      t.mockInput.pressEnter();
+      await t.settledFrame("plain prose", ["##", "```"]);
+      expect(await selectedText(t, needle)).toContain(needle);
+    },
+  );
 });

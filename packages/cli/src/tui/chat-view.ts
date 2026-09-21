@@ -28,7 +28,7 @@ import {
 } from "./chat-model.js";
 import { MAX_ROWS, MentionPopup, type PopupRow } from "./mention-popup.js";
 import type { ResolvedSpinner } from "./spinner.js";
-import { markdown, text, textarea } from "./text.js";
+import { adoptTerminalCursor, markdown, text, textarea } from "./text.js";
 import {
   MUTED_COLOR,
   type Styler,
@@ -386,6 +386,7 @@ export class ChatView {
       ],
     });
     inputBox.add(this.input);
+    void adoptTerminalCursor(renderer, this.input);
     root.add(inputBox);
 
     // Inline: the popup occupies the rows between the input and the status.
