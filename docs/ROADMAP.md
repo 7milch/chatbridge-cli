@@ -274,3 +274,14 @@ templates with a contract-complete provider, and `upgrading-provider-repo` with
 a fixed-shape upgrade guide for existing vendor repos. Verified by running a
 Sonnet model against a realistic `/hard` skin of the dummy chat (#113);
 follow-ups #114, #115. Ships as v0.10.1.
+
+### 19. VSCode Markdown and streaming, conversation handle — done (issue #109, PR #123, 2026-09-22)
+
+The VSCode chat view renders Markdown replies (a `marked` lexer feeds a plain
+node tree that is built into the DOM without any HTML injection, CSP unchanged)
+and streams them while they are written, with incremental history rendering and
+a copy button on code blocks. `Provider` gains an optional
+`conversation: { handle, open }` and a `urlConversation({ match })` helper, so
+the TUI and the VSCode view return to the same service-side conversation after
+a reopen or an idle close; nothing is persisted, and resuming across processes
+stays a follow-up (#119). Follow-ups #120, #121, #122. Ships as v0.11.0.
