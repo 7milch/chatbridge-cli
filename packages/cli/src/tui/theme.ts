@@ -9,10 +9,20 @@ import type { SpinnerColor } from "./spinner.js";
 
 /** One place for every style the TUI uses. Colours are ANSI indexed so the
  * terminal palette applies in light and dark themes; OpenTUI's `blue()`
- * helpers emit fixed truecolour values and are deliberately not used. */
+ * helpers emit fixed truecolour values and are deliberately not used.
+ * A chunk without a colour takes its renderable's `fg`, which OpenTUI
+ * defaults to fixed white, so every renderable is built with `DEFAULT_FG`
+ * (see `text.ts`). */
 export type Styler = (text: string) => TextChunk;
 
-const ANSI = { red: 1, green: 2, yellow: 3, blue: 4, brightBlack: 8 } as const;
+const ANSI = {
+  red: 1,
+  green: 2,
+  yellow: 3,
+  blue: 4,
+  brightBlack: 8,
+  brightWhite: 15,
+} as const;
 
 // `__isChunk: true` is OpenTUI's runtime discriminator for TextChunk
 // (0.5.10). A rename would not be caught by the type-check, so re-check
@@ -27,6 +37,21 @@ const make =
   (attributes: number, fg?: number): Styler =>
   (text) =>
     chunk(text, attributes, fg === undefined ? undefined : RGBA.fromIndex(fg));
+
+/** The terminal's own foreground. OpenTUI (0.5.10) otherwise draws unstyled
+ * text in truecolour white, which is invisible on a light background. */
+export const DEFAULT_FG: RGBA = RGBA.defaultForeground();
+
+/** A mouse selection. OpenTUI's default swaps fg and bg, which draws nothing
+ * once fg is the terminal default, so both are named: blue is dark and
+ * bright white is light in every common palette. */
+export const SELECTION_BG: RGBA = RGBA.fromIndex(ANSI.blue);
+export const SELECTION_FG: RGBA = RGBA.fromIndex(ANSI.brightWhite);
+
+/** The input cursor until the terminal reports its foreground (see
+ * `adoptTerminalCursor`): the cursor colour is sent to the terminal as RGB,
+ * so it cannot be an indexed or default colour. Mid-grey shows on both. */
+export const CURSOR_FALLBACK = "#808080";
 
 /** Border and placeholder colour (those take an RGBA, not a chunk style). */
 export const MUTED_COLOR: RGBA = RGBA.fromIndex(ANSI.brightBlack);
@@ -47,10 +72,11 @@ export const theme = {
 /** Styles for MarkdownRenderable, from the same ANSI indices as `theme`, so
  * a reply looks like the rest of the history in any terminal palette. The
  * scope names are the ones MarkdownRenderable looks up (0.5.10); a style it
- * does not find falls back to `default`, which is the terminal foreground.
+ * does not find falls back to `default`, set here to the terminal foreground.
  * The caller owns the returned handle and must `destroy()` it. */
 export function markdownSyntaxStyle(): SyntaxStyle {
   return SyntaxStyle.fromStyles({
+    default: { fg: DEFAULT_FG },
     "markup.heading": { fg: RGBA.fromIndex(ANSI.green), bold: true },
     "markup.strong": { bold: true },
     "markup.italic": { italic: true },

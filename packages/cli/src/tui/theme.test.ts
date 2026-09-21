@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { TextAttributes } from "@opentui/core";
 import {
+  DEFAULT_FG,
   MUTED_COLOR,
   colored,
   markdownSyntaxStyle,
@@ -52,6 +53,10 @@ describe("theme", () => {
   test("MUTED_COLOR is ANSI bright black", () => {
     expect(MUTED_COLOR.intent).toBe("indexed");
     expect(MUTED_COLOR.slot).toBe(8);
+  });
+
+  test("DEFAULT_FG is the terminal foreground, not a fixed colour", () => {
+    expect(DEFAULT_FG.intent).toBe("default");
   });
 
   test("styled joins chunks and strings into one StyledText", () => {
@@ -106,6 +111,17 @@ describe("markdownSyntaxStyle", () => {
       expect(link?.underline).toBe(true);
       expect(style.getStyle("markup.italic")?.italic).toBe(true);
       expect(style.getStyle("markup.list")?.fg?.slot).toBe(MUTED_COLOR.slot);
+    } finally {
+      style.destroy();
+    }
+  });
+});
+
+describe("markdownSyntaxStyle default scope", () => {
+  test("is the terminal foreground", () => {
+    const style = markdownSyntaxStyle();
+    try {
+      expect(style.getStyle("default")?.fg?.intent).toBe("default");
     } finally {
       style.destroy();
     }

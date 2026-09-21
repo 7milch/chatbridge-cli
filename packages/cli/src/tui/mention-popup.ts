@@ -1,4 +1,9 @@
-import { BoxRenderable, type CliRenderer, TextRenderable } from "@opentui/core";
+import {
+  BoxRenderable,
+  type CliRenderer,
+  type TextRenderable,
+} from "@opentui/core";
+import { text } from "./text.js";
 import { styled, theme } from "./theme.js";
 
 /** Rows shown at once; the search already caps candidates to this. */
@@ -39,7 +44,7 @@ export class MentionPopup {
       visible: false,
     });
     for (let i = 0; i < MAX_ROWS; i++) {
-      const row = new TextRenderable(renderer, {
+      const row = text(renderer, {
         content: "",
         visible: false,
         wrapMode: "none",
@@ -48,7 +53,7 @@ export class MentionPopup {
       this.box.add(row);
     }
     this.box.add(
-      new TextRenderable(renderer, {
+      text(renderer, {
         content: styled(theme.muted(`${HINT_INDENT}${POPUP_HINT}`)),
         wrapMode: "none",
       }),
