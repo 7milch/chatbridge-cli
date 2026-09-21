@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.tsbuildinfo
+*.log
+storage-state*.json
+.auth/
+.playwright-mcp/
+.superpowers/

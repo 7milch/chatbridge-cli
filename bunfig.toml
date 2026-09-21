@@ -1,0 +1,6 @@
+[test]
+# The vendor-repo templates are not this repository's code: they carry
+# placeholders and empty selectors, so their smoke tests only pass once a
+# vendor has filled them in. `examples/dummy-chat/templates.test.ts` is what
+# exercises them here. `.tmp-template-*` is that test's scratch copy.
+pathIgnorePatterns = ["**/templates/src/**", "**/.tmp-template-*/**"]

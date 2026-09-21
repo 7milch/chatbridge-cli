@@ -20,3 +20,6 @@ packs/
 
 # VSCode E2E: downloaded VSCode builds
 .vscode-test/
+
+# Scratch vendor repos instantiated by examples/dummy-chat/templates.test.ts
+examples/dummy-chat/.tmp-template-*/
