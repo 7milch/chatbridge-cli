@@ -1,6 +1,6 @@
-# chatbridge-&lt;vendor&gt;
+# chatbridge-<vendor>
 
-A chatbridge provider for &lt;Vendor&gt;: it drives the browser-only &lt;Vendor&gt; web
+A chatbridge provider for <Vendor>: it drives the browser-only <Vendor> web
 chat from a CLI named `<vendor>`, on the published `@chatbridge/*` packages.
 
 ## Install

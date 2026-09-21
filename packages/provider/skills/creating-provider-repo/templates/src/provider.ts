@@ -63,6 +63,12 @@ export default defineProvider({
     // VARIANT (decision table "new chat is a URL"): replace the click with
     // page.goto(<new chat URL>).
     const button = visibleOnly(page, S.NEW_CHAT_BUTTON);
+    // count() does not auto-wait: without this the first paint after a
+    // navigation would look like "there is no button" and take the fallback.
+    await button
+      .first()
+      .waitFor({ state: "visible", timeout: 10_000 })
+      .catch(() => {});
     if ((await button.count()) > 0) await button.first().click();
     else await page.goto(S.CHAT_URL);
     const composer = visibleOnly(page, S.COMPOSER).first();
@@ -76,7 +82,11 @@ export default defineProvider({
     // VARIANT (decision table "no send button"): replace with
     // page.keyboard.press("Enter").
     await visibleOnly(page, S.SEND_BUTTON).first().click();
-    // Let the generating state begin; a fast reply may already be past it.
+    // Let the generating state begin. Timing out here is harmless when the
+    // reply was simply faster than the wait — but if the service takes
+    // LONGER than this to start generating, waitForResponse's done check
+    // passes immediately and the whole turn rests on the stability read.
+    // Raise the timeout for a service that is slow to start.
     await page
       .locator(S.STOP_BUTTON)
       .first()

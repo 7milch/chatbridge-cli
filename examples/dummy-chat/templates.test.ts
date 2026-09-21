@@ -26,6 +26,13 @@ let server: DummyChat;
 let browser: Browser;
 let provider: Provider;
 
+/** The three placeholders a vendor replaces when copying a template. */
+const fillPlaceholders = (source: string): string =>
+  source
+    .replaceAll("<vendor>", "hard-dummy")
+    .replaceAll("<Vendor>", "Hard Dummy")
+    .replaceAll("<VENDOR>", "HARD_DUMMY");
+
 /** A scratch vendor repository inside the workspace: `templates/src` copied
  * to `<tmp>/src`, so the templates' bare imports (`@chatbridge/*`,
  * `playwright-core`) resolve the way they would in a vendor repository, and
@@ -45,12 +52,12 @@ function instantiate(fill: Record<string, string>): string {
     if (selectors === before) throw new Error(`no placeholder for ${name}`);
   }
   writeFileSync(join(dir, "selectors.ts"), selectors);
-  for (const file of ["provider.ts", "bin.ts"]) {
-    const source = readFileSync(join(dir, file), "utf8")
-      .replaceAll("<vendor>", "hard-dummy")
-      .replaceAll("<Vendor>", "Hard Dummy")
-      .replaceAll("<VENDOR>", "HARD_DUMMY");
-    writeFileSync(join(dir, file), source);
+  for (const file of readdirSync(dir)) {
+    if (file === "selectors.ts") continue;
+    writeFileSync(
+      join(dir, file),
+      fillPlaceholders(readFileSync(join(dir, file), "utf8")),
+    );
   }
   return root;
 }
@@ -207,6 +214,29 @@ describe("template files", () => {
     expect(notes.match(/^Not yet observed\.$/gm)).toHaveLength(8);
   });
 
+  test("placeholders are literal and every one of them substitutes away", () => {
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) walk(path);
+        else files.push(path);
+      }
+    };
+    walk(TEMPLATES);
+    expect(files.length).toBeGreaterThan(10);
+    for (const path of files) {
+      const source = readFileSync(path, "utf8");
+      const name = path.slice(TEMPLATES.length);
+      // An HTML-escaped placeholder survives the vendor's substitution.
+      expect(source, name).not.toContain("&lt;");
+      expect(source, name).not.toContain("&gt;");
+      expect(fillPlaceholders(source), name).not.toMatch(
+        /<(vendor|Vendor|VENDOR)>/,
+      );
+    }
+  });
+
   test("the templates type-check against the workspace packages", () => {
     const root = instantiate({
       ENTRY_URL: "https://example.com/login",
@@ -249,8 +279,12 @@ describe("template files", () => {
           noEmit: true,
           declaration: false,
           outDir: undefined,
+          // The shipped template excludes *.test.ts from its build; here they
+          // are type-checked too, so a core API change cannot break
+          // provider.e2e.test.ts silently.
+          types: ["bun"],
         },
-        include: ["src/selectors.ts", "src/provider.ts", "src/bin.ts"],
+        include: ["src"],
       }),
     );
     try {
