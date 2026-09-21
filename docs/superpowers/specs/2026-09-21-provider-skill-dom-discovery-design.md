@@ -424,13 +424,20 @@ section describes what shipped.
   match of `within`, so `:scope` works) and reports an empty selector as
   `skipped`. `ASSISTANT_MESSAGE_BODY` is not in `MANY`.
 - **What never reaches probe output.** Beyond §2: a form control's value
-  (only a `<textarea>`'s is read, as `{length, head}`), `value` / `data-value`
-  attributes and mutations, per-turn identity attributes in collection or
-  body selectors, ids and label attributes in `contentRootWithin`.
+  (only a *visible* `<textarea>`'s is read, as `{length, head}`), `value` /
+  `data-value` attributes and mutations, per-turn identity attributes in
+  collection or body selectors, ids and label attributes in
+  `contentRootWithin`. `ariaLabel`, `role` and `title` are cut to 40
+  characters. **What does reach it:** attribute values up to 60 characters, in
+  locators, `attrs[].from/to` and `stateAttrs[].value` — a user name, an email
+  or a conversation title held in an attribute can appear. That is accepted
+  (bounded, and it stays in the vendor's session): probe output is never
+  committed, and a decision row forbids a selector built on a personal value.
 - **Templates (§4).** Tests skip while every selector is empty so a fresh
   scaffold passes `check`; `SEND_BUTTON`, `STOP_BUTTON`, `NEW_CHAT_BUTTON` and
-  `SIGN_IN_CONTROL` may stay empty where a decision row says so (`isLoggedIn`
-  guards the empty case). The template `biome.json` ignores `.auth` and
+  `SIGN_IN_CONTROL` may stay empty where a decision row says so (the
+  template guards each: an empty selector never reaches `page.locator()`, and
+  no code edit is needed). The template `biome.json` ignores `.auth` and
   `.playwright-mcp`: a formatter run once rewrote a live browser profile. The
   E2E template has a "a guest is not logged in" test. The pin placeholder is
   `<playwright-core>`, resolved from the runtime's `playwright` dependency.

@@ -45,8 +45,8 @@ Observed: YYYY-MM-DD
 | Constant | Selector | verify() count | visible |
 |---|---|---|---|
 | NEW_CHAT_BUTTON | | | |
-Notes (a button or a URL? if a URL, take the `startNewChat` VARIANT in
-provider.ts; is the composer empty afterwards?): -->
+Notes (a button or a URL? if a URL, NEW_CHAT_BUTTON stays empty and
+`startNewChat` navigates to CHAT_URL; is the composer empty afterwards?): -->
 
 ## Composer
 

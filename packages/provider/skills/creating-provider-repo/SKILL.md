@@ -9,7 +9,7 @@ One repo per vendor: one `Provider`, one CLI via `createCli`, on the
 published `@chatbridge/*` packages. Selectors are observed in the real DOM,
 never guessed. Nothing vendor-specific enters the framework.
 
-This skill directory is self-contained: `templates/`, `probes/`,
+Self-contained: `templates/`, `probes/`,
 `dom-discovery.md`, `vscode-extension.md`. For a newer framework version, use the
 upgrading-provider-repo skill.
 
@@ -21,7 +21,7 @@ upgrading-provider-repo skill.
   `@chatbridge/runtime` is transitive; do not list it. Never `file:`, `link:`,
   or a checkout of the framework repository.
 - After `bun install`, run `find node_modules -path '*@chatbridge/*/node_modules/@chatbridge*'`.
-  Any hit is a nested older copy shadowing the runtime: fix the versions,
+  Any hit is a nested older copy: fix the versions,
   `rm -rf node_modules bun.lock`, reinstall.
 - The framework owns auth state (cookies, localStorage, IndexedDB, re-saved on
   every session close). The repo never stores, logs or reads credentials or
@@ -76,8 +76,10 @@ Wrong choice: see Traps.
 
 ## Procedure
 
-1. **Scaffold** the layout above; install, `bun run check` (fill-in tests skip
-   while every selector is empty), commit.
+1. **Scaffold** the layout above; `bun install`; then
+   `mkdir -p .claude/skills && cp -R node_modules/@chatbridge/provider/skills/. .claude/skills/`
+   (`.mcp.json` loads the probe from there); `bun run check` (fill-in tests
+   skip while every selector is empty), commit.
 2. **Discover the DOM**: follow `dom-discovery.md` exactly. **REQUIRED.** Do
    not write a selector before its dom-notes section is filled.
 3. **Fill `src/selectors.ts`**; `src/provider.ts` already implements the
@@ -122,7 +124,7 @@ Two optional fields:
 
 ## VSCode extension
 
-Optional; follow `vscode-extension.md`, templates in `templates/vscode/`.
+Optional: `vscode-extension.md`, templates in `templates/vscode/`.
 
 ## Traps seen in the wild
 

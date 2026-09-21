@@ -14,7 +14,7 @@ parts:
 - **Write** — the `docs/dom-notes.md` section and the `src/selectors.ts`
   constants it fills.
 
-The whole procedure is about fifteen tool calls. It is not an exploration: do
+The whole procedure is about thirty tool calls. It is not an exploration: do
 not browse the app, do not read its source, do not invent selectors. Every
 selector you write comes out of probe output you can quote.
 
@@ -23,8 +23,12 @@ selector you write comes out of probe output you can quote.
 Probe output and page snapshots can contain conversation text and internal
 URLs. `docs/dom-notes.md` records **structure** — locators, attribute names,
 state values, timings, match counts, dates — and never conversation content.
-Do not commit screenshots or files from `.playwright-mcp/`; the template
-`gitignore` already ignores that directory and `.auth/`.
+The probe cuts text, labels, roles and the page title to 40 characters, but
+**attribute values reach its output at up to 60 characters** — in locators and
+in recorded attribute changes — so a user name, an email or a conversation
+title held in an attribute can appear there. Never commit probe output,
+screenshots or files from `.playwright-mcp/`; the template `gitignore` already
+ignores that directory and `.auth/`.
 
 Three things you must never do, with what to do instead:
 
@@ -74,18 +78,24 @@ those tools are not in your tool list, load them first with ToolSearch:
 `select:mcp__playwright__browser_evaluate,mcp__playwright-guest__browser_evaluate`
 and so on.
 
-**Do** — `browser_evaluate` in **both** servers (a missing probe in one of them is
-the failure you would otherwise only discover in step 2):
+**Do** — the probe is installed when a page loads, so navigate first: in
+**both** servers, `browser_navigate` to the entry URL (ask step 1's question
+now if you do not have it), then `browser_evaluate` in both:
 
 ```json
 { "function": "() => typeof window.__cbProbe" }
 ```
 
-**Read** — the result must be `"object"` in both. `"undefined"` means the
-`--init-script` path in `.mcp.json` is wrong (it is relative to the repository
-root: `.claude/skills/creating-provider-repo/probes/chatbridge-probes.js`) or
-that you have not navigated anywhere yet — navigate to the entry URL first and
-check again.
+**Read** — the result must be `"object"` in both. `"undefined"` means, in the
+order to check: `.claude/skills/creating-provider-repo/` does not exist in this
+repository (SKILL.md Procedure step 1 copies it there; `.mcp.json` points into
+it), or the `--init-script` path in `.mcp.json` is wrong (it is relative to the
+repository root:
+`.claude/skills/creating-provider-repo/probes/chatbridge-probes.js`).
+
+The probe object exists on every page of these two browsers, the login
+provider's included. It is inert until called. Use it only on services you are
+permitted to automate.
 
 ### Large outputs
 
@@ -143,7 +153,8 @@ then `browser_evaluate`:
   guests: step 4 visits the chat URL as a guest for that.
 - `account` — normally `[]` here.
 - `title`, `url` — if `title` is `"Just a moment..."` or the page is an IdP
-  refusal, see the decision table.
+  refusal, see the decision table. A `title` ending in `…` was cut at 40
+  characters; read the whole interstitial title with `() => document.title`.
 
 **Write** — §Login: what the entry page is (a login form, a landing page, the
 chat itself) and its `url`. Do not fill `SIGN_IN_CONTROL`; step 4 does.
@@ -226,7 +237,9 @@ Everything else comes from the member census (`census-in.json`):
 - `NEW_CHAT_BUTTON` = the first `locators` entry of the `buttons` candidate
   whose `ariaLabel` / `text` means "new chat". Confirmed in step 8.
 - `lang` — record it if it is not `en`; localized labels mean you prefer
-  `data-*` selectors over `aria-label` ones.
+  `data-*` selectors over `aria-label` ones. When a control has no `data-*`
+  locator at all, use its `aria-label` locator and note in dom-notes that a
+  translation change breaks it.
 - A candidate with `locators: []` has no unique selector of its own: take an
   ancestor from `messageLists` and write `<ancestor locator> <tag>` instead.
 - `unstable` tells you what was rejected and why (`class: never used as a
@@ -496,8 +509,8 @@ then `browser_evaluate`:
 
 **Read** — `composer.COMPOSER.ok` must be `true` with `visibleCount: 1`, and
 `turns` must be `0`. If new chat turned out to be a navigation rather than a
-button, the `url` tells you which one to use — take the `startNewChat` VARIANT
-in `templates/src/provider.ts`.
+button, the `url` tells you which one it is — see the decision table, row
+**"new chat is a URL"**.
 
 **Write** — §New chat: `NEW_CHAT_BUTTON` (or the URL), and that the composer is
 empty afterwards.
@@ -562,19 +575,20 @@ Read the left column off probe output; do exactly what the right column says.
 |---|---|
 | Step 4's guest census stayed on `CHAT_URL` and its `composer` is non-empty | Guest chat exists. Login signal stays `ACCOUNT_CONTROL` present AND `SIGN_IN_CONTROL` absent, both from step 4's pair. A composer is never a login signal |
 | Step 4's guest census stayed on `CHAT_URL` and its `composer` is `[]` | No guest chat, the chat page itself shows the sign-in control. Same pair, nothing else to do |
-| Step 4's guest census has `signIn: []` on the page it shows (a label the probe's word list misses) | In the guest census's `buttons`, keep the `visible` entries whose `locators[0]` is absent from the member census's `buttons`. Exactly one → that is `SIGN_IN_CONTROL`. None or several (the census lists buttons, not plain links) → leave `SIGN_IN_CONTROL` empty: `isLoggedIn` in `templates/src/provider.ts` — decision table **"no sign-in control found"** — then lets `ACCOUNT_CONTROL` decide alone. Record it in §Login; step 9 reports it as `skipped` |
+| Step 4's guest census has `signIn: []` on the page it shows (a label the probe's word list misses) | In the guest census's `buttons`, keep the `visible` entries whose `locators[0]` is absent from the member census's `buttons`. Exactly one → that is `SIGN_IN_CONTROL`. None or several (the census lists buttons, not plain links) → leave `SIGN_IN_CONTROL` empty: `isLoggedIn` in `templates/src/provider.ts` — decision table **"no sign-in control found"** — then lets `ACCOUNT_CONTROL` decide alone, at a cost: a logged-out page takes the full 10 s wait to read as logged out (at startup, and at close on an expired session). Record it in §Login; step 9 reports it as `skipped` |
 | Step 4's guest census has a different `url` (redirected to a login page or an IdP) | No guest chat. `SIGN_IN_CONTROL` = `locators[0]` of a `signIn` candidate of that guest census (the page it landed on); `ACCOUNT_CONTROL` as usual. If the landed `url` is on another origin, say so in §Login: the off-origin check in `isLoggedIn` answers before `SIGN_IN_CONTROL` is ever looked at |
+| A locator's value is personal — an email, a user name, a conversation title (`[data-user-email="…"]`) | Do not use it and do not write it into dom-notes. Take the next entry of that candidate's `locators`, or anchor on the parent: `<parent locator> > <tag>` |
 | `composer` has a `visible: false` entry | Take the `visible: true` candidate's own `locators[0]`; never a selector that also matches the hidden twin |
 | A candidate has `locators: []` | Anchor it: `<locator of an ancestor from messageLists> <tag>` |
 | `summary.placeholderTurns` non-empty | Wait for the done signal first, then the count check (the template already does) |
-| `ASSISTANT_MESSAGE` would also match the placeholder (run `verify()`: its `count` is one higher than the number of real replies) | Exclude it with `:not([…])`. The attribute to use is the one present in the placeholder's `shape` and **absent** from the real assistant turn's `added[]` `shape`. Example: placeholder `article[data-placeholder][data-turn]`, real turn `article[data-message-id][data-turn]` → the attribute is `data-placeholder`, so `ASSISTANT_MESSAGE` becomes `article[data-turn="assistant"]:not([data-placeholder])` |
+| A `summary.placeholderTurns` entry's `shape` is matched by `summary.streamingCollection.selector` (same tag, and every attribute the selector names is in the shape). `verify()` cannot show this: the placeholder is gone before the turn ends | Exclude it with `:not([…])`. The attribute to use is the one present in the placeholder's `shape` and **absent** from the real assistant turn's `added[]` `shape`. Example: placeholder `article[data-placeholder][data-turn]`, real turn `article[data-message-id][data-turn]` → the attribute is `data-placeholder`, so `ASSISTANT_MESSAGE` becomes `article[data-turn="assistant"]:not([data-placeholder])` |
 | An `added[]` row has `"isControl": true` | It is a control that came and went (a stop button), not a placeholder turn. No `:not(…)`, no entry in §Messages |
 | `summary.streamingCollection.selector` is `null` (with a `note`) | No stable attribute or anchor describes the turn. Pick a container from `census().messageLists` and anchor manually: `<container locator> > <tag>`. Verify it in step 9 |
 | `streamingCollection.count` counts the user turns too (the turns carry only a class, nothing telling user from assistant apart) | Run `census()` and look at one turn's children for a distinguishing descendant or attribute (`messageLists[n].childShape`, `dataAttrCensus`), and use `<container> > <tag>:has(<that descendant>)`. Confirm with `verify()` that the count is now half what it was. If nothing distinguishes them, record the limitation in §Messages, leave `ASSISTANT_MESSAGE` as the container's children, and note there that the count check in `waitForResponse` advances by two per turn |
 | `buttonsSwapped` shows send gone → stop appeared → stop gone, and `doneCandidates[0]` is `button gone: …` | Done = the stop control gone. `STOP_BUTTON` is that selector. Do not wait for the send button to come back: many services render it only while the composer is non-empty |
 | `attrs` shows a `data-state` / `aria-busy` flipping back at the end, and it is in `doneCandidates` | Done = that attribute's idle value. Take the `waitForResponse` VARIANT in `templates/src/provider.ts` — decision table **"state attribute"** |
 | `doneCandidates` lists **both** a state attribute and a button swap | Prefer the state attribute for the done signal (VARIANT), and keep the button as `STOP_BUTTON` for `sendMessage`'s "generation started" wait |
-| `doneCandidates` is empty | There is no done signal. Say so in §Generation indicator, leave `STOP_BUTTON` empty and rely on the stability read alone — expect slower, occasionally truncated turns |
+| `doneCandidates` is empty | There is no done signal. Say so in §Generation indicator, leave `STOP_BUTTON` empty — the template then skips the done-signal wait with no code edit — and rely on the new turn's arrival and the stability read alone; `ASSISTANT_MESSAGE`'s placeholder exclusion (the row above on `placeholderTurns`) is then all that keeps a placeholder from being read as the answer — expect slower, occasionally truncated turns |
 | Step 5 sent with Enter (5b) and `buttonsSwapped` has neither a `gone` row nor a `disabled` / `aria-disabled` `changed` row at the moment the user turn was added | Take the `sendMessage` VARIANT in `templates/src/provider.ts` — decision table **"no send button"** — `page.keyboard.press("Enter")`. Leave `SEND_BUTTON` empty — step 9 reports it as `skipped` — and say so in §Composer. Step 5 already sent this way, so you know it works |
 | Step 5's `summary.sent` was `false` and the user sent by hand | Read `SEND_BUTTON` off the new record's `buttonsSwapped` as step 5 says (`gone` row, or `disabled` `changed` row). Only with neither: `SEND_BUTTON` = `locators[0]` of the step 4 `buttons` candidate that is the control the user named; if they pressed a key instead, leave it empty and adapt the **"no send button"** VARIANT to that key. Record in §Composer that Enter does not send. Verify in step 9 |
 | `textGrowth` is empty after a long prompt | The reply is not streamed into the DOM (it is replaced whole), so there is no `streamingElement` and no `streamingCollection`. Take `ASSISTANT_MESSAGE` from the `added[]` row for the assistant turn instead: turn its **descriptive** `shape` into a selector the same way as for `USER_MESSAGE` (`article[data-message-id][data-turn]` → `article[data-turn="assistant"]`, dropping identity attributes), and confirm it in step 9 as a `many` selector whose `count` equals the number of replies on the page. Say in §Streaming behaviour that nothing grew; `streaming.responseText` still works off the count |
@@ -584,7 +598,7 @@ Read the left column off probe output; do exactly what the right column says.
 | The Markdown reply carries a stray line just before a fence (the code header's label) | Known framework limitation: `elementToMarkdown` has no skip option. **Accept it** — record it in §Streaming behaviour; do not write a work-around into the provider. Assert Markdown *structure* in the E2E, never exact text |
 | `lang` is not `en`, or button names are localized | Prefer `data-*` selectors over `aria-label` ones, and record the locale in §Chat page — a language change would otherwise break every label-based selector |
 | `title` is `"Just a moment..."`, or the page is an IdP refusal | Keep `CHALLENGE_TITLE` as the interstitial's title, `detectBlock` returns `"challenge page"`, the CLI tells the user to try `--headful`. Record it in §Errors and rate limits. Bot-protection evasion is out of scope: no stealth plugins, no UA spoofing, no attaching to a personal Chrome profile |
-| No new-chat control in `census().buttons`, or clicking it navigates (step 8's `url` changed) | New chat is a URL. Take the `startNewChat` VARIANT in `templates/src/provider.ts` — decision table **"new chat is a URL"** — and replace the click with `page.goto(<that URL>)`. Record the URL, not a selector, in §New chat, and leave `NEW_CHAT_BUTTON` empty; step 9 reports it as `skipped` |
+| No new-chat control in `census().buttons`, or clicking it navigates (step 8's `url` changed) | New chat is a URL — decision table **"new chat is a URL"**. Leave `NEW_CHAT_BUTTON` empty: `startNewChat` in `templates/src/provider.ts` then navigates to `CHAT_URL` with no code edit. Only when new chat has a URL of its own, take the VARIANT there (a `NEW_CHAT_URL` constant in `src/selectors.ts`). Record the URL, not a selector, in §New chat; step 9 reports `NEW_CHAT_BUTTON` as `skipped` |
 | `replyShape().contentRootWithin` is `""` (the reply element has no content child) | The turn element *is* the content. Set `ASSISTANT_MESSAGE_BODY` to the same value as `ASSISTANT_MESSAGE` and take the `newestBody` VARIANT in `templates/src/provider.ts` — decision table **"the reply has no content child"** — which drops the second `.locator()` call |
 | `replyShape().contentRootWithin` is `null` | No structural selector reaches the content element first from inside the turn (for example it is the second of two `div` children). Use `ASSISTANT_MESSAGE`'s own value for `ASSISTANT_MESSAGE_BODY` with the `newestBody` VARIANT, and record in §Messages that the reply's chrome (`chrome`) will appear in the Markdown |
 | The login page is on the chat page's own origin | Say so in §Login. The off-origin check in `isLoggedIn` is then a no-op and the sign-in / account pair decides alone. Do not replace the pair with a URL test |
@@ -596,8 +610,8 @@ error naming the selector.
 
 1. Re-run step 9's calls on the logged-in chat page. `STOP_BUTTON` is not in
    them; step 5 re-derives it.
-2. For every name with `ok: false`, re-run the one step that owns it: steps 2
-   and 4 for `ENTRY_URL`, `CHAT_URL`, `SIGN_IN_CONTROL`, `ACCOUNT_CONTROL`,
+2. For every name with `ok: false`, re-run the one step that owns it: step 1
+   for `ENTRY_URL`; step 4 for `CHAT_URL`, `SIGN_IN_CONTROL`, `ACCOUNT_CONTROL`,
    `COMPOSER`; step 5 for `SEND_BUTTON`, `STOP_BUTTON`, `ASSISTANT_MESSAGE`,
    `USER_MESSAGE`; step 6 for `ASSISTANT_MESSAGE_BODY`; step 8 for
    `NEW_CHAT_BUTTON`. `CHALLENGE_TITLE` changes only when the interstitial

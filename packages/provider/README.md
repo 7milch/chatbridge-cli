@@ -111,6 +111,12 @@ rm -rf .claude/skills/creating-provider-repo .claude/skills/upgrading-provider-r
 cp -R node_modules/@chatbridge/provider/skills/. .claude/skills/
 ```
 
+In a brand-new vendor repository there is nothing to refresh yet:
+`bun add @chatbridge/provider`, then
+`mkdir -p .claude/skills && cp -R node_modules/@chatbridge/provider/skills/. .claude/skills/`,
+then ask the agent. The template `.mcp.json` loads the DOM probe from that
+directory.
+
 What to tell your coding agent:
 
 - New vendor: "Use the creating-provider-repo skill for `<service URL>`."
