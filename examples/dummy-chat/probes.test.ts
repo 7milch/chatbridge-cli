@@ -144,9 +144,24 @@ describe("census", () => {
       "abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789klmnop";
     await sendTurn(page, long);
     await page.fill('[data-testid="composer-input"]', long);
+    // A sidebar button named after a conversation, a long role, and the
+    // document title, which on a real chat app IS the conversation title.
+    await page.evaluate(`(() => {
+      const b = document.createElement("button");
+      b.setAttribute("aria-label", "LABEL-" + ${JSON.stringify(long)});
+      b.setAttribute("role", "ROLE-" + ${JSON.stringify(long)});
+      b.setAttribute("data-testid", "history-item");
+      document.body.appendChild(b);
+      document.title = "TITLE-" + ${JSON.stringify(long)};
+    })()`);
     const c = await probe(page, "window.__cbProbe.census()");
     // No string anywhere in the output holds 41 characters of the message.
     expect(JSON.stringify(c)).not.toContain(long.slice(0, 41));
+    expect(c.title.startsWith("TITLE-")).toBe(true);
+    const item = c.buttons.find((b: { locators: string[] }) =>
+      b.locators.includes('[data-testid="history-item"]'),
+    );
+    expect(item.ariaLabel.startsWith("LABEL-")).toBe(true);
     const heads: string[] = [];
     const walk = (node: unknown) => {
       if (Array.isArray(node)) {
@@ -576,6 +591,25 @@ describe("census composer text", () => {
     const area = c.find((x: { tag: string }) => x.tag === "textarea");
     expect(area.text.length).toBe("typed into a textarea".length);
     expect(area.text.head).toBe("typed into a textarea");
+    await page.context().close();
+  });
+
+  test("never reads a hidden textarea's value", async () => {
+    const page = await open(true);
+    await page.evaluate(`(() => {
+      const t = document.createElement("textarea");
+      t.name = "g-recaptcha-response";
+      t.style.display = "none";
+      t.value = "03AGdBq25-TOKEN-hunter2";
+      document.body.appendChild(t);
+    })()`);
+    const c = await probe(page, "window.__cbProbe.census()");
+    const hidden = c.composer.find((x: { locators: string[] }) =>
+      x.locators.some((l) => l.includes("g-recaptcha-response")),
+    );
+    expect(hidden).toBeDefined();
+    expect(hidden.text).toBeUndefined();
+    expect(JSON.stringify(c)).not.toContain("03AGdBq25");
     await page.context().close();
   });
 

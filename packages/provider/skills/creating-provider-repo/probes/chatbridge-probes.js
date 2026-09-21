@@ -1,7 +1,11 @@
 // DOM discovery probes for chatbridge providers. Loaded into every page by
-// Playwright MCP (--init-script). Installs window.__cbProbe and nothing else.
-// Reads page structure only: no credentials, no stored browser data, and text
-// is reported as a length plus its first 40 characters.
+// Playwright MCP (--init-script). Installs window.__cbProbe and nothing else;
+// it is inert until called. Reads page structure only: no credentials, no
+// stored browser data, no form-control value except a visible <textarea>'s.
+// Text, labels, roles and the document title are cut to 40 characters.
+// Attribute values reach the output at up to 60 characters (in locators and
+// in recorded attribute changes), so a user name, an email or a conversation
+// title held in an attribute can appear: probe output is never committed.
 (() => {
   if (window.__cbProbe) return;
 
@@ -17,6 +21,9 @@
     const t = (s ?? "").replace(/\s+/g, " ").trim();
     return { length: t.length, head: t.slice(0, HEAD) };
   };
+
+  /** A label, a role or the document title: page text under another name. */
+  const head = (s) => (s.length > HEAD ? `${s.slice(0, HEAD)}…` : s);
 
   /** Hash-like values change between builds; they are not locator material. */
   const generated = (value) => {
@@ -268,23 +275,25 @@
   const candidate = (el) => {
     const unstable = [];
     const locators = locatorsOf(el, unstable);
+    const shown = visible(el);
     const c = {
       locators,
       tag: el.tagName.toLowerCase(),
-      visible: visible(el),
+      visible: shown,
       unstable: Array.from(new Set(unstable)),
     };
     const role = el.getAttribute("role");
     const label = el.getAttribute("aria-label");
-    if (role) c.role = role;
-    if (label) c.ariaLabel = label;
+    if (role) c.role = head(role);
+    if (label) c.ariaLabel = head(label);
     // A <textarea>'s content is its value, not its textContent: the most
-    // common composer reads as empty otherwise. An <input> gets no text at
-    // all: its value can be a whole secret, and 40 characters would hold it.
-    if (!(el instanceof HTMLInputElement)) {
-      const t = text(
-        el instanceof HTMLTextAreaElement ? el.value : el.textContent,
-      );
+    // common composer reads as empty otherwise. Only a VISIBLE one is read — a
+    // hidden textarea is a token carrier, not a composer — and an <input>
+    // never: its value can be a whole secret, and 40 characters would hold it.
+    const control =
+      el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
+    if (!control || (shown && el instanceof HTMLTextAreaElement)) {
+      const t = text(control ? el.value : el.textContent);
       if (t.length > 0) c.text = t;
     }
     return c;
@@ -355,7 +364,7 @@
 
     return {
       url: location.origin + location.pathname,
-      title: document.title,
+      title: head(document.title),
       lang: document.documentElement.lang || "",
       composer: all(COMPOSER).map(candidate),
       buttons: all('button, [role="button"]')
