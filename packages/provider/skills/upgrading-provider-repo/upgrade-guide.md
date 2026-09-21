@@ -131,14 +131,21 @@ at all and this feature does not apply to the service — record that in
 
 Change:
 
-1. `src/provider.ts`: add the `streaming: { async responseText(page) { … } }`
+1. `src/provider.ts`: this feature needs the pre-send assistant-turn count. If
+   `sendMessage` does not already record one, add the module-level
+   `const countBefore = new WeakMap<Page, number>();` and the
+   `countBefore.set(page, await page.locator(ASSISTANT_MESSAGE).count())` line
+   as the **first** statement of `sendMessage`, both from
+   `../creating-provider-repo/templates/src/provider.ts`, and read it back in
+   `waitForResponse` instead of whatever it uses today.
+2. `src/provider.ts`: add the `streaming: { async responseText(page) { … } }`
    field from `../creating-provider-repo/templates/src/provider.ts`. It must, in
    this order: read `countBefore.get(page) ?? 0`; return `undefined` while
    `await page.locator(ASSISTANT_MESSAGE).count()` is `<=` that number; return
    `undefined` while `newestBody(page).count()` is `0`; otherwise return
    `await elementToMarkdown(newestBody(page))`, mapping `""` to `undefined`.
    `pollIntervalMs` is optional and defaults to 250 ms; leave it out.
-2. `src/provider.e2e.test.ts`: add the "streaming never shows the previous
+3. `src/provider.e2e.test.ts`: add the "streaming never shows the previous
    turn" test verbatim from the template.
 
 Pitfalls:
