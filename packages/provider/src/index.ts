@@ -1,6 +1,8 @@
 import type { Locator, Page } from "playwright-core";
+import type { ProviderConversation } from "./conversation.js";
 
 export { elementToMarkdown } from "./element-to-markdown.js";
+export { urlConversation, type ProviderConversation } from "./conversation.js";
 
 /** Provider defaults for the opening phase (launch → goto → isLoggedIn →
  * startNewChat). Users override both via config.json and env vars. */
@@ -143,6 +145,9 @@ export interface Provider {
   /** Optional. Tried in order for every URL in a message; the first hook
    * whose `match` accepts the URL resolves it. Validated by defineProvider. */
   urlHooks?: UrlHook[];
+  /** Optional. Lets interactive UIs return to the same conversation after
+   * the browser was closed. See ProviderConversation and urlConversation. */
+  conversation?: ProviderConversation;
 }
 
 const COMMAND_NAME = /^[a-z]+$/;
@@ -210,6 +215,13 @@ export function defineProvider(provider: Provider): Provider {
       throw new Error(
         `Provider streaming.pollIntervalMs must be a finite number greater than 0, got ${poll}.`,
       );
+    }
+  }
+  if (provider.conversation !== undefined) {
+    for (const key of ["handle", "open"] as const) {
+      if (typeof provider.conversation[key] !== "function") {
+        throw new Error(`Provider conversation.${key} must be a function.`);
+      }
     }
   }
   return provider;

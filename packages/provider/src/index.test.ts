@@ -242,3 +242,26 @@ describe("defineProvider: responseFormat and streaming", () => {
     },
   );
 });
+
+describe("defineProvider conversation", () => {
+  test("accepts a handle/open pair", () => {
+    const conversation = {
+      handle: async () => undefined,
+      open: async () => {},
+    };
+    expect(defineProvider({ ...base(), conversation }).conversation).toBe(
+      conversation,
+    );
+  });
+
+  test.each(["handle", "open"])("rejects a missing %s", (key) => {
+    const conversation = {
+      handle: async () => undefined,
+      open: async () => {},
+      [key]: undefined,
+    };
+    expect(() =>
+      defineProvider({ ...base(), conversation: conversation as never }),
+    ).toThrow(`Provider conversation.${key} must be a function.`);
+  });
+});
