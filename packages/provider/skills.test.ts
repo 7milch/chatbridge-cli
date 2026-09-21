@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+} from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
 
@@ -103,13 +109,23 @@ describe("creating-provider-repo", () => {
 describe("packaging", () => {
   test("the tarball carries the skills", async () => {
     const out = await $`bun pm pack --dry-run`.cwd(import.meta.dir).text();
-    expect(out).toContain("skills/creating-provider-repo/SKILL.md");
-    expect(out).toContain(
+    const packed = new Set(
+      [...out.matchAll(/^packed\s+\S+\s+(\S+)$/gm)].map((m) => m[1] ?? ""),
+    );
+    const required = [
+      "skills/creating-provider-repo/SKILL.md",
+      "skills/creating-provider-repo/dom-discovery.md",
+      "skills/creating-provider-repo/vscode-extension.md",
       "skills/creating-provider-repo/probes/chatbridge-probes.js",
-    );
-    expect(out).toContain(
+      "skills/creating-provider-repo/templates/gitignore",
+      "skills/creating-provider-repo/templates/mcp.json",
+      "skills/creating-provider-repo/templates/package.json",
       "skills/creating-provider-repo/templates/src/provider.ts",
-    );
+      "skills/creating-provider-repo/templates/vscode/package.json",
+      "skills/creating-provider-repo/templates/vscode/vscodeignore",
+      "skills/creating-provider-repo/templates/vscode/media/icon.svg",
+    ];
+    for (const path of required) expect(packed.has(path), path).toBe(true);
     expect(out).not.toContain("skills.test.ts");
   });
 
@@ -120,6 +136,11 @@ describe("packaging", () => {
     expect(realpathSync(link)).toBe(
       realpathSync(join(SKILLS, "creating-provider-repo")),
     );
-    expect(lstatSync(join(root, ".agents/skills")).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(link)).toBe(
+      "../../packages/provider/skills/creating-provider-repo",
+    );
+    const agentsLink = join(root, ".agents/skills");
+    expect(lstatSync(agentsLink).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(agentsLink)).toBe("../.claude/skills");
   });
 });
