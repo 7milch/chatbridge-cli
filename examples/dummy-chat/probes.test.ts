@@ -150,6 +150,62 @@ describe("census", () => {
   });
 });
 
+describe("census on a demanding page", () => {
+  test("lists descriptive attributes before per-turn identity ones", async () => {
+    const page = await open(true);
+    await page.evaluate(`(() => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.dataset.messageId = "m42";
+      b.dataset.kind = "retry";
+      b.setAttribute("aria-label", "retry");
+      document.querySelector("footer").appendChild(b);
+    })()`);
+    const c = await probe(page, "window.__cbProbe.census()");
+    const retry = c.buttons.find(
+      (b: { ariaLabel?: string }) => b.ariaLabel === "retry",
+    );
+    expect(retry.locators[0]).toBe('[data-kind="retry"]');
+    expect(retry.locators).toContain('[data-message-id="m42"]');
+    await page.context().close();
+  });
+
+  test("stays fast on a large thread", async () => {
+    const page = await open(true);
+    const elements = await page.evaluate(`(() => {
+      const log = document.querySelector('[role="log"]');
+      for (let i = 0; i < 100; i++) {
+        const article = document.createElement("article");
+        article.className = "css-t1g6h0";
+        article.dataset.turn = i % 2 ? "assistant" : "user";
+        for (let j = 0; j < 29; j++) {
+          const block = document.createElement("div");
+          block.dataset.part = "content";
+          block.dataset.state = "done";
+          block.textContent = "block " + j;
+          article.appendChild(block);
+        }
+        log.appendChild(article);
+      }
+      return document.querySelectorAll("*").length;
+    })()`);
+    expect(elements).toBeGreaterThan(3000);
+    const ms = await probe<number>(
+      page,
+      `(() => {
+        const t = performance.now();
+        window.__cbProbe.census();
+        return Math.round(performance.now() - t);
+      })()`,
+    );
+    expect(ms).toBeLessThan(1500);
+    const c = await probe(page, "window.__cbProbe.census()");
+    expect(c.messageLists.length).toBeLessThanOrEqual(10);
+    expect(c.stateAttrs.length).toBeLessThanOrEqual(50);
+    await page.context().close();
+  });
+});
+
 describe("recordTurn", () => {
   test("sees the placeholder, the streaming element and the stop button leaving last", async () => {
     const page = await open(true);
@@ -173,6 +229,27 @@ describe("recordTurn", () => {
         b.gone?.includes("send-button"),
       ),
     ).toBe(true);
+    await page.context().close();
+  });
+
+  test("names the family of the streaming element, not just this turn's instance", async () => {
+    const page = await open(true);
+    await sendTurn(page, "first");
+    await page.fill('[data-testid="composer-input"]', "second");
+    await probe(page, "window.__cbProbe.recordTurn.start()");
+    await page.click('[data-testid="send-button"]');
+    await page.waitForSelector('[data-testid="stop-button"]');
+    await page.waitForSelector('[data-testid="stop-button"]', {
+      state: "detached",
+    });
+    const r = await probe(page, "window.__cbProbe.recordTurn.stop()");
+    // The instance is this turn's; the collection is what selectors.ts keeps.
+    expect(r.summary.streamingElement).toBe('[data-message-id="m2"]');
+    expect(r.summary.streamingCollection).toEqual({
+      selector: 'article[data-turn="assistant"]',
+      count: 2,
+    });
+    expect(r.textGrowth[0].collection).toEqual(r.summary.streamingCollection);
     await page.context().close();
   });
 

@@ -8,7 +8,10 @@
   // ---- helpers ----------------------------------------------------------
 
   const HEAD = 40;
+  const ATTR_CAP = 60;
   const MAX_EVENTS = 2000;
+  const MAX_LISTS = 10;
+  const MAX_STATE_ATTRS = 50;
 
   const text = (s) => {
     const t = (s ?? "").replace(/\s+/g, " ").trim();
@@ -24,11 +27,19 @@
     return !!hex && /\d/.test(hex[0]) && /[a-f]/i.test(hex[0]);
   };
 
+  /** Attribute values longer than this are page content, not structure. */
+  const short = (v) =>
+    typeof v === "string" && v !== "" && v.length <= ATTR_CAP;
+  const cut = (v) =>
+    typeof v === "string" && v.length > ATTR_CAP
+      ? `${v.slice(0, ATTR_CAP)}…`
+      : v;
+
   const visible = (el) => {
     if (!(el instanceof Element)) return false;
     if (
       typeof el.checkVisibility === "function" &&
-      !el.checkVisibility({ checkOpacity: false, checkVisibilityCSS: true })
+      !el.checkVisibility({ visibilityProperty: true })
     )
       return false;
     const box = el.getBoundingClientRect();
@@ -36,11 +47,29 @@
   };
 
   const q = (v) => `"${String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+
+  /** Counting matches is the probe's hot path: one document query per
+   * candidate selector. `cached()` makes a whole report cost each distinct
+   * selector once; the cache never outlives one call, so it cannot go stale. */
+  let countCache = null;
   const count = (sel) => {
+    if (countCache?.has(sel)) return countCache.get(sel);
+    let n;
     try {
-      return document.querySelectorAll(sel).length;
+      n = document.querySelectorAll(sel).length;
     } catch {
-      return -1;
+      n = -1;
+    }
+    countCache?.set(sel, n);
+    return n;
+  };
+  const cached = (fn) => {
+    const outer = countCache;
+    countCache = new Map();
+    try {
+      return fn();
+    } finally {
+      countCache = outer;
     }
   };
 
@@ -54,24 +83,32 @@
     return el.tagName.toLowerCase() + names.map((n) => `[${n}]`).join("");
   };
 
-  /** How good a data-* attribute is at naming one element: a test id first,
-   * then an identity attribute, then anything else. */
-  const dataRank = (name) => {
+  /** `data-message-id` names one turn; `data-turn` names every turn. */
+  const identityAttr = (name) => /(^|-)ids?$/.test(name);
+
+  /** How good a data-* attribute is at naming an element. A test id always
+   * wins. After that the answer depends on the question: to point at one
+   * element on this page, identity beats description; to write a selector into
+   * a provider, description beats identity, because the identity is gone next
+   * turn. */
+  const dataRank = (name, identityFirst) => {
     if (name === "data-testid" || name === "data-test-id") return 0;
-    if (/(^|-)ids?$/.test(name)) return 1;
-    return 2;
+    return identityAttr(name) === !!identityFirst ? 1 : 2;
   };
 
   /** Attribute-based selectors for one element, best first, uniqueness not
    * checked. `unstable` collects what was rejected and why. */
-  const selectorsOf = (el, unstable = []) => {
+  const selectorsOf = (el, unstable = [], identityFirst = false) => {
     const tag = el.tagName.toLowerCase();
     const out = [];
     const data = Array.from(el.attributes)
       .filter((a) => a.name.startsWith("data-"))
-      .sort((a, b) => dataRank(a.name) - dataRank(b.name));
+      .sort(
+        (a, b) =>
+          dataRank(a.name, identityFirst) - dataRank(b.name, identityFirst),
+      );
     for (const a of data) {
-      if (a.value === "" || a.value.length > 60) continue;
+      if (!short(a.value)) continue;
       if (generated(a.value)) {
         unstable.push(`${a.name}: generated value`);
         continue;
@@ -80,19 +117,23 @@
     }
     if (el.id) {
       if (generated(el.id)) unstable.push("id: generated value");
-      else out.push(`#${CSS.escape(el.id)}`);
+      else if (short(el.id)) out.push(`#${CSS.escape(el.id)}`);
     }
     const role = el.getAttribute("role");
     const label = el.getAttribute("aria-label");
-    if (role && label) out.push(`[role=${q(role)}][aria-label=${q(label)}]`);
-    if (label) out.push(`${tag}[aria-label=${q(label)}]`);
+    const usableRole = short(role) ? role : null;
+    const usableLabel = short(label) ? label : null;
+    if (usableRole && usableLabel)
+      out.push(`[role=${q(usableRole)}][aria-label=${q(usableLabel)}]`);
+    if (usableLabel) out.push(`${tag}[aria-label=${q(usableLabel)}]`);
     for (const name of ["name", "placeholder", "title"]) {
       const v = el.getAttribute(name);
-      if (v) out.push(`${tag}[${name}=${q(v)}]`);
+      if (short(v)) out.push(`${tag}[${name}=${q(v)}]`);
     }
     if (el.getAttribute("contenteditable") === "true")
       out.push(`${tag}[contenteditable="true"]`);
-    if (role) out.push(`[role=${q(role)}]`, `${tag}[role=${q(role)}]`);
+    if (usableRole)
+      out.push(`[role=${q(usableRole)}]`, `${tag}[role=${q(usableRole)}]`);
     if (el.classList.length > 0)
       unstable.push("class: never used as a locator");
     return out;
@@ -100,8 +141,8 @@
 
   /** Unique locators: own attributes first, then scoped under the nearest
    * ancestor that has a unique locator of its own. */
-  const locatorsOf = (el, unstable = []) => {
-    const own = selectorsOf(el, unstable);
+  const locatorsOf = (el, unstable = [], identityFirst = false) => {
+    const own = selectorsOf(el, unstable, identityFirst);
     const unique = own.filter((s) => count(s) === 1);
     if (unique.length > 0) return unique;
     const tag = el.tagName.toLowerCase();
@@ -110,7 +151,9 @@
       a && a !== document.body;
       a = a.parentElement
     ) {
-      const anchor = selectorsOf(a).find((s) => count(s) === 1);
+      const anchor = selectorsOf(a, [], identityFirst).find(
+        (s) => count(s) === 1,
+      );
       if (!anchor) continue;
       const scoped = [
         ...own.map((s) => `${anchor} ${s}`),
@@ -123,9 +166,35 @@
   };
 
   /** One readable handle for an element in event logs; may not be unique. */
-  const describeEl = (el) => {
+  const describeEl = (el, identityFirst = false) => {
     if (!(el instanceof Element)) return "(text)";
-    return locatorsOf(el)[0] ?? selectorsOf(el)[0] ?? shape(el);
+    return (
+      locatorsOf(el, [], identityFirst)[0] ??
+      selectorsOf(el, [], identityFirst)[0] ??
+      shape(el)
+    );
+  };
+
+  /** A selector for the element's whole family: what it has in common with the
+   * same element from every other turn. Identity attributes are left out on
+   * purpose — this is the selector a provider keeps. */
+  const collectionOf = (el) => {
+    const identities = new Set(
+      Array.from(el.attributes)
+        .filter((a) => identityAttr(a.name))
+        .map((a) => a.value),
+    );
+    const parts = [];
+    for (const a of el.attributes) {
+      if (!a.name.startsWith("data-") || identityAttr(a.name)) continue;
+      if (!short(a.value) || generated(a.value) || identities.has(a.value))
+        continue;
+      parts.push(`[${a.name}=${q(a.value)}]`);
+    }
+    const role = el.getAttribute("role");
+    if (short(role)) parts.push(`[role=${q(role)}]`);
+    const selector = el.tagName.toLowerCase() + parts.join("");
+    return { selector, count: count(selector) };
   };
 
   const name = (el) =>
@@ -165,7 +234,9 @@
 
   // ---- census -----------------------------------------------------------
 
-  function census() {
+  const census = () => cached(censusUncached);
+
+  function censusUncached() {
     const all = (sel) => Array.from(document.querySelectorAll(sel));
     const clickable = all('button, [role="button"], a[href]');
     const signInEls = clickable.filter((el) => SIGN_IN.test(hints(el)));
@@ -173,8 +244,19 @@
       (el) => !signInEls.includes(el) && ACCOUNT.test(hints(el)),
     );
 
-    const messageLists = [];
+    // One pass over the document collecting element references and cheap
+    // facts only. Locators cost a document query each, so they are computed
+    // after the ranking and the slice, for the rows that are kept.
+    const listRows = [];
+    const stateRows = [];
+    const dataAttrCensus = {};
     for (const el of all("body *")) {
+      for (const a of el.attributes) {
+        if (a.name.startsWith("data-"))
+          dataAttrCensus[a.name] = (dataAttrCensus[a.name] ?? 0) + 1;
+        if (STATE_ATTR.test(a.name))
+          stateRows.push({ el, attr: a.name, value: cut(a.value) });
+      }
       const live =
         el.getAttribute("role") === "log" || el.hasAttribute("aria-live");
       if (el.children.length < (live ? 1 : 2)) continue;
@@ -185,28 +267,22 @@
       }
       const [childShape, n] = Array.from(shapes).sort((a, b) => b[1] - a[1])[0];
       if (!live && (n < 2 || !childShape.includes("["))) continue;
-      messageLists.push({
-        locator: describeEl(el),
-        children: el.children.length,
-        childShape,
-      });
+      listRows.push({ el, children: el.children.length, childShape });
     }
-    messageLists.sort((a, b) => b.children - a.children);
 
-    const stateAttrs = [];
-    const dataAttrCensus = {};
-    for (const el of all("body *")) {
-      for (const a of el.attributes) {
-        if (a.name.startsWith("data-"))
-          dataAttrCensus[a.name] = (dataAttrCensus[a.name] ?? 0) + 1;
-        if (STATE_ATTR.test(a.name))
-          stateAttrs.push({
-            locator: describeEl(el),
-            attr: a.name,
-            value: a.value,
-          });
-      }
-    }
+    const messageLists = listRows
+      .sort((a, b) => b.children - a.children)
+      .slice(0, MAX_LISTS)
+      .map((row) => ({
+        locator: describeEl(row.el),
+        children: row.children,
+        childShape: row.childShape,
+      }));
+    const stateAttrs = stateRows.slice(0, MAX_STATE_ATTRS).map((row) => ({
+      locator: describeEl(row.el),
+      attr: row.attr,
+      value: row.value,
+    }));
 
     return {
       url: location.origin + location.pathname,
@@ -224,8 +300,8 @@
         .map(candidate),
       account: accountEls.map(candidate),
       signIn: signInEls.map(candidate),
-      messageLists: messageLists.slice(0, 10),
-      stateAttrs: stateAttrs.slice(0, 50),
+      messageLists,
+      stateAttrs,
       dataAttrCensus,
     };
   }
@@ -247,6 +323,7 @@
 
   function start() {
     if (rec) rec.observer.disconnect();
+    lastStreaming = null;
     const t0 = performance.now();
     const state = {
       t0,
@@ -291,6 +368,10 @@
       state.growth.set(root, g);
     };
 
+    // The callback runs inside the page's own work, so it stays cheap: it
+    // keeps element references and raw values, and stop() turns them into
+    // locators. Computing a locator here would mean a document query per
+    // mutation, which would slow the page and skew the timings below.
     state.observer = new MutationObserver((mutations) => {
       for (const m of mutations) {
         if (m.type === "characterData") {
@@ -307,7 +388,10 @@
             if (room())
               state.swaps.push({
                 t: now(),
-                changed: `${describeEl(el)} ${m.attributeName}: ${m.oldValue} → ${to}`,
+                el,
+                attr: m.attributeName,
+                from: cut(m.oldValue),
+                to: cut(to),
               });
           }
           if (m.attributeName === "class" || m.attributeName === "style")
@@ -315,10 +399,10 @@
           if (room())
             state.attrs.push({
               t: now(),
-              locator: describeEl(el),
+              el,
               attr: m.attributeName,
-              from: m.oldValue,
-              to,
+              from: cut(m.oldValue),
+              to: cut(to),
             });
           continue;
         }
@@ -330,13 +414,9 @@
           if (!(node instanceof Element)) continue;
           for (const b of buttonsIn(node))
             if (!insideAdded && room())
-              state.swaps.push({ t: now(), appeared: describeEl(b) });
+              state.swaps.push({ t: now(), el: b, appeared: true });
           if (insideAdded) continue;
-          const entry = {
-            t: now(),
-            locator: describeEl(node),
-            shape: shape(node),
-          };
+          const entry = { t: now(), el: node, shape: shape(node) };
           // A control that comes and goes is a button swap, not a turn.
           if (isButton(node)) entry.isControl = true;
           state.addedNodes.set(node, entry);
@@ -345,17 +425,19 @@
         for (const node of m.removedNodes) {
           if (!(node instanceof Element)) continue;
           for (const b of buttonsIn(node)) {
-            // Detached: uniqueness cannot be checked any more.
+            // Detached: uniqueness cannot be checked any more, so the
+            // attribute-only selector is taken now, while the node still has
+            // its attributes. That costs no document query.
             if (!insideAdded && room())
               state.swaps.push({
                 t: now(),
-                gone: selectorsOf(b)[0] ?? shape(b),
+                gone: selectorsOf(b, [], true)[0] ?? shape(b),
               });
           }
           const entry = state.addedNodes.get(node);
           if (entry) {
             entry.removedAt = now();
-            entry.locator = selectorsOf(node)[0] ?? entry.locator;
+            entry.goneLocator = selectorsOf(node, [], true)[0];
           }
         }
       }
@@ -377,26 +459,57 @@
     const state = rec;
     rec = null;
     state.observer.disconnect();
-    const durationMs = Math.round(performance.now() - state.t0);
+    return cached(() => report(state));
+  }
 
-    const textGrowth = Array.from(state.growth, ([el, g]) => ({
-      locator: describeEl(el),
+  /** Turns the recorded references into locators. One place, one cache. */
+  function report(state) {
+    const durationMs = Math.round(performance.now() - state.t0);
+    // An event names the element it happened to, so identity attributes lead.
+    const at = (el) => describeEl(el, true);
+
+    const grown = Array.from(state.growth, ([el, g]) => ({ el, ...g }))
+      .filter((g) => g.updates >= 2)
+      .sort((a, b) => b.updates - a.updates);
+    lastStreaming = grown[0]?.el ?? null;
+    const textGrowth = grown.map((g) => ({
+      locator: at(g.el),
+      collection: collectionOf(g.el),
       firstAt: g.firstAt,
       lastAt: g.lastAt,
       updates: g.updates,
-      finalLength: (el.textContent ?? "").length,
-    }))
-      .filter((g) => g.updates >= 2)
-      .sort((a, b) => b.updates - a.updates);
+      finalLength: (g.el.textContent ?? "").length,
+    }));
+
+    const added = state.added.map((a) => {
+      const entry = {
+        t: a.t,
+        locator:
+          a.removedAt === undefined ? at(a.el) : (a.goneLocator ?? at(a.el)),
+        shape: a.shape,
+      };
+      if (a.isControl) entry.isControl = true;
+      if (a.removedAt !== undefined) entry.removedAt = a.removedAt;
+      return entry;
+    });
+    const attrs = state.attrs.map((a) => ({
+      t: a.t,
+      locator: at(a.el),
+      attr: a.attr,
+      from: a.from,
+      to: a.to,
+    }));
+    const buttonsSwapped = state.swaps.map((s) => {
+      if (s.gone !== undefined) return { t: s.t, gone: s.gone };
+      if (s.appeared) return { t: s.t, appeared: at(s.el) };
+      return {
+        t: s.t,
+        changed: `${at(s.el)} ${s.attr}: ${s.from} → ${s.to}`,
+      };
+    });
 
     const streaming = textGrowth[0];
-    lastStreaming = streaming
-      ? (Array.from(state.growth.keys()).find(
-          (el) => describeEl(el) === streaming.locator,
-        ) ?? null)
-      : null;
-
-    const placeholderTurns = state.added
+    const placeholderTurns = added
       .filter((a) => a.removedAt !== undefined && !a.isControl)
       .map(
         (a) =>
@@ -405,7 +518,7 @@
 
     // Last event per distinct signal; keep those at or after the last text update.
     const last = new Map();
-    for (const a of state.attrs)
+    for (const a of attrs)
       if (
         STATE_ATTR.test(a.attr) ||
         a.attr === "disabled" ||
@@ -415,7 +528,7 @@
           t: a.t,
           line: `attribute ${a.attr} on ${a.locator}: ${a.from} → ${a.to} @${a.t}ms`,
         });
-    for (const s of state.swaps) {
+    for (const s of buttonsSwapped) {
       const what = s.gone
         ? `button gone: ${s.gone}`
         : s.appeared
@@ -432,13 +545,17 @@
 
     const result = {
       durationMs,
-      added: state.added,
-      attrs: state.attrs,
+      added,
+      attrs,
       textGrowth,
-      buttonsSwapped: state.swaps,
+      buttonsSwapped,
       summary: { placeholderTurns, doneCandidates },
     };
-    if (streaming) result.summary.streamingElement = streaming.locator;
+    if (streaming) {
+      // The instance that streamed, and the family a provider should select.
+      result.summary.streamingElement = streaming.locator;
+      result.summary.streamingCollection = streaming.collection;
+    }
     if (state.truncated) result.truncated = true;
     return result;
   }
@@ -447,7 +564,9 @@
 
   const CONTENT = "p, pre, ul, ol, table, blockquote, h1, h2, h3, h4, h5, h6";
 
-  function replyShape(selector) {
+  const replyShape = (selector) => cached(() => replyShapeUncached(selector));
+
+  function replyShapeUncached(selector) {
     let root = selector ? document.querySelector(selector) : lastStreaming;
     if (!root || !root.isConnected) {
       const list = census().messageLists[0];
