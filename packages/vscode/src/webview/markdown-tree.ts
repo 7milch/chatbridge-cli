@@ -108,7 +108,7 @@ function blocks(tokens: Token[]): TreeNode[] {
           tag: list.ordered ? "ol" : "ul",
           children: list.items.map(listItem),
         };
-        if (list.ordered && Number(list.start) !== 1 && list.start !== "") {
+        if (list.ordered && Number(list.start) !== 1) {
           node.className = `start-${Number(list.start)}`;
         }
         out.push(node);
