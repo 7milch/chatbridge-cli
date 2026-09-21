@@ -12,8 +12,8 @@ line `Not yet observed.` is gone.
 
 Not yet observed.
 
-<!-- Fill from dom-discovery.md steps 2-4 (logged out census, human login,
-logged in census). Remove "Not yet observed." when done.
+<!-- Fill from dom-discovery.md steps 1-4 (entry URL, logged out census,
+human login, logged in census). Remove "Not yet observed." when done.
 Observed: YYYY-MM-DD
 | Constant | Selector | verify() count | visible |
 |---|---|---|---|
@@ -39,7 +39,7 @@ the composer appears): -->
 
 Not yet observed.
 
-<!-- Fill from dom-discovery.md step 7. Remove "Not yet observed." when done.
+<!-- Fill from dom-discovery.md step 8. Remove "Not yet observed." when done.
 Observed: YYYY-MM-DD
 | Constant | Selector | verify() count | visible |
 |---|---|---|---|
@@ -51,7 +51,7 @@ provider.ts; is the composer empty afterwards?): -->
 
 Not yet observed.
 
-<!-- Fill from dom-discovery.md step 4. Remove "Not yet observed." when done.
+<!-- Fill from dom-discovery.md steps 4-5. Remove "Not yet observed." when done.
 Observed: YYYY-MM-DD
 | Constant | Selector | verify() count | visible |
 |---|---|---|---|
@@ -84,7 +84,7 @@ replyShape().chromeInsideContent, virtualized list?): -->
 
 Not yet observed.
 
-<!-- Fill from dom-discovery.md steps 5-6. Remove "Not yet observed." when done.
+<!-- Fill from dom-discovery.md steps 5-7. Remove "Not yet observed." when done.
 Observed: YYYY-MM-DD
 | Constant | Selector | verify() count | visible |
 |---|---|---|---|
@@ -97,7 +97,7 @@ VARIANT; if doneCandidates is empty, say so and rely on the stability read): -->
 
 Not yet observed.
 
-<!-- Fill from dom-discovery.md steps 2-6, plus anything seen by accident.
+<!-- Fill from dom-discovery.md step 2, plus anything seen by accident.
 Remove "Not yet observed." when done.
 Observed: YYYY-MM-DD
 | Constant | Value | Seen as |
@@ -110,7 +110,7 @@ refusal page; rate-limit banner and how long it lasts; session expiry): -->
 
 Not yet observed.
 
-<!-- Fill from dom-discovery.md steps 5-6. Remove "Not yet observed." when done.
+<!-- Fill from dom-discovery.md steps 5-7. Remove "Not yet observed." when done.
 Observed: YYYY-MM-DD
 Which element grows while the reply streams (summary.streamingElement)?
 How is it told apart from the previous turn's element (assistant/user count,

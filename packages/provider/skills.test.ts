@@ -60,6 +60,44 @@ describe("creating-provider-repo", () => {
       expect(body, m[1]).toContain(m[1] ?? "");
     expect(body).not.toContain("headless and cannot");
   });
+
+  test("dom-notes.md cites steps that exist and that fill its constants", () => {
+    const discovery = read("creating-provider-repo/dom-discovery.md");
+    /** Step number → everything from that step's **Write** part to its end. */
+    const writes = new Map<string, string>();
+    const steps = discovery.split(/^### Step (\d+) — /m).slice(1);
+    for (let i = 0; i < steps.length; i += 2) {
+      const number = steps[i] ?? "";
+      const body = steps[i + 1] ?? "";
+      const at = body.indexOf("**Write**");
+      writes.set(number, at === -1 ? "" : body.slice(at));
+    }
+    expect(writes.size).toBeGreaterThan(5);
+
+    const notes = read("creating-provider-repo/templates/docs/dom-notes.md");
+    for (const section of notes.split(/^## /m).slice(1)) {
+      const name = (section.split("\n")[0] ?? "").trim();
+      const cited = new Set<string>();
+      for (const m of section.matchAll(/steps? (\d+)(?:-(\d+))?/g)) {
+        const from = Number(m[1]);
+        const to = Number(m[2] ?? m[1]);
+        for (let n = from; n <= to; n++) cited.add(String(n));
+      }
+      expect(cited.size, `${name}: cites no step`).toBeGreaterThan(0);
+      let filled = "";
+      for (const n of cited) {
+        expect(writes.has(n), `${name}: dom-discovery has no step ${n}`).toBe(
+          true,
+        );
+        filled += writes.get(n) ?? "";
+      }
+      for (const m of section.matchAll(/^\| ([A-Z_]+) \|/gm))
+        expect(
+          filled,
+          `${name}: ${m[1]} is in no cited step's Write`,
+        ).toContain(m[1] ?? "");
+    }
+  });
 });
 
 describe("packaging", () => {

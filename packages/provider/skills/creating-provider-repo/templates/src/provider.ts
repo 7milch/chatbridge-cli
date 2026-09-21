@@ -18,7 +18,11 @@ const countBefore = new WeakMap<Page, number>();
 const visibleOnly = (page: Page, selector: string): Locator =>
   page.locator(selector).locator("visible=true");
 
-/** The newest assistant turn's readable content. */
+/** The newest assistant turn's readable content. ASSISTANT_MESSAGE_BODY is a
+ * selector for a DESCENDANT of one turn, so a `:scope > …` form is fine here.
+ * VARIANT (decision table "the reply has no content child"): when the turn
+ * element is itself the content, drop the second locator call —
+ * `page.locator(S.ASSISTANT_MESSAGE).last()`. */
 const newestBody = (page: Page): Locator =>
   page
     .locator(S.ASSISTANT_MESSAGE)
