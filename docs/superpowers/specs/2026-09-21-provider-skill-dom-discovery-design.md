@@ -12,8 +12,13 @@ is baked into the skill ahead of time as scripts, templates and decision tables.
 The step that fails today is DOM discovery, so that is where the work goes. The
 rest of the skill is reorganised only as far as self-containment requires.
 
-Non-goals: a discovery subagent definition, packaging the skill as a plugin or
-npm package, any change to `@chatbridge/*` runtime code, bot-protection evasion
+A second goal, added on review: the same model can bring an **existing** vendor
+repository up to a newer framework version on a one-sentence instruction,
+including features that need fresh DOM observation (Markdown replies,
+streaming).
+
+Non-goals: a discovery subagent definition, a Claude Code plugin, any change
+to `@chatbridge/*` runtime code, bot-protection evasion
 (`CLAUDE.md`), reading or exporting cookies or tokens.
 
 ## Facts this design rests on
@@ -58,7 +63,7 @@ dot so they are neither ignored nor picked up as live config in this
 repository; the procedure renames them.
 
 `.agents/skills/` holds a stale second copy of both skills. It becomes a
-symlink to `../.claude/skills` so the two cannot drift again.
+symlink so the two cannot drift again (see §7.1 for where the source lives).
 
 ## 2. The probe script
 
@@ -271,7 +276,107 @@ dummy server and the task "build a provider for `http://localhost:<port>/hard`".
 The subagent drives Playwright MCP with the init script; the "human logs in"
 step is played by the controller clicking the dummy login button.
 
-## 7. Order of work
+## 7. Following new framework versions in an existing vendor repo
+
+Two problems: the vendor's copy of the skill is as old as the day it was
+copied, and nothing tells the model what a version bump asks of a provider.
+
+### 7.1 The skills ship inside `@chatbridge/provider`
+
+The source of truth moves to `packages/provider/skills/` and `"skills"` joins
+that package's `files`. `.claude/skills/creating-provider-repo`,
+`.claude/skills/upgrading-provider-repo` and `.agents/skills` in this
+repository become symlinks into it. A vendor repository therefore always has
+the skills that match its installed framework version, and refreshes its copy
+with one command, run after every bump:
+
+```sh
+rm -rf .claude/skills/creating-provider-repo .claude/skills/upgrading-provider-repo
+cp -R node_modules/@chatbridge/provider/skills/. .claude/skills/
+```
+
+A packaging test runs `bun pm pack --dry-run` for the package and asserts the
+skill files are listed.
+
+### 7.2 A second skill: `upgrading-provider-repo`
+
+Description: "Use when bumping `@chatbridge/*` in an existing vendor provider
+repository, or when asked to adopt a framework feature the provider does not
+use yet (Markdown replies, streaming, slash commands, URL hooks, idle
+timeout)." It shares `probes/` and `templates/` with the sibling skill by
+relative path; the two are always copied together.
+
+Procedure, fixed:
+
+1. Read the current pin from `package.json`; `npm view @chatbridge/cli version`
+   for the target. Bump every `@chatbridge/*` to the one exact target version
+   and `playwright-core` to the runtime's, reinstall, run the nested-copy check.
+2. Refresh the skills (7.1) and re-read this skill from the new copy.
+3. Open `upgrade-guide.md`, take every entry above the old pin up to the
+   target, oldest first. Do each entry's **Required** steps; list its
+   **Optional** steps to the user and do the ones they pick.
+4. Run each entry's **Verify** block, then `bun run check` and the gated E2E.
+5. One commit per entry.
+
+### 7.3 `upgrade-guide.md`
+
+One entry per released version that changed anything a vendor sees, newest
+first, in a fixed shape so the model never has to infer an action from
+release notes:
+
+```
+## 0.10.0
+Required: none.
+Optional — Markdown replies
+  Needs DOM observation: yes → dom-discovery.md step 5, then `replyShape()`
+  Change: selectors.ts + provider.ts, exact diff against templates/src/provider.ts
+  Verify: the Markdown fidelity E2E (templates/src/provider.e2e.test.ts)
+Optional — Streaming …
+VSCode manifest: none.
+```
+
+Entries are written back to 0.9.0 (slash commands, URL hooks, `<id>.reopen`,
+view title bar, idle timeout, reduced motion); older vendors are told to
+re-scaffold from the templates instead.
+
+Keeping it current is a process rule, added to `CLAUDE.md` and to
+`docs/PUBLISHING.md`: a PR that changes the `Provider` type, `createCli` /
+`createExtension` options, or the required VSCode `contributes` adds its
+`upgrade-guide.md` entry in the same PR. Detecting "this PR changed the
+vendor-facing surface" is too indirect to test reliably, so it is a checklist
+item of the whole-branch review. What is tested: the guide has an entry
+heading for the current `packages/provider/package.json` minor version, even
+if that entry says "Required: none. Optional: none."
+
+### 7.4 Markdown support for the probe and the templates
+
+- `window.__cbProbe.replyShape(selector?)` — for the newest reply element
+  (or the given one): its tag census, which descendants are chrome rather than
+  content (buttons, toolbars, code-block headers and language labels,
+  "thinking" sections, citations), where the code language is carried (class on
+  `<pre>` / `<code>`, a header label, nothing), and the smallest descendant
+  that contains all content and no chrome. That descendant is the locator to
+  hand to `elementToMarkdown`; text is again reported as lengths only.
+- Decision-table rows: chrome inside the reply element → point the locator at
+  the content child; language only in a header label → note it as a known
+  loss; content child absent while streaming → `responseText` returns
+  `undefined` until it exists.
+- The E2E template gains a **Markdown fidelity** test: it asks the service to
+  repeat a fixed sample (heading, nested list, fenced code with a language, a
+  table, bold, a link) and asserts on structure (a `#` line, a fence with the
+  language, a `|---|` row), never on exact text. The `/hard` skin renders its
+  replies with a code-block header and a copy button so the automated tests
+  cover the same path.
+
+### 7.5 What the user types
+
+New vendor: "Use the creating-provider-repo skill for `<service URL>`."
+Existing vendor: "Bump `@chatbridge/*` to the latest and follow the
+upgrading-provider-repo skill." For one feature: "… and adopt Markdown
+replies." The README of `@chatbridge/provider` carries these three lines and
+the refresh command.
+
+## 8. Order of work
 
 1. Spike: confirm `--init-script` + `browser_evaluate` + `--user-data-dir`
    behave as described, on the dummy chat. Adjust this spec if not.
@@ -279,6 +384,12 @@ step is played by the controller clicking the dummy login button.
 3. RED baseline run with the current skill; post the findings to #113.
 4. Probe script with its tests.
 5. Templates with their tests.
-6. `dom-discovery.md`, `vscode-extension.md`, slimmed `SKILL.md`, `.agents` symlink.
-7. GREEN runs, refactor loop.
-8. Whole-branch review, PR labelled `documentation`.
+6. `dom-discovery.md`, `vscode-extension.md`, slimmed `SKILL.md`.
+7. Move the skills into `packages/provider/skills/`, symlinks, packaging test.
+8. `upgrading-provider-repo` and `upgrade-guide.md` (entries back to 0.9.0),
+   process rule in `CLAUDE.md` and `docs/PUBLISHING.md`.
+9. GREEN runs, refactor loop. One extra scenario for the upgrade skill: a
+   scratch vendor repo built from the text-only provider of step 3, task
+   "adopt Markdown replies".
+10. Whole-branch review, PR labelled `enhancement` (the published package
+    changes).
