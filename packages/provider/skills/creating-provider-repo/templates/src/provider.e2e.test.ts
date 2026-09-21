@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ChatSession, createAuthStore } from "@chatbridge/core";
+import { chromium } from "playwright-core";
 import provider from "./provider.js";
 
 // Real-service E2E. Runs only when explicitly enabled and a saved auth state
@@ -36,6 +37,19 @@ describe.skipIf(!enabled)("<vendor> real service", () => {
     }
   }, 300_000);
 
+  test("a guest is not logged in", async () => {
+    // A fresh context has no auth state: a composer that guests can see, or a
+    // URL test, must not read as logged in.
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage();
+      await page.goto(provider.chatUrl);
+      expect(await provider.isLoggedIn(page)).toBe(false);
+    } finally {
+      await browser.close();
+    }
+  }, 60_000);
+
   test("Markdown fidelity", async () => {
     const session = await ChatSession.open({
       provider,
@@ -45,7 +59,9 @@ describe.skipIf(!enabled)("<vendor> real service", () => {
     });
     try {
       const reply = await session.send(MARKDOWN_SAMPLE);
-      expect(reply).toMatch(/^# /m);
+      // Structure only. A service that will not repeat text verbatim needs
+      // the subset that does not quote the sample: heading, fence, table.
+      expect(reply).toMatch(/^#{1,6} /m);
       expect(reply).toMatch(/^\s+- nested/m);
       expect(reply).toMatch(/^```ts$/m);
       expect(reply).toMatch(/^\|\s*-+/m);

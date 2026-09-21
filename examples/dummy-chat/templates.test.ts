@@ -135,6 +135,24 @@ describe("template provider on the hard skin", () => {
     await context.close();
   }, 30_000);
 
+  test("an empty SIGN_IN_CONTROL lets the account control decide alone", async () => {
+    const root = instantiate({
+      CHAT_URL: `${server.url}/hard/chat`,
+      ACCOUNT_CONTROL: '[data-testid="account-menu"]',
+    });
+    const alone: Provider = (await import(join(root, "src", "provider.ts")))
+      .default;
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.goto(`${server.url}/hard/login`);
+    await page.click('[data-testid="login-submit"]');
+    expect(await alone.isLoggedIn(page)).toBe(true);
+    await context.clearCookies();
+    await page.goto(`${server.url}/hard/chat`);
+    expect(await alone.isLoggedIn(page)).toBe(false);
+    await context.close();
+  }, 30_000);
+
   test("off-origin pages are logged out without touching the DOM", async () => {
     const context = await browser.newContext();
     const page = await context.newPage();

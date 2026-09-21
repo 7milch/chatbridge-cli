@@ -50,14 +50,22 @@ export default defineProvider({
     )
       return false;
     try {
-      const signIn = visibleOnly(page, S.SIGN_IN_CONTROL);
       const account = visibleOnly(page, S.ACCOUNT_CONTROL);
-      await signIn
-        .or(account)
+      // Decision table "no sign-in control found": SIGN_IN_CONTROL is empty
+      // and the account control decides alone (a logged-out poll then takes
+      // the full 10 s). An empty selector must never reach page.locator().
+      const signIn =
+        S.SIGN_IN_CONTROL.length > 0
+          ? visibleOnly(page, S.SIGN_IN_CONTROL)
+          : undefined;
+      await (signIn ? signIn.or(account) : account)
         .first()
         .waitFor({ state: "visible", timeout: 10_000 });
       // A guest composer proves nothing: account present AND sign-in absent.
-      return (await account.count()) > 0 && (await signIn.count()) === 0;
+      return (
+        (await account.count()) > 0 &&
+        (signIn === undefined || (await signIn.count()) === 0)
+      );
     } catch {
       return false;
     }
@@ -115,7 +123,10 @@ export default defineProvider({
       { selector: S.ASSISTANT_MESSAGE, count: before },
       { timeout: NEW_TURN_TIMEOUT_MS },
     );
-    // 3. Stability read: two equal reads 500 ms apart.
+    // 3. Stability read: two equal reads 500 ms apart. `deadline` was set
+    //    before step 1, so the whole method shares one budget: if the done
+    //    wait spent nearly all of it the loop runs zero times and the single
+    //    read below is the answer; if it spent all of it, step 1 has thrown.
     let previous = await elementToMarkdown(newestBody(page));
     while (Date.now() < deadline) {
       await page.waitForTimeout(500);

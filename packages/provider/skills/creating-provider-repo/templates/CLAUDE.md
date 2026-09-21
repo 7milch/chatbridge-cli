@@ -34,7 +34,9 @@ the pin here.
 - `bun run check` passes before every commit.
 - Never run a formatter, a codemod or any other write over `.auth/` or
   `.playwright-mcp/`: `.auth/mcp-profile` is a live browser profile.
-- Everything committed is English.
+- Everything committed is English — prose, comments, commit messages. Selector
+  values and `docs/dom-notes.md` may carry the service's own labels and
+  attribute values in its language.
 
 ## Commands
 
