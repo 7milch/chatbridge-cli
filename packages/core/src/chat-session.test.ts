@@ -75,6 +75,10 @@ interface Harness {
   newChats: number;
   /** Every URL the pages of this harness were told to go to. */
   gotos: string[];
+  /** One entry per launch, in order. */
+  pages: Page[];
+  /** The page each startNewChat ran on. */
+  newChatPages: Page[];
 }
 
 function harness(): Harness {
@@ -94,6 +98,8 @@ function harness(): Harness {
     commandResult: { kind: "show", text: "ok" },
     newChats: 0,
     gotos: [],
+    pages: [],
+    newChatPages: [],
     provider: undefined as unknown as Provider,
     launch: undefined as unknown as Harness["launch"],
   };
@@ -105,8 +111,9 @@ function harness(): Harness {
       if (h.loginGate !== undefined) await h.loginGate;
       return h.loggedIn;
     },
-    async startNewChat() {
+    async startNewChat(page) {
       h.newChats++;
+      h.newChatPages.push(page);
     },
     async sendMessage(_page, prompt) {
       h.sent.push(prompt);
@@ -139,7 +146,11 @@ function harness(): Harness {
     },
   });
   h.launch = async () => ({
-    page: fakePage(h.gotos),
+    page: (() => {
+      const page = fakePage(h.gotos);
+      h.pages.push(page);
+      return page;
+    })(),
     saveAuthState: async () => {
       if (h.saveShouldFail) throw new Error("disk full");
       h.saved++;
@@ -1290,7 +1301,7 @@ describe("conversation restore and handle refresh", () => {
     await s.kill();
   });
 
-  test("an open that never settles falls back after the opening timeout", async () => {
+  test("an open that never settles gives up the page and relaunches", async () => {
     const h = harness();
     const spy = withConversation(h);
     spy.openImpl = () => new Promise<void>(() => {});
@@ -1299,7 +1310,66 @@ describe("conversation restore and handle refresh", () => {
       open: { timeoutMs: 30, retries: 0 },
       conversation: "H-1",
     });
+    // The page `open` still holds is abandoned, not reused.
+    expect(h.pages.length).toBe(2);
+    expect(h.closed).toBe(1);
     expect(h.newChats).toBe(1);
+    expect(h.newChatPages).toEqual([h.pages[1]]);
+    expect(s.restored).toBe(false);
+    expect(s.conversation).toBeUndefined();
+    await s.kill();
+  });
+
+  test("an open that settles late cannot navigate the session's page", async () => {
+    const h = harness();
+    const spy = withConversation(h);
+    let late!: Promise<void>;
+    spy.openImpl = (page) => {
+      // Settles well after the 30 ms budget, then navigates its own page.
+      late = new Promise<void>((resolve) => setTimeout(resolve, 80)).then(
+        async () => {
+          await page.goto("https://other.test/late");
+        },
+      );
+      return late;
+    };
+    const s = await ChatSession.open({
+      ...opts(h),
+      open: { timeoutMs: 30, retries: 0 },
+      conversation: "H-1",
+    });
+    await late;
+    expect(s.restored).toBe(false);
+    // The abandoned page went elsewhere; the session's page did not.
+    expect(h.pages[0]?.url()).toBe("https://other.test/late");
+    expect(h.pages[1]?.url()).toBe(CHAT_URL);
+    await s.kill();
+  });
+
+  test.each([
+    [
+      "a throwing open",
+      (spy: ConvoSpy) => {
+        spy.openImpl = async () => {
+          throw new Error("nope");
+        };
+      },
+    ],
+    [
+      "an off-origin open",
+      (spy: ConvoSpy) => {
+        spy.openImpl = async (page) => {
+          await page.goto("https://other.test/x");
+        };
+      },
+    ],
+  ])("%s keeps the page it was given", async (_name, setUp) => {
+    const h = harness();
+    setUp(withConversation(h));
+    const s = await ChatSession.open({ ...opts(h), conversation: "H-1" });
+    expect(h.pages.length).toBe(1);
+    expect(h.closed).toBe(0);
+    expect(h.newChatPages).toEqual([h.pages[0]]);
     expect(s.restored).toBe(false);
     await s.kill();
   });
@@ -1343,7 +1413,7 @@ describe("conversation restore and handle refresh", () => {
     await s.kill();
   });
 
-  test("a handle of undefined keeps the previous one", async () => {
+  test('a handle of undefined or of "" keeps the previous one', async () => {
     const h = harness();
     const spy = withConversation(h);
     const s = await ChatSession.open({ ...opts(h), conversation: "H-1" });
@@ -1351,6 +1421,12 @@ describe("conversation restore and handle refresh", () => {
     const p = turn(s);
     (await replyOf(h, 0)).resolve("reply");
     await p;
+    expect(s.conversation).toBe("H-1");
+
+    spy.handleImpl = async () => "";
+    const p2 = turn(s);
+    (await replyOf(h, 1)).resolve("reply");
+    await p2;
     expect(s.conversation).toBe("H-1");
     await s.kill();
   });

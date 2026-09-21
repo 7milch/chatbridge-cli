@@ -322,65 +322,97 @@ export class ChatSession {
     timeoutMs: number,
     conversation: string | undefined,
   ): Promise<{ rt: RuntimeLike; restored: boolean | undefined }> {
-    const rt = await launchRuntime(launch, preCheck);
+    let rt: RuntimeLike | undefined;
     try {
-      rt.page.setDefaultTimeout(timeoutMs);
-      await runStep("goto", timeoutMs, () => rt.page.goto(provider.chatUrl));
-      await ChatSession.assertLoggedIn(provider, rt.page, timeoutMs);
+      rt = await launchRuntime(launch, preCheck);
+      await ChatSession.enterChat(rt, provider, timeoutMs);
       let restored: boolean | undefined;
       if (conversation !== undefined && provider.conversation !== undefined) {
-        restored = await ChatSession.restore(
+        const outcome = await ChatSession.restore(
           provider,
           provider.conversation,
           rt.page,
           conversation,
           timeoutMs,
         );
-        // The failed restore may have left the page anywhere.
-        if (!restored) {
+        restored = outcome === "restored";
+        if (outcome === "timeout") {
+          // The provider's `open` is still running on that page and may
+          // navigate it at any time, so the page is given up rather than
+          // reused: a late navigation would otherwise land after the
+          // fallback and leave the session somewhere `restored: false`
+          // does not describe.
+          const abandoned = rt;
+          rt = undefined;
+          await closeOrKill(abandoned, IDLE_CLOSE_BUDGET_MS);
+          rt = await launchRuntime(launch, preCheck);
+          await ChatSession.enterChat(rt, provider, timeoutMs);
+        } else if (outcome === "failed") {
+          // `open` has settled, so the page is ours again; it may just have
+          // been left anywhere.
+          const current = rt;
           await runStep("goto", timeoutMs, () =>
-            rt.page.goto(provider.chatUrl),
+            current.page.goto(provider.chatUrl),
           );
         }
       }
       if (restored !== true) {
+        const current = rt;
         await runStep("startNewChat", timeoutMs, () =>
-          provider.startNewChat(rt.page),
+          provider.startNewChat(current.page),
         );
       }
       return { rt, restored };
     } catch (err) {
       // A failing close must not mask the step error that caused it.
-      await rt.close().catch(() => {});
+      await rt?.close().catch(() => {});
       throw err;
     }
   }
 
-  /** True when the page now shows the conversation. Every failure is a
-   * `false`, never a throw: a conversation that cannot be restored costs the
-   * user the context, not the session. A provider's `open` must not be able
-   * to park the session on another site, or on nothing at all, either. */
+  /** goto chatUrl → isLoggedIn, on a page that is now under `timeoutMs`. */
+  private static async enterChat(
+    rt: RuntimeLike,
+    provider: Provider,
+    timeoutMs: number,
+  ): Promise<void> {
+    rt.page.setDefaultTimeout(timeoutMs);
+    await runStep("goto", timeoutMs, () => rt.page.goto(provider.chatUrl));
+    await ChatSession.assertLoggedIn(provider, rt.page, timeoutMs);
+  }
+
+  /** `"restored"`: the page now shows the conversation. `"failed"`: `open`
+   * has settled and did not get there (it threw, or left the page on another
+   * origin). `"timeout"`: the budget expired with `open` still running, so
+   * the page cannot be trusted any more — see `attempt`.
+   *
+   * Never throws: a conversation that cannot be restored costs the user the
+   * context, not the session. */
   private static async restore(
     provider: Provider,
     conversation: ProviderConversation,
     page: Page,
     handle: string,
     timeoutMs: number,
-  ): Promise<boolean> {
+  ): Promise<"restored" | "failed" | "timeout"> {
     try {
-      const opened = await withBudget(
+      // The late rejection of an abandoned `open` is already handled inside
+      // withBudget, so giving up on it leaks nothing.
+      const settled = await withBudget(
         runStep("openConversation", timeoutMs, () =>
           conversation.open(page, handle),
         ).then(() => true),
         timeoutMs,
         false,
       );
-      if (!opened) return false;
-      return new URL(page.url()).origin === new URL(provider.chatUrl).origin;
+      if (!settled) return "timeout";
+      return new URL(page.url()).origin === new URL(provider.chatUrl).origin
+        ? "restored"
+        : "failed";
     } catch {
       // The error may name the conversation, so it is dropped here rather
       // than reported: the handle never reaches a message or a log.
-      return false;
+      return "failed";
     }
   }
 
