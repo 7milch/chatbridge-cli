@@ -15,7 +15,8 @@ vendor repository. Release notes do not; never adopt a feature from them.
 1. **Bump.** Read the current pin from `package.json` and keep the number: it
    decides which guide entries apply. Target = `npm view @chatbridge/cli version`.
    Set every `@chatbridge/*` dependency to that one exact version, and
-   `playwright-core` to `npm view @chatbridge/runtime@<target> dependencies.playwright-core`.
+   `playwright-core` to `npm view @chatbridge/runtime@<target> dependencies.playwright`
+   (the two share version numbers).
    `@chatbridge/runtime` is transitive; do not list it. Then:
 
    ```sh

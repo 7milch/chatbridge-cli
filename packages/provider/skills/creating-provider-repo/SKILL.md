@@ -5,13 +5,13 @@ description: Use when standing up a new vendor-specific chatbridge Provider with
 
 # Creating a Provider Repo
 
-One repo per vendor: one `Provider`, one derived CLI via `createCli`, on the
-published `@chatbridge/*` packages. Selectors come from observing the real
-DOM, never from guessing. Nothing vendor-specific enters the framework.
+One repo per vendor: one `Provider`, one CLI via `createCli`, on the
+published `@chatbridge/*` packages. Selectors are observed in the real DOM,
+never guessed. Nothing vendor-specific enters the framework.
 
 This skill directory is self-contained: `templates/`, `probes/`,
-`dom-discovery.md`, `vscode-extension.md`. To follow a newer framework version,
-use the upgrading-provider-repo skill.
+`dom-discovery.md`, `vscode-extension.md`. For a newer framework version, use the
+upgrading-provider-repo skill.
 
 ## Rules that do not bend
 
@@ -29,6 +29,7 @@ use the upgrading-provider-repo skill.
 - Selectors come from probe output recorded in `docs/dom-notes.md`. A selector
   with no dom-notes entry is a bug.
 - `bun run check` (lint + build + smoke tests) passes before every commit.
+- Never run a formatter or any write over `.auth/`: a live browser profile.
 
 ## Layout
 
@@ -41,7 +42,8 @@ Copy `templates/` into the new repo root. Then:
   `https:` chat URL); `<publisher>` only in the VSCode manifest;
 - resolve `<latest>` with `npm view @chatbridge/cli version`, and
   `<playwright-core>` with
-  `npm view @chatbridge/runtime@<latest> dependencies.playwright-core`.
+  `npm view @chatbridge/runtime@<latest> dependencies.playwright` (same
+  version numbers).
 
 Names: package `chatbridge-<vendor>`, bin `<vendor>`; `private: true`.
 
@@ -56,26 +58,26 @@ docs/dom-notes.md  eight sections, filled by dom-discovery.md
 README.md  CLAUDE.md  English; vscode/ optional
 ```
 
-No CI workflow: real-service tests need a human login.
+No CI: real-service tests need a human login.
 
 ### Runtime and shebang
 
 Interactive mode (no `-p`) needs **Bun ≥ 1.3 or Node ≥ 26.4**; one-shot and
 `auth` work on Node ≥ 20. `src/bin.ts`'s shebang picks the runtime of a
-globally installed bin; `tsc` copies it into `dist/bin.js` unchanged:
+globally installed bin; `tsc` copies it into `dist/bin.js`:
 
 | Users run the CLI on | Shebang |
 |---|---|
-| Bun (typical for a private vendor repo) | `#!/usr/bin/env bun` |
+| Bun (typical) | `#!/usr/bin/env bun` |
 | Node ≥ 26.4 everywhere | `#!/usr/bin/env node` |
 | Node < 26.4, no Bun | No interactive mode; `#!/usr/bin/env node`, `-p` only |
 
-Symptom of the wrong choice: `interactive mode needs Bun >= 1.3 or Node >=
-26.4` although Bun is installed.
+Wrong choice: see Traps.
 
 ## Procedure
 
-1. **Scaffold** the layout above; install, `bun run check`, commit.
+1. **Scaffold** the layout above; install, `bun run check` (fill-in tests skip
+   while every selector is empty), commit.
 2. **Discover the DOM**: follow `dom-discovery.md` exactly. **REQUIRED.** Do
    not write a selector before its dom-notes section is filled.
 3. **Fill `src/selectors.ts`**; `src/provider.ts` already implements the
@@ -91,7 +93,7 @@ Symptom of the wrong choice: `interactive mode needs Bun >= 1.3 or Node >=
 
 ## Provider method contract
 
-What `templates/src/provider.ts` implements; read it when debugging a VARIANT.
+`templates/src/provider.ts` implements this; read it when debugging a VARIANT.
 
 | Method | Must |
 |---|---|
@@ -106,17 +108,17 @@ What `templates/src/provider.ts` implements; read it when debugging a VARIANT.
 | `responseFormat` (≥ 0.10.0) | `"markdown" \| "text"` (default `"text"`). Use the exported `elementToMarkdown(locator)`, never your own converter. |
 | `streaming` (≥ 0.10.0) | `{ responseText(page), pollIntervalMs? }` (default 250 ms), polled while `waitForResponse` is pending. Never an earlier turn's text: `undefined` until the new reply can be told apart from the previous one. |
 
-Two optional fields tune browser handling:
+Two optional fields:
 
-- `browser: { reducedMotion }` — leave it at `"reduce"`: an animating idle page
-  burns CPU all session. Write `waitForResponse` against DOM state, not an
+- `browser: { reducedMotion }` — leave at `"reduce"`: an animating idle page
+  burns CPU. Write `waitForResponse` against DOM state, not an
   animation.
 - `idle: { timeoutMs }` — default idle lifetime of an interactive session (24 h;
   `0` disables), overridden by the user's `idle` config key,
   `CHATBRIDGE_IDLE_TIMEOUT` and the VSCode `idleTimeoutMinutes` setting.
   Declare `idleTimeoutMinutes` and `timeoutSec` in a VSCode manifest with **no**
-  `default`: a declared default silently overrides the provider's value; the
-  fallback goes in the `description`.
+  `default`: a declared default overrides the provider's value; the fallback
+  goes in the `description`.
 
 ## VSCode extension
 

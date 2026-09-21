@@ -12,15 +12,16 @@ line `Not yet observed.` is gone.
 
 Not yet observed.
 
-<!-- Fill from dom-discovery.md steps 1-4 (entry URL, logged out census,
-human login, logged in census). Remove "Not yet observed." when done.
+<!-- Fill from dom-discovery.md steps 1-4 (entry URL, entry-page census,
+human login, then the chat URL seen as a member AND as a guest — the login
+signal is the difference between those two). Remove "Not yet observed." when done.
 Observed: YYYY-MM-DD
 | Constant | Selector | verify() count | visible |
 |---|---|---|---|
 | ENTRY_URL | | n/a | n/a |
 | SIGN_IN_CONTROL | | | |
 | ACCOUNT_CONTROL | | | |
-Notes (guest chat offered?, localized labels, IdP origin, whether the login
+Notes (guest chat offered?, where a guest lands on the chat URL, localized labels, IdP origin, whether the login
 page is on the chat page's own origin, MFA / emailed code): -->
 
 ## Chat page
@@ -88,8 +89,9 @@ Not yet observed.
 Observed: YYYY-MM-DD
 | Constant | Selector | verify() count | visible |
 |---|---|---|---|
-| STOP_BUTTON | | | |
-Notes (doneCandidates[0], buttonsSwapped send → stop → nothing, or a
+| STOP_BUTTON | | buttonsSwapped, steps 5 and 7 | n/a |
+Notes (STOP_BUTTON exists too briefly for verify(); its evidence is the same
+locator appearing and going in both recordings. doneCandidates[0], buttonsSwapped send → stop → nothing, or a
 `data-state` / `aria-busy` attribute — then take the `waitForResponse`
 VARIANT; if doneCandidates is empty, say so and rely on the stability read): -->
 

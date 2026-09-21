@@ -137,22 +137,19 @@ then `browser_evaluate`:
 
 **Read** — from the file:
 
-- `signIn` — the candidates whose name matches log in / sign in / sign up. A
-  normal value is one or two entries, each with a `locators` array whose first
-  entry is a `[data-testid=…]` or `[role=…][aria-label=…]` selector.
-- `account` — normally `[]` here. Whatever appears in `account` in **this**
-  census is not a login signal, because a guest has it too.
-- `composer` — if this is non-empty, the service offers **guest chat**. That is
-  the single most common way a provider ends up treating every visitor as
-  logged in.
+- `signIn` — the candidates whose name matches log in / sign in / sign up, **on
+  the entry page**. The entry URL is often only a login page, so this census
+  cannot define the login signal and cannot show whether the chat page serves
+  guests: step 4 visits the chat URL as a guest for that.
+- `account` — normally `[]` here.
 - `title`, `url` — if `title` is `"Just a moment..."` or the page is an IdP
   refusal, see the decision table.
 
-**Write** — §Login: "guest chat offered: yes/no", the `signIn` locator, and
-the note that `account` was empty. Do not fill `SIGN_IN_CONTROL` yet; step 4
-confirms it by difference. §Errors and rate limits: leave `CHALLENGE_TITLE` at
-the template's `"Just a moment..."` unless this census's `title` shows a
-different interstitial, and record which of the two you saw.
+**Write** — §Login: what the entry page is (a login form, a landing page, the
+chat itself) and its `url`. Do not fill `SIGN_IN_CONTROL`; step 4 does.
+§Errors and rate limits: leave `CHALLENGE_TITLE` at the template's
+`"Just a moment..."` unless this census's `title` shows a different
+interstitial, and record which of the two you saw.
 
 ### Step 3 — the human logs in
 
@@ -180,15 +177,34 @@ an observation, not something to work around.
   "filename": ".playwright-mcp/census-in.json" }
 ```
 
-**Read** — compare this census with the guest one from step 2. The login
-signal is the **difference**, never the composer:
+`CHAT_URL` = this census's `url` (origin + pathname, already stripped of query
+and hash). Then look at the **same URL as a guest**: in `playwright-guest`,
+`browser_navigate` to it:
+
+```json
+{ "url": "<CHAT_URL>" }
+```
+
+and `browser_evaluate`:
+
+```json
+{ "function": "() => window.__cbProbe.census()",
+  "filename": ".playwright-mcp/census-guest-chat.json" }
+```
+
+**Read** — the login signal is the **difference between these two censuses of
+the chat URL**, never the composer and never the entry page:
 
 - `ACCOUNT_CONTROL` = the first `locators` entry of an `account` candidate that
-  is present here and absent in step 2's census.
+  is in the member census and absent from the guest one.
 - `SIGN_IN_CONTROL` = the first `locators` entry of a `signIn` candidate that
-  was present in step 2's census and is absent here.
-- `CHAT_URL` = this census's `url` (origin + pathname, already stripped of
-  query and hash).
+  is in the guest census and absent from the member one.
+- The guest census's `url` and `composer` say what a logged-out visitor gets.
+  Exactly one of three decision-table rows applies: the guest stayed on
+  `CHAT_URL` with a `composer` (guest chat), stayed without one, or was
+  redirected (`url` differs).
+Everything else comes from the member census (`census-in.json`):
+
 - `COMPOSER` = the first `locators` entry of the `composer` candidate whose
   `visible` is `true`. A typical census lists a hidden twin first:
 
@@ -216,8 +232,9 @@ signal is the **difference**, never the composer:
 - `unstable` tells you what was rejected and why (`class: never used as a
   locator`, `…: generated value`). It is information, not a locator source.
 
-**Write** — §Login (`SIGN_IN_CONTROL`, `ACCOUNT_CONTROL`, whether the login
-page shares the chat page's origin), §Chat page (`CHAT_URL`, `lang`),
+**Write** — §Login (`SIGN_IN_CONTROL`, `ACCOUNT_CONTROL`, "guest chat offered:
+yes/no", where a guest lands, whether the login page shares the chat page's
+origin), §Chat page (`CHAT_URL`, `lang`),
 §Composer (`COMPOSER`). `SEND_BUTTON` comes in step 5.
 
 If the login page is on the **same origin** as the chat page, say so in
@@ -228,8 +245,9 @@ URL test.
 
 ### Step 5 — record a streaming turn
 
-Send a prompt whose reply takes a few seconds, so that streaming, the
-"generating" state and any placeholder turn are all visible in one recording. A
+Send a prompt whose reply takes a few seconds and contains Markdown structure
+with a fenced code block, so that streaming, the "generating" state, any
+placeholder turn and (in step 6) the code block's chrome are all visible. A
 one-word reply shows none of them.
 
 **Do** — in `playwright`, in this order, one call each. How to send is decided
@@ -270,7 +288,7 @@ it works the same in every language.
    **5a — click.** `browser_type`:
    ```json
    { "element": "message composer", "target": "[data-testid=\"composer-input\"]",
-     "text": "List 30 short facts about the solar system as a numbered list, one line each.",
+     "text": "Write a Markdown document about the solar system: a heading, a numbered list of 20 one-line facts, a table of four planets, and a fenced python code block of five lines.",
      "submit": false }
    ```
    then `browser_click`:
@@ -281,7 +299,7 @@ it works the same in every language.
    **5b — Enter.** One `browser_type`:
    ```json
    { "element": "message composer", "target": "[data-testid=\"composer-input\"]",
-     "text": "List 30 short facts about the solar system as a numbered list, one line each.",
+     "text": "Write a Markdown document about the solar system: a heading, a numbered list of 20 one-line facts, a table of four planets, and a fenced python code block of five lines.",
      "submit": true }
    ```
 
@@ -302,8 +320,10 @@ it works the same in every language.
 
 **Read** — first, `summary.sent`. The probe ignores everything that happens
 inside the composer, so typing, or a newline that Enter inserted, never counts
-as a turn. If `summary.sent` is `false`, nothing was sent. Then do exactly
-this, once: run call 4 again, and **Human** — say: "The message did not send.
+as a turn. Only `false` is a verdict (`true` can also come from an unrelated
+element such as a toast): if `summary.sent` is `false` **and** call 6's
+snapshot showed no new turn either, nothing was sent. Then do exactly this,
+once: run call 4 again, and **Human** — say: "The message did not send.
 The prompt is in the composer: please send it yourself in the browser window,
 then tell me when the reply has finished and which control you used to send
 it." (After a 5b the composer may hold the prompt plus a stray newline; that is
@@ -427,9 +447,10 @@ argument it uses the element that just streamed):
   lists the ones still inside `contentRoot`, i.e. what will leak into the
   Markdown.
 - `codeLanguage` is `"class"` (the language survives), `"header-label"` (it
-  does not, see the decision table), `"none"`, or `"no-code-block"` — if it is
-  `"no-code-block"` your prompt had no code in it; that is fine, the fidelity
-  E2E in `templates/src/provider.e2e.test.ts` covers it later.
+  does not, see the decision table), `"none"`, or `"no-code-block"` — the reply
+  had no code although the prompt asked for some; run `replyShape()` again
+  after step 7, whose prompt asks again. If it still says so, the fidelity E2E
+  in `templates/src/provider.e2e.test.ts` covers it later.
 - `contentRoot: null` means the reply has no block-level content yet; re-run
   after the reply is complete.
 
@@ -438,7 +459,8 @@ argument it uses the element that just streamed):
 
 ### Step 7 — a second turn
 
-**Do** — repeat step 5's calls 4 to 7 with a second, different prompt, sending
+**Do** — repeat step 5's calls 4 to 7 with a second, different prompt that
+also asks for a fenced code block, sending
 the same way as in step 5 (5a, 5b, or the user by hand), saving to
 `.playwright-mcp/turn-2.json`.
 
@@ -479,21 +501,29 @@ empty afterwards.
 
 ### Step 9 — verify every constant
 
-**Do** — fill `src/selectors.ts` completely, then, on the logged-in chat page
-with at least one completed turn, call `verify()` through `browser_evaluate` in
-`playwright`. Build the call mechanically from the file, three rules and no
-others:
+**Do** — fill `src/selectors.ts` completely. Then, in `playwright`:
 
-- a name listed in the file's `MANY` array → `NAME: { selector: '…', many: true }`;
-- `ASSISTANT_MESSAGE_BODY` → `{ selector: '…', within: '<your ASSISTANT_MESSAGE>' }`,
-  always, because that is how the provider evaluates it (under the last turn),
-  and it is the only form in which a `:scope > …` value can match;
-- every other name → `NAME: '…'`.
+1. Step 8 emptied the chat and `verify()` needs a completed turn: send
+   `Reply with the single word: ping` the way step 5 decided (5a, 5b, or the
+   user by hand), then `browser_wait_for` `{ "time": 10 }`.
+2. `browser_type` one character (`"text": ".", "submit": false`) so that a
+   `SEND_BUTTON` which exists only while the composer is non-empty is there.
+3. `browser_evaluate` the `verify()` call, built mechanically from the file,
+   four rules and no others:
 
-`CHALLENGE_TITLE` is a document title, not a selector — leave it out.
+   - `STOP_BUTTON` is left out: it exists for a fraction of a second, which no
+     separate call can hit. Its evidence is the recording — the same locator
+     `appeared` and was `gone` in `buttonsSwapped` in steps 5 **and** 7;
+   - a name listed in the file's `MANY` array → `NAME: { selector: '…', many: true }`;
+   - `ASSISTANT_MESSAGE_BODY` → `{ selector: '…', within: '<your ASSISTANT_MESSAGE>' }`,
+     always, because that is how the provider evaluates it (under the last turn),
+     and it is the only form in which a `:scope > …` value can match;
+   - every other name → `NAME: '…'`.
+
+   `CHALLENGE_TITLE` is a document title, not a selector — leave it out.
 
 ```json
-{ "function": "() => window.__cbProbe.verify({ SIGN_IN_CONTROL: '[data-testid=\"sign-in\"]', ACCOUNT_CONTROL: '[data-testid=\"account-menu\"]', COMPOSER: '[data-testid=\"composer-input\"]', SEND_BUTTON: '[data-testid=\"send-button\"]', STOP_BUTTON: '[data-testid=\"stop-button\"]', NEW_CHAT_BUTTON: '[data-testid=\"new-chat\"]', ASSISTANT_MESSAGE: { selector: 'article[data-turn=\"assistant\"]', many: true }, USER_MESSAGE: { selector: 'article[data-turn=\"user\"]', many: true }, ASSISTANT_MESSAGE_BODY: { selector: '[data-part=\"content\"]', within: 'article[data-turn=\"assistant\"]' } })" }
+{ "function": "() => window.__cbProbe.verify({ SIGN_IN_CONTROL: '[data-testid=\"sign-in\"]', ACCOUNT_CONTROL: '[data-testid=\"account-menu\"]', COMPOSER: '[data-testid=\"composer-input\"]', SEND_BUTTON: '[data-testid=\"send-button\"]', NEW_CHAT_BUTTON: '[data-testid=\"new-chat\"]', ASSISTANT_MESSAGE: { selector: 'article[data-turn=\"assistant\"]', many: true }, USER_MESSAGE: { selector: 'article[data-turn=\"user\"]', many: true }, ASSISTANT_MESSAGE_BODY: { selector: '[data-part=\"content\"]', within: 'article[data-turn=\"assistant\"]' } })" }
 ```
 
 **Read** — each name gets `{ count, visibleCount, ok }`. `ok` is `count === 1`
@@ -503,14 +533,10 @@ for a plain selector, and `count >= 1` for a `many` or a `within` one.
   only when logged out, and you confirmed it in step 2. Everything else must be
   `ok`.
 - `skipped: "empty — allowed only where a VARIANT says so"` with `ok: true` is
-  what an empty constant returns. It is legitimate for exactly three names —
-  `SEND_BUTTON`, `STOP_BUTTON`, `NEW_CHAT_BUTTON` — and only when a decision
-  row told you to leave that one empty and take a VARIANT. Any other `skipped`
-  means you have not filled the constant yet: go back to the step that owns it.
-- `SEND_BUTTON` and `STOP_BUTTON` only exist at particular moments. Verify
-  `SEND_BUTTON` with one character typed into the composer, and `STOP_BUTTON`
-  during a long turn — re-run the call with just that one name at that moment
-  rather than trying to get them all in one snapshot.
+  what an empty constant returns. It is legitimate for exactly two names —
+  `SEND_BUTTON`, `NEW_CHAT_BUTTON` — and only when a decision row told you to
+  leave that one empty and take a VARIANT. Any other `skipped` means you have
+  not filled the constant yet: go back to the step that owns it.
 - `count: 2` with `visibleCount: 1` means you picked the selector that also
   matches a hidden twin. Go back to step 4's `composer` list.
 - `error: "within matched nothing: …"` and
@@ -521,7 +547,7 @@ for a plain selector, and `count >= 1` for a `many` or a `within` one.
   that line.
 
 **Write** — the `verify() count` and `visible` columns of every table in
-`docs/dom-notes.md`, and the `Observed: YYYY-MM-DD` date in each section.
+`docs/dom-notes.md` (for `STOP_BUTTON`: `buttonsSwapped, steps 5 and 7`), and the `Observed: YYYY-MM-DD` date in each section.
 Remove every remaining `Not yet observed.` line. A constant with no dom-notes
 entry is a bug; so is a dom-notes section still holding the placeholder.
 
@@ -531,7 +557,9 @@ Read the left column off probe output; do exactly what the right column says.
 
 | Probe shows | Write |
 |---|---|
-| `composer` non-empty in the step 2 (guest) census | Guest chat exists. Login signal stays `ACCOUNT_CONTROL` present AND `SIGN_IN_CONTROL` absent. A composer is never a login signal |
+| Step 4's guest census stayed on `CHAT_URL` and its `composer` is non-empty | Guest chat exists. Login signal stays `ACCOUNT_CONTROL` present AND `SIGN_IN_CONTROL` absent, both from step 4's pair. A composer is never a login signal |
+| Step 4's guest census stayed on `CHAT_URL` and its `composer` is `[]` | No guest chat, the chat page itself shows the sign-in control. Same pair, nothing else to do |
+| Step 4's guest census has a different `url` (redirected to a login page or an IdP) | No guest chat. `SIGN_IN_CONTROL` = `locators[0]` of a `signIn` candidate of that guest census (the page it landed on); `ACCOUNT_CONTROL` as usual. If the landed `url` is on another origin, say so in §Login: the off-origin check in `isLoggedIn` answers before `SIGN_IN_CONTROL` is ever looked at |
 | `composer` has a `visible: false` entry | Take the `visible: true` candidate's own `locators[0]`; never a selector that also matches the hidden twin |
 | A candidate has `locators: []` | Anchor it: `<locator of an ancestor from messageLists> <tag>` |
 | `summary.placeholderTurns` non-empty | Wait for the done signal first, then the count check (the template already does) |
@@ -542,7 +570,7 @@ Read the left column off probe output; do exactly what the right column says.
 | `buttonsSwapped` shows send gone → stop appeared → stop gone, and `doneCandidates[0]` is `button gone: …` | Done = the stop control gone. `STOP_BUTTON` is that selector. Do not wait for the send button to come back: many services render it only while the composer is non-empty |
 | `attrs` shows a `data-state` / `aria-busy` flipping back at the end, and it is in `doneCandidates` | Done = that attribute's idle value. Take the `waitForResponse` VARIANT in `templates/src/provider.ts` — decision table **"state attribute"** |
 | `doneCandidates` lists **both** a state attribute and a button swap | Prefer the state attribute for the done signal (VARIANT), and keep the button as `STOP_BUTTON` for `sendMessage`'s "generation started" wait |
-| `doneCandidates` is empty | There is no done signal. Say so in §Generation indicator, leave `STOP_BUTTON` empty (step 9 reports it as `skipped`) and rely on the stability read alone — expect slower, occasionally truncated turns |
+| `doneCandidates` is empty | There is no done signal. Say so in §Generation indicator, leave `STOP_BUTTON` empty and rely on the stability read alone — expect slower, occasionally truncated turns |
 | Step 5 sent with Enter (5b) and `buttonsSwapped` has neither a `gone` row nor a `disabled` / `aria-disabled` `changed` row at the moment the user turn was added | Take the `sendMessage` VARIANT in `templates/src/provider.ts` — decision table **"no send button"** — `page.keyboard.press("Enter")`. Leave `SEND_BUTTON` empty — step 9 reports it as `skipped` — and say so in §Composer. Step 5 already sent this way, so you know it works |
 | Step 5's `summary.sent` was `false` and the user sent by hand | Read `SEND_BUTTON` off the new record's `buttonsSwapped` as step 5 says (`gone` row, or `disabled` `changed` row). Only with neither: `SEND_BUTTON` = `locators[0]` of the step 4 `buttons` candidate that is the control the user named; if they pressed a key instead, leave it empty and adapt the **"no send button"** VARIANT to that key. Record in §Composer that Enter does not send. Verify in step 9 |
 | `textGrowth` is empty after a long prompt | The reply is not streamed into the DOM (it is replaced whole), so there is no `streamingElement` and no `streamingCollection`. Take `ASSISTANT_MESSAGE` from the `added[]` row for the assistant turn instead: turn its **descriptive** `shape` into a selector the same way as for `USER_MESSAGE` (`article[data-message-id][data-turn]` → `article[data-turn="assistant"]`, dropping identity attributes), and confirm it in step 9 as a `many` selector whose `count` equals the number of replies on the page. Say in §Streaming behaviour that nothing grew; `streaming.responseText` still works off the count |
@@ -562,7 +590,8 @@ Read the left column off probe output; do exactly what the right column says.
 A service redesign breaks selectors silently — the symptom is a timeout, not an
 error naming the selector.
 
-1. Re-run step 9's `verify()` call on the logged-in chat page.
+1. Re-run step 9's calls on the logged-in chat page. `STOP_BUTTON` is not in
+   them; step 5 re-derives it.
 2. For every name with `ok: false`, re-run the one step that owns it: steps 2
    and 4 for `ENTRY_URL`, `CHAT_URL`, `SIGN_IN_CONTROL`, `ACCOUNT_CONTROL`,
    `COMPOSER`; step 5 for `SEND_BUTTON`, `STOP_BUTTON`, `ASSISTANT_MESSAGE`,

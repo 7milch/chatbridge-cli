@@ -106,6 +106,28 @@ describe("creating-provider-repo", () => {
   });
 });
 
+describe("the playwright-core pin", () => {
+  test("both skills query a dependency that @chatbridge/runtime really has", () => {
+    const runtime = JSON.parse(
+      readFileSync(join(import.meta.dir, "../runtime/package.json"), "utf8"),
+    );
+    for (const file of [
+      "creating-provider-repo/SKILL.md",
+      "upgrading-provider-repo/SKILL.md",
+    ]) {
+      const names = Array.from(
+        read(file).matchAll(
+          /npm view @chatbridge\/runtime@\S+\s+dependencies\.([\w@/-]+)/g,
+        ),
+        (m) => m[1] ?? "",
+      );
+      expect(names.length, file).toBeGreaterThan(0);
+      for (const name of names)
+        expect(runtime.dependencies, `${file}: ${name}`).toHaveProperty(name);
+    }
+  });
+});
+
 describe("upgrading-provider-repo", () => {
   const guide = () => read("upgrading-provider-repo/upgrade-guide.md");
 
