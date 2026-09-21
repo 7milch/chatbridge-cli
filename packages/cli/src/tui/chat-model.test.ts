@@ -4,7 +4,9 @@ import {
   BlockedError,
   BrowserUnavailableError,
   LoginAbortedError,
+  NOT_RESTORED_NOTE,
   type ProviderCommandResult,
+  RESTORED_NOTE,
   ResponseTimeoutError,
   UrlHookError,
 } from "@chatbridge/core";
@@ -59,8 +61,23 @@ function fakeSession(label = "") {
   const commandResults: Array<
     ReturnType<typeof deferred<ProviderCommandResult>>
   > = [];
-  const state = { closed: 0, killed: 0, closeHangs: false };
+  const state = {
+    closed: 0,
+    killed: 0,
+    closeHangs: false,
+    /** What `session.conversation` reports; a test sets it before the turn
+     * whose handle it stands for. */
+    conversation: undefined as string | undefined,
+    /** What `session.restored` reports; undefined means "not attempted". */
+    restored: undefined as boolean | undefined,
+  };
   const session: ChatSessionLike = {
+    get conversation() {
+      return state.conversation;
+    },
+    get restored() {
+      return state.restored;
+    },
     async send(prompt) {
       calls.push(label ? `${label}:${prompt}` : prompt);
       const d = deferred<string>();
@@ -2441,5 +2458,184 @@ describe("ChatModel: /copy", () => {
     model.notify("hello");
     expect(model.notice).toBe("hello");
     expect(changes).toBe(1);
+  });
+});
+
+describe("ChatModel conversation handle", () => {
+  /** A model whose opens record the handle they were handed and can be
+   * expired the way core's idle timeout does. `openedWith[0]` is the initial
+   * open, so a reopen's handle is `openedWith[1]` onwards. */
+  async function handleHarness() {
+    const sessions = [
+      fakeSession("a"),
+      fakeSession("b"),
+      fakeSession("c"),
+      fakeSession("d"),
+    ];
+    const openedWith: Array<string | undefined> = [];
+    const expire: Array<() => void> = [];
+    let n = 0;
+    const model = new ChatModel({
+      login: async () => {},
+      clearAuth: async () => {},
+      closeTimeoutMs: 20,
+      openSession: async (_report, onIdleExpired, conversation) => {
+        openedWith.push(conversation);
+        // These tests only care that the expiry reached the model, so the
+        // close they hand over is already settled.
+        expire.push(() => onIdleExpired(Promise.resolve()));
+        const s = sessions[n++];
+        if (s === undefined) throw new Error("no session queued");
+        return s.session;
+      },
+    });
+    await model.ready;
+    return { model, sessions, openedWith, expire };
+  }
+
+  /** One complete turn against `s`, the session the model currently holds. */
+  async function turn(model: ChatModel, s: ReturnType<typeof fakeSession>) {
+    const p = model.submit("hi");
+    await tick();
+    nth(s.replies, s.replies.length - 1).resolve("ok");
+    await p;
+  }
+
+  test("the initial open is given no handle", async () => {
+    const h = await handleHarness();
+    expect(h.openedWith).toEqual([undefined]);
+  });
+
+  test("/reopen passes the last turn's handle and notes the restore", async () => {
+    const h = await handleHarness();
+    const a = nth(h.sessions, 0);
+    a.state.conversation = "H1";
+    await turn(h.model, a);
+    const b = nth(h.sessions, 1);
+    b.state.conversation = "H1";
+    b.state.restored = true;
+
+    expect(await h.model.submit("/reopen")).toBe(true);
+
+    expect(h.openedWith).toEqual([undefined, "H1"]);
+    expect(h.model.messages.at(-1)).toEqual({
+      role: "separator",
+      text: `reopened · ${RESTORED_NOTE}`,
+    });
+  });
+
+  test("a failed restore says so and is not retried", async () => {
+    const h = await handleHarness();
+    const a = nth(h.sessions, 0);
+    a.state.conversation = "H1";
+    await turn(h.model, a);
+    nth(h.sessions, 1).state.restored = false;
+
+    await h.model.reset();
+    expect(h.model.messages.at(-1)).toEqual({
+      role: "separator",
+      text: `reopened · ${NOT_RESTORED_NOTE}`,
+    });
+
+    await h.model.reset();
+    expect(h.openedWith).toEqual([undefined, "H1", undefined]);
+  });
+
+  test("a session that reports no restore gets a plain separator", async () => {
+    const h = await handleHarness();
+    const a = nth(h.sessions, 0);
+    a.state.conversation = "H1";
+    await turn(h.model, a);
+
+    await h.model.reset();
+
+    expect(h.openedWith).toEqual([undefined, "H1"]);
+    expect(h.model.messages.at(-1)).toEqual({
+      role: "separator",
+      text: "reopened",
+    });
+  });
+
+  test("/new forgets the handle and keeps its own separator", async () => {
+    const h = await handleHarness();
+    const a = nth(h.sessions, 0);
+    a.state.conversation = "H1";
+    await turn(h.model, a);
+    // Even a session that claims a restore cannot put a note on `/new`:
+    // nothing was handed to it to restore.
+    nth(h.sessions, 1).state.restored = true;
+
+    expect(await h.model.submit("/new")).toBe(true);
+
+    expect(h.openedWith).toEqual([undefined, undefined]);
+    expect(h.model.messages.at(-1)).toEqual({
+      role: "separator",
+      text: NEW_CHAT_SEPARATOR,
+    });
+  });
+
+  test("/logout forgets the handle", async () => {
+    const h = await handleHarness();
+    const a = nth(h.sessions, 0);
+    a.state.conversation = "H1";
+    await turn(h.model, a);
+
+    expect(await h.model.submit("/logout")).toBe(true);
+
+    expect(h.openedWith).toEqual([undefined, undefined]);
+  });
+
+  test("the reopen after an idle close keeps the handle", async () => {
+    const h = await handleHarness();
+    const a = nth(h.sessions, 0);
+    a.state.conversation = "H1";
+    await turn(h.model, a);
+    nth(h.sessions, 1).state.restored = true;
+
+    nth(h.expire, 0)();
+    expect(await h.model.submit("again")).toBe(true);
+    await h.model.pendingReset;
+    await tick();
+
+    expect(h.openedWith).toEqual([undefined, "H1"]);
+    expect(
+      h.model.messages.some(
+        (m) =>
+          m.role === "separator" &&
+          m.text === `${IDLE_SEPARATOR} · ${RESTORED_NOTE}`,
+      ),
+    ).toBe(true);
+  });
+
+  test("a failed turn does not overwrite the remembered handle", async () => {
+    const h = await handleHarness();
+    const a = nth(h.sessions, 0);
+    a.state.conversation = "H1";
+    await turn(h.model, a);
+
+    // A timeout leaves the model idle, so the next reopen is the user's.
+    a.state.conversation = "H2";
+    const p = h.model.submit("again");
+    await tick();
+    nth(a.replies, 1).reject(new ResponseTimeoutError("Timed out."));
+    await p;
+
+    await h.model.reset();
+    expect(h.openedWith).toEqual([undefined, "H1"]);
+  });
+
+  test("a turn made stale by a reset does not write its handle", async () => {
+    const h = await handleHarness();
+    const a = nth(h.sessions, 0);
+    a.state.conversation = "H1";
+    const p = h.model.submit("hi");
+    await tick();
+
+    await h.model.reset();
+    nth(a.replies, 0).resolve("late");
+    await p;
+
+    await h.model.reset();
+    expect(h.openedWith).toEqual([undefined, undefined, undefined]);
   });
 });

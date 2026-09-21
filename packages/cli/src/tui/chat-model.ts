@@ -16,6 +16,7 @@ import {
   helpText,
   parseSlashCommand,
   unknownCommandMessage,
+  withRestoreNote,
 } from "@chatbridge/core";
 import {
   type Attachment,
@@ -44,6 +45,14 @@ export interface ChatSessionLike {
   /** What the provider's replies are written in, so the history can pick a
    * renderer. Optional so older fakes keep working; absent means "text". */
   readonly responseFormat?: "markdown" | "text";
+  /** The service-side conversation this session is on, as of its last
+   * successful turn. The model remembers it and hands it to the next open.
+   * Optional so older fakes keep working; absent means the provider cannot
+   * name its conversations. */
+  readonly conversation?: string;
+  /** How the opening phase treated the handle it was given: true restored
+   * it, false fell back to a new chat, undefined never tried. */
+  readonly restored?: boolean;
   /** Optional so older fakes keep working; the real ChatSession has it. */
   runCommand?(name: string, args: string): Promise<ProviderCommandResult>;
   close(): Promise<void>;
@@ -100,7 +109,8 @@ export const SEPARATOR_TEXT = "reopened";
  * browser is replaced either way, but the user asked for a fresh chat. */
 export const NEW_CHAT_SEPARATOR = "new chat";
 /** The separator of the reopen a queued prompt triggers after an idle
- * close: it tells the user the service-side conversation is a new chat. */
+ * close. Without a remembered conversation to restore it means the chat
+ * starts over service-side; withRestoreNote says which of the two it was. */
 export const IDLE_SEPARATOR = "reopened after idle";
 /** Remedies for the two failures a user can fix from inside the TUI. */
 export const AUTH_HINT = "Type /login to log in.";
@@ -118,10 +128,13 @@ export interface ChatModelOptions {
    * `report` paints the status row while the open runs (retry attempts);
    * `onIdleExpired` is handed to the session so core can tell the model
    * that it closed the browser after the idle timeout, passing the promise
-   * of that close so teardown can wait for the auth-state save. */
+   * of that close so teardown can wait for the auth-state save.
+   * `conversation` is the handle the model remembers, for the open to return
+   * to; undefined asks for a new chat. */
   openSession: (
     report: (message: string) => void,
     onIdleExpired: (closing: Promise<void>) => void,
+    conversation: string | undefined,
   ) => Promise<ChatSessionLike>;
   /** `/login`: the headful login; resolves when the auth state is saved. */
   login: (opts: {
@@ -212,10 +225,12 @@ export class ChatModel {
   private pending: Promise<void> | undefined;
   /** The shell command in flight, so stopShell() and reset() can end it. */
   private running: RunningCommand | undefined;
-  private readonly openSession: (
-    report: (message: string) => void,
-    onIdleExpired: (closing: Promise<void>) => void,
-  ) => Promise<ChatSessionLike>;
+  /** The service-side conversation the next open should return to, as of
+   * the last successful turn. In memory only: it dies with the process, so
+   * a restart starts a new chat. `/new` and `/logout` forget it, and so
+   * does an open that could not restore it. */
+  private conversationHandle: string | undefined;
+  private readonly openSession: ChatModelOptions["openSession"];
   private readonly login: ChatModelOptions["login"];
   private readonly clearAuth: () => Promise<void>;
   private readonly expand: (text: string) => Promise<Expansion>;
@@ -295,9 +310,15 @@ export class ChatModel {
     report: (message: string) => void,
   ): Promise<ChatSessionLike> {
     const holder: { opened?: ChatSessionLike } = {};
-    const session = await this.openSession(report, (closing) => {
-      if (holder.opened !== undefined) this.idleExpired(holder.opened, closing);
-    });
+    const session = await this.openSession(
+      report,
+      (closing) => {
+        if (holder.opened !== undefined) {
+          this.idleExpired(holder.opened, closing);
+        }
+      },
+      this.conversationHandle,
+    );
     // Both assignments must stay synchronous after this await: an expiry
     // that fires between `holder.opened` and the caller's `this.current`
     // would find a session identity that does not match and be dropped,
@@ -626,6 +647,12 @@ export class ChatModel {
         },
       });
       if (generation !== this.generation) return; // stale: reset ran
+      // Past the stale check, so a turn whose conversation a reset has
+      // already replaced never writes its handle over the live one. The
+      // fallback keeps the last known handle when a provider that cannot
+      // name its conversations (or one that lost the page's URL) reports
+      // none for this turn.
+      this.conversationHandle = session.conversation ?? this.conversationHandle;
       if (releasesHeld) this.releaseHeld();
       this.partial = undefined;
       this.messages.push({ role: "assistant", text: reply, ...format });
@@ -730,7 +757,9 @@ export class ChatModel {
         return true;
       }
       case "new":
-        await this.reset(NEW_CHAT_SEPARATOR);
+        // The one reset that must not come back to the same conversation:
+        // a fresh chat is what the user asked for.
+        await this.reset(NEW_CHAT_SEPARATOR, { forget: true });
         return true;
       case "reopen":
         await this.reset();
@@ -749,7 +778,9 @@ export class ChatModel {
           this.onChange();
           return true;
         }
-        await this.reset();
+        // The handle belongs to the account that was just logged out of; a
+        // new login may not even be able to see that conversation.
+        await this.reset(undefined, { forget: true });
         return true;
       }
       case "login": {
@@ -920,42 +951,61 @@ export class ChatModel {
    * one, mark the history. Works in every state — the main use is a hung
    * page mid-turn. A running shell command is stopped first and its output
    * is neither sent nor held. Ignored while a reset is already running. On
-   * failure the model is `dead` with the reopen error as `fatal`. */
-  reset(separator: string = SEPARATOR_TEXT): Promise<void> {
+   * failure the model is `dead` with the reopen error as `fatal`. The new
+   * session returns to the remembered conversation unless `forget` is set,
+   * which drops it and starts a new chat. */
+  reset(
+    separator: string = SEPARATOR_TEXT,
+    opts: { forget?: boolean } = {},
+  ): Promise<void> {
     if (this.status === "resetting") return Promise.resolve();
     // A login holds a browser window the user is no longer waiting on; the
     // reset wins, and runLogin reports it as cancelled.
     this.cancelLogin();
     // runReset sets the status synchronously, so the guard above rejects a
     // second Ctrl+R in the same tick.
-    const run = this.runReset(separator);
+    const run = this.runReset(separator, opts.forget === true);
     this.pending = run;
     return run.finally(() => {
       if (this.pending === run) this.pending = undefined;
     });
   }
 
-  private async runReset(separator: string): Promise<void> {
+  private async runReset(separator: string, forget: boolean): Promise<void> {
     this.stopShell();
     // Whatever the reason for the reset, the idle close is behind us.
     this.idleClosed = false;
+    // Before the open below reads it, so the new session is asked for a new
+    // chat rather than the conversation the user just walked away from.
+    if (forget) this.conversationHandle = undefined;
     this.status = "resetting";
     this.generation++;
     // The interrupted turn's partial belongs to a conversation that is about
     // to be replaced; its own stale guard will not run until it settles.
     this.partial = undefined;
     this.onChange();
+    // What the open below is given. A reset with nothing to restore has
+    // nothing to report either, whatever the new session claims.
+    const requested = this.conversationHandle;
     const old = this.current;
     // Undefined when the first open failed: there is nothing to close.
     if (old !== undefined) await closeOrKill(old, this.closeTimeoutMs);
     this.current = undefined;
     try {
-      this.current = await this.open((message) => {
+      const session = await this.open((message) => {
         this.openProgress = message;
         this.onChange();
       });
+      this.current = session;
       this.openProgress = undefined;
-      this.messages.push({ role: "separator", text: separator });
+      const restored = requested === undefined ? undefined : session.restored;
+      // A handle the service would not open again is a dead one: drop it so
+      // the next reopen does not spend another restore budget on it.
+      if (restored === false) this.conversationHandle = undefined;
+      this.messages.push({
+        role: "separator",
+        text: withRestoreNote(separator, restored),
+      });
       this.fatal = undefined;
       this.status = "idle";
       this.drain();

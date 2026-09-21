@@ -17,14 +17,14 @@ export async function modelWith(
     login: async () => {},
     clearAuth: async () => {},
     ...opts,
-    openSession: async (report, onIdleExpired) => {
+    openSession: async (report, onIdleExpired, conversation) => {
       if (!opened) {
         opened = true;
         if (gate) await gate;
         return session;
       }
       if (!reopen) throw new Error("not expected");
-      return reopen(report, onIdleExpired);
+      return reopen(report, onIdleExpired, conversation);
     },
   });
   // A gated first open leaves the model `opening`, which is the point of
