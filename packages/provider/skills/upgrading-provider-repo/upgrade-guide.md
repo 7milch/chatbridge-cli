@@ -173,7 +173,11 @@ Change: when the service puts the conversation id in the page URL, add to
 `urlConversation` imported from `@chatbridge/provider` and `match` a RegExp
 (no `g` or `y` flag) that accepts a conversation URL and rejects the plain chat
 page. Observe the URL after the first reply of a new chat to write it, and note
-it in `docs/dom-notes.md`. The interactive UIs then return to the same
+it in `docs/dom-notes.md`. `match` is tested against the full `page.url()`,
+including any query string or fragment; if conversation URLs can carry one, do
+not anchor with `$` — use e.g. `/\/c\/[0-9a-f-]+(?:[/?#]|$)/`. If the separator
+stays a plain `reopened` after two turns, `match` never matched. The interactive
+UIs then return to the same
 conversation after `/reopen` and after an idle close; `/new` still starts a
 fresh one. When the id is not in the URL, implement
 `conversation: { handle(page), open(page, handle) }` by hand: `handle` returns a

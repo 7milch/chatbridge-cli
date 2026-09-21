@@ -15,7 +15,11 @@ export interface ProviderConversation {
 }
 
 /** The common case: the conversation id is in the page URL. `match` tells a
- * conversation URL from the plain chat page. */
+ * conversation URL from the plain chat page. It is tested against the whole
+ * `page.url()`, including any query string or fragment, so do not anchor it
+ * with `$` when conversation URLs can carry one — use a form such as
+ * `/\/c\/[0-9a-f-]+(?:[/?#]|$)/`. A `match` that never matches makes `handle`
+ * return `undefined` forever, and nothing is ever restored. */
 export function urlConversation(options: {
   match: RegExp | ((url: string) => boolean);
 }): ProviderConversation {

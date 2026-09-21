@@ -88,10 +88,14 @@ implement `conversation: { handle(page), open(page, handle) }` by hand:
 `handle` returns a string naming the conversation, or `undefined` before the
 first turn; `open` throws when it cannot show that conversation.
 
+`match` is tested against the full `page.url()`, including any query string or
+fragment. If conversation URLs can carry one, do not anchor with `$`, or
+`handle` returns `undefined` forever and nothing is ever restored.
+
 ```typescript
 import { urlConversation } from "@chatbridge/provider";
 
-conversation: urlConversation({ match: /\/c\/[0-9a-f-]+$/ }),
+conversation: urlConversation({ match: /\/c\/[0-9a-f-]+(?:[/?#]|$)/ }),
 ```
 
 ## Optional: `browser` and `idle`

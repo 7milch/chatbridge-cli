@@ -182,7 +182,11 @@ export default defineProvider({
 
   // Optional. When the conversation id is in the URL, this lets the UIs
   // return to the same conversation after /reopen or an idle close.
-  // conversation: urlConversation({ match: /\/c\/[0-9a-f-]+$/ }),
+  // `match` is tested against the full `page.url()`, including any query
+  // string or fragment; if conversation URLs can carry one, do not anchor
+  // with `$`. If the separator stays a plain `reopened` after two turns,
+  // `match` never matched.
+  // conversation: urlConversation({ match: /\/c\/[0-9a-f-]+(?:[/?#]|$)/ }),
 
   async detectBlock(page) {
     try {
