@@ -379,6 +379,51 @@ describe("replyShape", () => {
     expect(s.contentRootWithin).toBe(":scope > div");
     await page.context().close();
   });
+
+  test("never names the content root by this turn's identity", async () => {
+    const page = await open(true);
+    await sendTurn(page, "one");
+    const shapeOf = (body: string) =>
+      probe(
+        page,
+        `(() => {
+          const log = document.querySelector('[role="log"]');
+          for (const stale of log.querySelectorAll("article.probe-fixture")) stale.remove();
+          const turn = document.createElement("article");
+          turn.className = "css-9z8y7x probe-fixture";
+          turn.innerHTML = ${JSON.stringify(body)};
+          log.appendChild(turn);
+          return window.__cbProbe.replyShape('[role="log"] > article:last-child');
+        })()`,
+      );
+    // Only a per-turn id: unusable, so the direct-child form wins.
+    const identity = await shapeOf(
+      '<div data-message-id="m9" id="msg-9"><p>hello</p><ul><li>a</li></ul></div>',
+    );
+    expect(identity.contentRootWithin).toBe(":scope > div");
+    // A descriptive attribute beside the identity one: that is the answer.
+    const descriptive = await shapeOf(
+      '<div data-part="content" data-message-id="m9"><p>hello</p><ul><li>a</li></ul></div>',
+    );
+    expect(descriptive.contentRootWithin).toBe('[data-part="content"]');
+    await page.context().close();
+  });
+});
+
+describe("census composer text", () => {
+  test("reads a form control's value, not its textContent", async () => {
+    const page = await open(true);
+    await page.evaluate(`(() => {
+      const t = document.querySelector("textarea");
+      t.style.display = "block";
+      t.value = "typed into a textarea";
+    })()`);
+    const c = await probe(page, "window.__cbProbe.census().composer");
+    const area = c.find((x: { tag: string }) => x.tag === "textarea");
+    expect(area.text.length).toBe("typed into a textarea".length);
+    expect(area.text.head).toBe("typed into a textarea");
+    await page.context().close();
+  });
 });
 
 describe("verify", () => {
@@ -430,6 +475,21 @@ describe("verify", () => {
       ok: false,
       error: 'within matched nothing: [data-testid="nowhere"]',
     });
+    await page.context().close();
+  });
+
+  test("blames the broken half of a scoped entry", async () => {
+    const page = await open(true);
+    await sendTurn(page, "one");
+    const v = await probe(
+      page,
+      `window.__cbProbe.verify({
+        badWithin: { selector: 'p', within: 'article[[' },
+        badSelector: { selector: 'p[[', within: 'article[data-turn="assistant"]' },
+      })`,
+    );
+    expect(v.badWithin.error).toBe("invalid within selector: article[[");
+    expect(v.badSelector.error).toBe("invalid selector: p[[");
     await page.context().close();
   });
 

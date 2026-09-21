@@ -116,7 +116,7 @@ Which element grows while the reply streams (summary.streamingElement)?
 How is it told apart from the previous turn's element (assistant/user count,
 a busy attribute, a turn id)?
 replyShape():
-- contentRoot:
+- contentRootWithin:
 - codeLanguage: (class on <pre>/<code>, a header label — then the language is
   a known loss — or nothing)
 - chromeInsideContent: (buttons, toolbars, code-block headers, citations)

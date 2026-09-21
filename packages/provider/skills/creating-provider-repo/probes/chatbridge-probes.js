@@ -175,6 +175,13 @@
     );
   };
 
+  /** An `#id` that names one turn rather than one part of the page: it ends in
+   * a counter (`#msg-1`, `#turn_12`) or its value is generated. */
+  const perTurnId = (s) => {
+    const id = s.slice(1);
+    return generated(id) || /[-_]?\d+$/.test(id);
+  };
+
   /** A selector built from one element's own identity, such as `#id` or
    * `[data-message-id="m2"]`: right for this turn, wrong for the next one. */
   const identitySelector = (s) => {
@@ -268,7 +275,13 @@
     const label = el.getAttribute("aria-label");
     if (role) c.role = role;
     if (label) c.ariaLabel = label;
-    const t = text(el.textContent);
+    // A form control's content is its value, not its textContent: a filled
+    // <textarea> reads as empty otherwise, which is the most common composer.
+    const raw =
+      el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement
+        ? el.value
+        : el.textContent;
+    const t = text(raw);
     if (t.length > 0) c.text = t;
     return c;
   };
@@ -645,7 +658,15 @@
         return false;
       }
     };
-    for (const s of selectorsOf(el)) if (hit(s)) return s;
+    // This selector is kept and replayed on every later turn, so anything
+    // naming THIS turn is worse than no answer: `[data-message-id="m1"]` and
+    // an id that ends in a counter are dropped. Label-bearing attributes are
+    // held back as a last resort — they carry page text and are translated.
+    const own = selectorsOf(el).filter(
+      (s) => !identitySelector(s) || (s.startsWith("#") && !perTurnId(s)),
+    );
+    const labelled = (s) => /\[(aria-label|title|placeholder|name)=/.test(s);
+    for (const s of own) if (!labelled(s) && hit(s)) return s;
     const tag = el.tagName.toLowerCase();
     const child = el.parentElement === root;
     const combinator = child ? ":scope > " : ":scope ";
@@ -653,6 +674,7 @@
     if (short(role) && hit(`${combinator}${tag}[role=${q(role)}]`))
       return `${combinator}${tag}[role=${q(role)}]`;
     if (hit(`${combinator}${tag}`)) return `${combinator}${tag}`;
+    for (const s of own) if (labelled(s) && hit(s)) return s;
     return null;
   };
 
@@ -778,7 +800,18 @@
         // to that last element is what makes a `:scope > …` form work here.
         let root = document;
         if (within) {
-          const hosts = document.querySelectorAll(within);
+          let hosts;
+          try {
+            hosts = document.querySelectorAll(within);
+          } catch {
+            out[key] = {
+              count: 0,
+              visibleCount: 0,
+              ok: false,
+              error: `invalid within selector: ${within}`,
+            };
+            continue;
+          }
           if (hosts.length === 0) {
             out[key] = {
               count: 0,

@@ -282,12 +282,20 @@ one-word reply shows none of them.
      "text": "List 30 short facts about the solar system as a numbered list, one line each.",
      "submit": true }
    ```
-   Enter is not always what sends. Check with `browser_evaluate`:
+   Enter is not always what sends, so check the thread, not the composer.
+   Before call 4b, and again a second or two after it, run `browser_evaluate`:
    ```json
-   { "function": "() => window.__cbProbe.census().composer.map(c => c.text?.length ?? 0)" }
+   { "function": "() => window.__cbProbe.census().messageLists" }
    ```
-   A composer that is still non-empty means Enter did **not** send. Then, and
-   only then, list the controls that exist *because* the composer is non-empty:
+   Compare the two results:
+
+   | After vs. before | Meaning | Next |
+   |---|---|---|
+   | a list's `children` went up, or a list appears that was not there before (an empty thread often has no list at all) | Enter sent | carry on with call 5 |
+   | identical | Enter did **not** send | the branch below |
+
+   Only in the second case, list the controls that exist *because* the composer
+   is non-empty:
    ```json
    { "function": "() => window.__cbProbe.census().buttons.filter(b => b.visible)" }
    ```
@@ -295,7 +303,9 @@ one-word reply shows none of them.
    census (that census was taken with an empty composer). Click the single
    survivor with `browser_click`. If there is more than one, ask the user:
    "Which of these controls sends the message?" and list their `ariaLabel` /
-   `text` values.
+   `text` values. If none survives, ask the user to send the message by hand in
+   the browser window and to say when the reply has finished; the recording is
+   still running, so call 7 is unaffected.
 5. `browser_evaluate`, immediately, while the reply is being written — look for
    the stop control:
    ```json
@@ -413,7 +423,7 @@ argument it uses the element that just streamed):
   computes it *inside* the reply element, so it never carries anything from
   above the turn and it works on every later turn. The template uses it as
   `page.locator(ASSISTANT_MESSAGE).last().locator(ASSISTANT_MESSAGE_BODY).first()`,
-  and step 9 verifies it the same way, with `within`. Three shapes come back:
+  and step 9 verifies it the same way, with `within`. Four shapes come back:
 
   | `contentRootWithin` | Write |
   |---|---|
@@ -516,9 +526,12 @@ for a plain selector, and `count >= 1` for a `many` or a `within` one.
   rather than trying to get them all in one snapshot.
 - `count: 2` with `visibleCount: 1` means you picked the selector that also
   matches a hidden twin. Go back to step 4's `composer` list.
-- `error: "within matched nothing: …"` means your `ASSISTANT_MESSAGE` is wrong,
-  not your body selector: fix it first and re-run.
-- `error: "invalid selector: …"` is a syntax error in what you wrote.
+- `error: "within matched nothing: …"` and
+  `error: "invalid within selector: …"` both point at the `within` value —
+  your `ASSISTANT_MESSAGE` — not at the body selector: fix that first and
+  re-run.
+- `error: "invalid selector: …"` is a syntax error in the constant named on
+  that line.
 
 **Write** — the `verify() count` and `visible` columns of every table in
 `docs/dom-notes.md`, and the `Observed: YYYY-MM-DD` date in each section.
@@ -545,7 +558,7 @@ Read the left column off probe output; do exactly what the right column says.
 | `doneCandidates` is empty | There is no done signal. Say so in §Generation indicator, leave `STOP_BUTTON` empty (step 9 reports it as `skipped`) and rely on the stability read alone — expect slower, occasionally truncated turns |
 | No send button in step 5's call 3 filter, and no send-control row in `buttonsSwapped` | Take the `sendMessage` VARIANT in `templates/src/provider.ts` — decision table **"no send button"** — `page.keyboard.press("Enter")`. Leave `SEND_BUTTON` empty — step 9 reports it as `skipped` — and say so in §Composer. Step 5's call 4b already sent this way, so you know it works |
 | `textGrowth` is empty after a long prompt | The reply is not streamed into the DOM (it is replaced whole), so there is no `streamingElement` and no `streamingCollection`. Take `ASSISTANT_MESSAGE` from the `added[]` row for the assistant turn instead: turn its **descriptive** `shape` into a selector the same way as for `USER_MESSAGE` (`article[data-message-id][data-turn]` → `article[data-turn="assistant"]`, dropping identity attributes), and confirm it in step 9 as a `many` selector whose `count` equals the number of replies on the page. Say in §Streaming behaviour that nothing grew; `streaming.responseText` still works off the count |
-| `replyShape().chromeInsideContent` is non-empty | `ASSISTANT_MESSAGE_BODY` still points at `contentRoot`; list the leaking chrome in §Streaming behaviour so the E2E's expectations are read with it in mind |
+| `replyShape().chromeInsideContent` is non-empty | `ASSISTANT_MESSAGE_BODY` still takes `contentRootWithin` as printed; list the leaking chrome in §Streaming behaviour so the E2E's expectations are read with it in mind |
 | `replyShape().contentRoot` is `null` while a reply is still streaming | `streaming.responseText` returns `undefined` until it exists — the template already returns `undefined` when the body matches nothing |
 | `replyShape().codeLanguage` is `"header-label"` | The code language lives in a header label, not a class, so the fence comes out without it. Record it in §Streaming behaviour as a known loss and relax that line of the Markdown fidelity test |
 | The Markdown reply carries a stray line just before a fence (the code header's label) | Known framework limitation: `elementToMarkdown` has no skip option. **Accept it** — record it in §Streaming behaviour; do not write a work-around into the provider. Assert Markdown *structure* in the E2E, never exact text |
