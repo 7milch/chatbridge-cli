@@ -134,8 +134,9 @@ export function createExtension(opts: CreateExtensionOptions) {
         attachUris: (uris) => void handlers.attachUris(uris),
         pasted: (id, text) => bridge.pushPasteResult(id, handlers.pasted(text)),
         // A part of a reply the webview picked out, not the whole last
-        // one the `copy` command takes; same clipboard either way.
-        copyText: (text) => void vscode.env.clipboard.writeText(text),
+        // one the `copy` command takes; the handler shares the clipboard
+        // seam and the failure warning with it.
+        copyText: (text) => void handlers.copyText(text),
       },
     );
 
@@ -192,7 +193,7 @@ export function createExtension(opts: CreateExtensionOptions) {
           onIdleExpired,
           conversation,
         }),
-      onPartial: (text, format) => bridge.postPartial(text, format),
+      onPartial: (text, format) => bridge.pushPartial(text, format),
       expandUrls: (text) =>
         resolveUrlHooks(text, opts.provider.urlHooks ?? [], {
           timeoutMs: settings().timeoutMs,

@@ -154,7 +154,7 @@ export class ChatViewBridge {
 
   /** The reply streaming right now, whole text so far. Posted far more
    * often than a state frame, which is why it carries no history. */
-  postPartial(text: string, format: "markdown" | "text"): void {
+  pushPartial(text: string, format: "markdown" | "text"): void {
     void this.webview?.postMessage({ type: "partial", text, format });
   }
 

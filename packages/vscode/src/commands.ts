@@ -32,6 +32,9 @@ export interface CommandHandlers {
   /** From the webview's `/copy`: the last reply, as the provider returned
    * it, onto the system clipboard. Nothing is sent and nothing is logged. */
   copy(): Promise<void>;
+  /** From the webview's copy button: a part of a reply the view picked
+   * out. Same clipboard, same failure warning, same silence in the logs. */
+  copyText(text: string): Promise<void>;
   /** From the webview's `/help`: the listing joins the history. */
   help(): void;
   /** From the webview's `/name args`. */
@@ -54,6 +57,28 @@ export interface CommandHandlers {
   pasted(text: string): boolean;
 }
 
+/** Everything both copy paths share: a missing or rejecting clipboard is a
+ * warning the user can act on, never an unhandled rejection. The text
+ * itself never reaches a message, a log or the warning. */
+async function writeToClipboard(
+  write: ((text: string) => Thenable<void>) | undefined,
+  text: string,
+  ui: VscodeUi,
+  subject: string,
+): Promise<void> {
+  if (write === undefined) {
+    ui.showWarningMessage(`Could not copy ${subject}.`);
+    return;
+  }
+  try {
+    await write(text);
+  } catch {
+    ui.showWarningMessage(`Could not copy ${subject}.`);
+    return;
+  }
+  ui.showInformationMessage(`Copied ${subject}.`);
+}
+
 function utf8Bytes(text: string): number {
   return new TextEncoder().encode(text).byteLength;
 }
@@ -68,6 +93,11 @@ function message(err: unknown): string {
 
 export function createCommands(deps: CommandDeps): CommandHandlers {
   const { controller, ui } = deps;
+
+  /** `deps.writeClipboard` is read per call: the seam is optional and the
+   * two copy paths must report the same way when it is missing. */
+  const copyToClipboard = (text: string, subject: string): Promise<void> =>
+    writeToClipboard(deps.writeClipboard, text, ui, subject);
 
   function isBusy(): boolean {
     const status = controller.getState().status;
@@ -193,20 +223,10 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
         ui.showInformationMessage("Nothing to copy yet.");
         return;
       }
-      const write = deps.writeClipboard;
-      if (write === undefined) {
-        ui.showWarningMessage("Could not copy the last reply.");
-        return;
-      }
-      try {
-        await write(reply);
-      } catch {
-        // The reply itself never reaches a message, a log or the warning.
-        ui.showWarningMessage("Could not copy the last reply.");
-        return;
-      }
-      ui.showInformationMessage("Copied the last reply.");
+      await copyToClipboard(reply, "the last reply");
     },
+
+    copyText: (text) => copyToClipboard(text, "the text"),
 
     help,
 

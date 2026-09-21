@@ -333,11 +333,11 @@ describe("ChatViewBridge: streaming and copyText", () => {
     expect(calls).toEqual(["a code block"]);
   });
 
-  test("postPartial posts the streamed text with its format", () => {
+  test("pushPartial posts the streamed text with its format", () => {
     const bridge = new ChatViewBridge(() => state, noopHandlers);
     const w = fakeWebview();
     bridge.attach(w.webview);
-    bridge.postPartial("half a re", "markdown");
+    bridge.pushPartial("half a re", "markdown");
     expect(w.posted).toEqual([
       { type: "partial", text: "half a re", format: "markdown" },
     ]);

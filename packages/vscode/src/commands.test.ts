@@ -214,6 +214,35 @@ describe("commands", () => {
     expect(f.log).toEqual(["warn:Could not copy the last reply."]);
   });
 
+  test("copyText writes exactly the text it was given", async () => {
+    const f = fake();
+    f.reply = "Echo: hello";
+    await commands(f, {
+      writeClipboard: async (text) => {
+        f.clipboard.push(text);
+      },
+    }).copyText("const x = 1;");
+    expect(f.clipboard).toEqual(["const x = 1;"]);
+    expect(f.log).toEqual(["info:Copied the text."]);
+  });
+
+  test("copyText warns instead of rejecting when the clipboard fails", async () => {
+    const f = fake();
+    await commands(f, {
+      writeClipboard: async () => {
+        throw new Error("no clipboard");
+      },
+    }).copyText("const x = 1;");
+    expect(f.clipboard).toEqual([]);
+    expect(f.log).toEqual(["warn:Could not copy the text."]);
+  });
+
+  test("without writeClipboard copyText warns too", async () => {
+    const f = fake();
+    await commands(f).copyText("const x = 1;");
+    expect(f.log).toEqual(["warn:Could not copy the text."]);
+  });
+
   test("help also lists the provider's own commands", () => {
     const f = fake();
     commands(f, {
