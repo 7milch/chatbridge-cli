@@ -46,6 +46,15 @@
     return box.width > 0 && box.height > 0;
   };
 
+  /** A form control's value can be a whole secret. These attributes are never
+   * read: not as a locator, not as a recorded change. */
+  const valueAttr = (name) => name === "value" || name === "data-value";
+
+  /** Where the user types. Shared by census() and by recordTurn, which ignores
+   * everything that happens inside one. */
+  const COMPOSER =
+    'textarea, [contenteditable="true"], [contenteditable=""], [role="textbox"]';
+
   const q = (v) => `"${String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 
   /** Counting matches is the probe's hot path: one document query per
@@ -102,7 +111,7 @@
     const tag = el.tagName.toLowerCase();
     const out = [];
     const data = Array.from(el.attributes)
-      .filter((a) => a.name.startsWith("data-"))
+      .filter((a) => a.name.startsWith("data-") && !valueAttr(a.name))
       .sort(
         (a, b) =>
           dataRank(a.name, identityFirst) - dataRank(b.name, identityFirst),
@@ -217,6 +226,7 @@
     const parts = [];
     for (const a of el.attributes) {
       if (!a.name.startsWith("data-") || identityAttr(a.name)) continue;
+      if (valueAttr(a.name)) continue;
       if (!short(a.value) || generated(a.value) || identities.has(a.value))
         continue;
       parts.push(`[${a.name}=${q(a.value)}]`);
@@ -347,9 +357,7 @@
       url: location.origin + location.pathname,
       title: document.title,
       lang: document.documentElement.lang || "",
-      composer: all(
-        'textarea, [contenteditable="true"], [contenteditable=""], [role="textbox"]',
-      ).map(candidate),
+      composer: all(COMPOSER).map(candidate),
       buttons: all('button, [role="button"]')
         .filter(
           (el) =>
@@ -431,18 +439,29 @@
     // keeps element references and raw values, and stop() turns them into
     // locators. Computing a locator here would mean a document query per
     // mutation, which would slow the page and skew the timings below.
+    // Typing, and a newline that Enter inserted instead of sending, happen
+    // inside the composer and are not part of a turn. closest() is a walk up
+    // the ancestors, not a document query.
+    const inComposer = (node) => {
+      const el = node instanceof Element ? node : node.parentElement;
+      return !!el?.closest(COMPOSER);
+    };
     state.observer = new MutationObserver((mutations) => {
       for (const m of mutations) {
+        if (inComposer(m.target)) continue;
         if (m.type === "characterData") {
           grow(m.target);
           continue;
         }
         if (m.type === "attributes") {
+          if (valueAttr(m.attributeName)) continue;
           const el = m.target;
           const to = el.getAttribute(m.attributeName);
           if (
             isButton(el) &&
-            /^(aria-label|data-testid|disabled|hidden)$/.test(m.attributeName)
+            /^(aria-label|data-testid|disabled|aria-disabled|hidden)$/.test(
+              m.attributeName,
+            )
           ) {
             if (room())
               state.swaps.push({
@@ -475,6 +494,8 @@
         if (insideAdded) grow(m.target);
         for (const node of m.addedNodes) {
           if (!(node instanceof Element)) continue;
+          // A composer the page re-rendered is still not a turn.
+          if (node.matches(COMPOSER)) continue;
           for (const b of buttonsIn(node))
             if (!insideAdded && room())
               state.swaps.push({ t: now(), el: b, appeared: true });
@@ -620,7 +641,14 @@
       attrs,
       textGrowth,
       buttonsSwapped,
-      summary: { placeholderTurns, doneCandidates },
+      summary: {
+        // Outside the composer, something was added and stayed, or text grew.
+        sent:
+          textGrowth.length > 0 ||
+          added.some((a) => a.removedAt === undefined && !a.isControl),
+        placeholderTurns,
+        doneCandidates,
+      },
     };
     if (streaming) {
       // The instance that streamed, and the family a provider should select.
@@ -663,6 +691,7 @@
     );
     for (const a of el.attributes) {
       if (!a.name.startsWith("data-") || identityAttr(a.name)) continue;
+      if (valueAttr(a.name)) continue;
       if (!short(a.value) || generated(a.value) || identities.has(a.value))
         continue;
       const s = `[${a.name}=${q(a.value)}]`;

@@ -300,13 +300,14 @@ it works the same in every language.
      "filename": ".playwright-mcp/turn-1.json" }
    ```
 
-**Read** — first, was anything sent? If `textGrowth` is `[]` **and** `added[]`
-has no row that stayed (every row has `removedAt` or `"isControl": true`, or
-`added` is `[]`), nothing was sent. Then do exactly this, once: run call 4
-again, and **Human** — say: "The message did not send. The prompt is in the
-composer: please send it yourself in the browser window, then tell me when the
-reply has finished and which control you used to send it." After their reply,
-run call 7 again and read that record instead.
+**Read** — first, `summary.sent`. The probe ignores everything that happens
+inside the composer, so typing, or a newline that Enter inserted, never counts
+as a turn. If `summary.sent` is `false`, nothing was sent. Then do exactly
+this, once: run call 4 again, and **Human** — say: "The message did not send.
+The prompt is in the composer: please send it yourself in the browser window,
+then tell me when the reply has finished and which control you used to send
+it." (After a 5b the composer may hold the prompt plus a stray newline; that is
+harmless.) After their reply, run call 7 again and read that record instead.
 
 From `turn-1.json`. A normal record looks like this, trimmed:
 
@@ -329,6 +330,7 @@ From `turn-1.json`. A normal record looks like this, trimmed:
     { "t": 34, "appeared": "[data-testid=\"stop-button\"]" },
     { "t": 344, "gone": "[data-testid=\"stop-button\"]" }],
   "summary": {
+    "sent": true,
     "placeholderTurns": ["[data-turn=\"assistant\"] (article[data-placeholder][data-turn]) added @34ms, removed @185ms"],
     "doneCandidates": ["button gone: [data-testid=\"stop-button\"] @344ms"],
     "streamingElement": "[data-message-id=\"m1\"]",
@@ -359,8 +361,12 @@ Field by field:
   - **`SEND_BUTTON`** = the `gone` locator of the row just *before* the user
     turn was added (`{ "t": 33, "gone": "[data-testid=\"send-button\"]" }`
     above). A send control that stays on the page all along produces no such
-    row — then see the decision table, rows **"no send button"** and "sent by
-    hand"; after 5a, keep the locator you clicked.
+    row; it names itself instead through a `changed` row whose `disabled` or
+    `aria-disabled` flips at that same moment —
+    `{ "t": 33, "changed": "[data-testid=\"send\"] disabled: null → " }` —
+    and `SEND_BUTTON` is the locator that row starts with. With neither row:
+    after 5a keep the locator you clicked; otherwise see the decision table,
+    rows **"no send button"** and "sent by hand".
   - **`STOP_BUTTON`** = the locator that `appeared` early and is `gone` again
     at the end of the turn (`[data-testid="stop-button"]` above); the same
     locator is normally `doneCandidates[0]`.
@@ -537,8 +543,8 @@ Read the left column off probe output; do exactly what the right column says.
 | `attrs` shows a `data-state` / `aria-busy` flipping back at the end, and it is in `doneCandidates` | Done = that attribute's idle value. Take the `waitForResponse` VARIANT in `templates/src/provider.ts` — decision table **"state attribute"** |
 | `doneCandidates` lists **both** a state attribute and a button swap | Prefer the state attribute for the done signal (VARIANT), and keep the button as `STOP_BUTTON` for `sendMessage`'s "generation started" wait |
 | `doneCandidates` is empty | There is no done signal. Say so in §Generation indicator, leave `STOP_BUTTON` empty (step 9 reports it as `skipped`) and rely on the stability read alone — expect slower, occasionally truncated turns |
-| Step 5 sent with Enter (5b) and `buttonsSwapped` has no `gone` row before the user turn | Take the `sendMessage` VARIANT in `templates/src/provider.ts` — decision table **"no send button"** — `page.keyboard.press("Enter")`. Leave `SEND_BUTTON` empty — step 9 reports it as `skipped` — and say so in §Composer. Step 5 already sent this way, so you know it works |
-| Step 5's record showed nothing sent and the user sent by hand | `SEND_BUTTON` = `locators[0]` of the step 4 `buttons` candidate that is the control the user named; if they pressed a key instead, leave it empty and adapt the **"no send button"** VARIANT to that key. Record in §Composer that Enter does not send. Verify in step 9 |
+| Step 5 sent with Enter (5b) and `buttonsSwapped` has neither a `gone` row nor a `disabled` / `aria-disabled` `changed` row at the moment the user turn was added | Take the `sendMessage` VARIANT in `templates/src/provider.ts` — decision table **"no send button"** — `page.keyboard.press("Enter")`. Leave `SEND_BUTTON` empty — step 9 reports it as `skipped` — and say so in §Composer. Step 5 already sent this way, so you know it works |
+| Step 5's `summary.sent` was `false` and the user sent by hand | Read `SEND_BUTTON` off the new record's `buttonsSwapped` as step 5 says (`gone` row, or `disabled` `changed` row). Only with neither: `SEND_BUTTON` = `locators[0]` of the step 4 `buttons` candidate that is the control the user named; if they pressed a key instead, leave it empty and adapt the **"no send button"** VARIANT to that key. Record in §Composer that Enter does not send. Verify in step 9 |
 | `textGrowth` is empty after a long prompt | The reply is not streamed into the DOM (it is replaced whole), so there is no `streamingElement` and no `streamingCollection`. Take `ASSISTANT_MESSAGE` from the `added[]` row for the assistant turn instead: turn its **descriptive** `shape` into a selector the same way as for `USER_MESSAGE` (`article[data-message-id][data-turn]` → `article[data-turn="assistant"]`, dropping identity attributes), and confirm it in step 9 as a `many` selector whose `count` equals the number of replies on the page. Say in §Streaming behaviour that nothing grew; `streaming.responseText` still works off the count |
 | `replyShape().chromeInsideContent` is non-empty | `ASSISTANT_MESSAGE_BODY` still takes `contentRootWithin` as printed; list the leaking chrome in §Streaming behaviour so the E2E's expectations are read with it in mind |
 | `replyShape().contentRoot` is `null` while a reply is still streaming | `streaming.responseText` returns `undefined` until it exists — the template already returns `undefined` when the body matches nothing |

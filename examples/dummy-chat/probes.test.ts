@@ -337,6 +337,93 @@ describe("recordTurn", () => {
     await page.context().close();
   });
 
+  test("a normal turn reads as sent", async () => {
+    const page = await open(true);
+    await probe(page, "window.__cbProbe.recordTurn.start()");
+    await sendTurn(page, "one");
+    const r = await probe(page, "window.__cbProbe.recordTurn.stop()");
+    expect(r.summary.sent).toBe(true);
+    await page.context().close();
+  });
+
+  test("a newline inside the composer is not a turn", async () => {
+    const page = await open(true);
+    const r = await probe(
+      page,
+      `(async () => {
+        const c = document.createElement("div");
+        c.setAttribute("contenteditable", "true");
+        c.setAttribute("data-testid", "fake-composer");
+        document.body.appendChild(c);
+        const wait = () => new Promise((r) => setTimeout(r, 20));
+        window.__cbProbe.recordTurn.start();
+        c.textContent = "prompt";
+        await wait();
+        const line = document.createElement("div");
+        line.setAttribute("data-line", "2");
+        line.appendChild(document.createElement("br"));
+        c.appendChild(line);
+        await wait();
+        line.textContent = "a";
+        await wait();
+        line.textContent = "ab";
+        line.setAttribute("data-line", "3");
+        await wait();
+        return window.__cbProbe.recordTurn.stop();
+      })()`,
+    );
+    expect(r.added).toEqual([]);
+    expect(r.attrs).toEqual([]);
+    expect(r.textGrowth).toEqual([]);
+    expect(r.summary.sent).toBe(false);
+    await page.context().close();
+  });
+
+  test("never records a value attribute", async () => {
+    const page = await open(true);
+    const r = await probe(
+      page,
+      `(async () => {
+        const i = document.createElement("input");
+        i.type = "password";
+        document.body.appendChild(i);
+        window.__cbProbe.recordTurn.start();
+        i.setAttribute("value", "hunter2secret");
+        i.setAttribute("data-value", "hunter2secret");
+        await new Promise((r) => setTimeout(r, 20));
+        return window.__cbProbe.recordTurn.stop();
+      })()`,
+    );
+    expect(JSON.stringify(r)).not.toContain("hunter2");
+    await page.context().close();
+  });
+
+  test("a send button that is always there names itself by its disabled flip", async () => {
+    const page = await open(true);
+    const r = await probe(
+      page,
+      `(async () => {
+        const b = document.createElement("button");
+        b.setAttribute("data-testid", "fixed-send");
+        b.textContent = "Go";
+        document.body.appendChild(b);
+        window.__cbProbe.recordTurn.start();
+        b.setAttribute("disabled", "");
+        await new Promise((r) => setTimeout(r, 20));
+        b.setAttribute("aria-disabled", "true");
+        await new Promise((r) => setTimeout(r, 20));
+        return window.__cbProbe.recordTurn.stop();
+      })()`,
+    );
+    expect(r.buttonsSwapped.map((s: { changed: string }) => s.changed)).toEqual(
+      [
+        '[data-testid="fixed-send"] disabled: null → ',
+        '[data-testid="fixed-send"] aria-disabled: null → true',
+      ],
+    );
+    await page.context().close();
+  });
+
   test("stop without start reports an error object, not a throw", async () => {
     const page = await open(true);
     const r = await probe(page, "window.__cbProbe.recordTurn.stop()");
