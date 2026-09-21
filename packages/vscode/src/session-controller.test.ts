@@ -1769,4 +1769,22 @@ describe("SessionController: streaming and the conversation handle", () => {
     await h.controller.reopen();
     expect(h.openedWith).toEqual([undefined, "H1"]);
   });
+
+  test("a turn made stale by a reopen does not write its handle", async () => {
+    const h = streamHarness();
+    const n = h.replies.length;
+    const sending = h.controller.send("one");
+    await waitFor(() => h.replies.length === n + 1);
+
+    await h.controller.reopen();
+    // The stale session names its conversation only now, after the reopen
+    // replaced it. The late reply must not make that handle the one a
+    // later reopen restores.
+    nth(h.specs, 0).conversation = "STALE";
+    nth(h.replies, n).resolve("late");
+    await sending;
+
+    await h.controller.reopen();
+    expect(h.openedWith).toEqual([undefined, undefined, undefined]);
+  });
 });
