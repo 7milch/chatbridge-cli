@@ -168,8 +168,20 @@ describe("upgrading-provider-repo", () => {
           `${file}: ${path}`,
         ).toBe(true);
       }
-      for (const m of body.matchAll(/dom-discovery\.md`\s+steps?\s+(\d+)/g))
-        expect(steps.has(m[1] ?? ""), `${file}: step ${m[1]}`).toBe(true);
+      // Every step number must be cited as "`…/dom-discovery.md` step N",
+      // including each number of a list such as "steps 2, 4 and 8". The
+      // citation form is what makes it checkable, so a bare "step N" fails.
+      const citation =
+        /`\.\.\/creating-provider-repo\/dom-discovery\.md`\s+steps?\s+(\d+(?:\s*(?:,|and|–|-|to)\s*\d+)*)/g;
+      let cited = 0;
+      for (const m of body.matchAll(citation))
+        for (const n of (m[1] ?? "").match(/\d+/g) ?? []) {
+          cited++;
+          expect(steps.has(n), `${file}: step ${n}`).toBe(true);
+        }
+      const bare = body.replace(citation, "").match(/\bsteps? \d+/g);
+      expect(bare, `${file}: uncited step references`).toBe(null);
+      if (file === "upgrade-guide.md") expect(cited).toBeGreaterThan(5);
     }
   });
 });
