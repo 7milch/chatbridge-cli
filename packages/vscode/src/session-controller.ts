@@ -534,7 +534,8 @@ export class SessionController {
 
   /** Re-runs the last prompt after a recoverable fatal error (a missing
    * browser that was just installed). Drops the trailing error entry so
-   * the history reads user → assistant. */
+   * the history reads user → assistant, or, when the failed turn had
+   * already streamed some text, user → incomplete assistant → assistant. */
   async retryLast(): Promise<SendResult> {
     if (this.lastPrompt === undefined) return EMPTY;
     if (!this.canStartTurn) {
