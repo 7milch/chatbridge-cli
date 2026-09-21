@@ -1,0 +1,253 @@
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { type Browser, type Page, chromium } from "playwright-core";
+import { type DummyChat, startDummyChat } from "./server";
+
+const PROBE = new URL(
+  "../../packages/provider/skills/creating-provider-repo/probes/chatbridge-probes.js",
+  import.meta.url,
+).pathname;
+
+let server: DummyChat;
+let browser: Browser;
+beforeAll(async () => {
+  server = await startDummyChat(0);
+  server.setReplyDelayMs(150);
+  server.setChunkDelayMs(30);
+  browser = await chromium.launch();
+});
+afterAll(async () => {
+  await browser.close();
+  server.stop();
+});
+
+async function open(loggedIn: boolean): Promise<Page> {
+  const context = await browser.newContext();
+  await context.addInitScript({ path: PROBE });
+  const page = await context.newPage();
+  if (loggedIn) {
+    await page.goto(`${server.url}/hard/login`);
+    await page.click('[data-testid="login-submit"]');
+  } else {
+    await page.goto(`${server.url}/hard/chat`);
+  }
+  await page.waitForSelector('[data-testid="composer-input"]');
+  return page;
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: the probe is untyped page-side JS
+const probe = <T = any>(page: Page, expr: string): Promise<T> =>
+  page.evaluate(`(${expr})`) as Promise<T>;
+
+async function sendTurn(page: Page, text: string) {
+  await page.fill('[data-testid="composer-input"]', text);
+  await page.click('[data-testid="send-button"]');
+  await page.waitForSelector('[data-testid="stop-button"]');
+  await page.waitForSelector('[data-testid="stop-button"]', {
+    state: "detached",
+  });
+}
+
+describe("probe source", () => {
+  test("never names browser storage or cookies", () => {
+    const source = readFileSync(PROBE, "utf8");
+    for (const word of [
+      "cookie",
+      "localStorage",
+      "sessionStorage",
+      "indexedDB",
+    ])
+      expect(source.toLowerCase()).not.toContain(word.toLowerCase());
+  });
+});
+
+describe("census", () => {
+  test("reports the visible composer with a unique non-class locator and the hidden textarea as hidden", async () => {
+    const page = await open(true);
+    const c = await probe(page, "window.__cbProbe.census()");
+    expect(c.lang).toBe("ja");
+    const visible = c.composer.filter((x: { visible: boolean }) => x.visible);
+    expect(visible).toHaveLength(1);
+    expect(visible[0].locators[0]).toBe('[data-testid="composer-input"]');
+    const hidden = c.composer.filter((x: { visible: boolean }) => !x.visible);
+    expect(hidden).toHaveLength(1);
+    expect(hidden[0].tag).toBe("textarea");
+    for (const cand of [...c.composer, ...c.buttons, ...c.account, ...c.signIn])
+      for (const loc of cand.locators) expect(loc).not.toMatch(/css-|\./);
+    await page.context().close();
+  });
+
+  test("logged-out and logged-in differ in account and signIn, not in composer", async () => {
+    const guest = await open(false);
+    const member = await open(true);
+    const g = await probe(guest, "window.__cbProbe.census()");
+    const m = await probe(member, "window.__cbProbe.census()");
+    expect(
+      g.signIn.map((x: { locators: string[] }) => x.locators[0]),
+    ).toContain('[data-testid="sign-in-link"]');
+    expect(g.account).toHaveLength(0);
+    expect(m.signIn).toHaveLength(0);
+    expect(
+      m.account.map((x: { locators: string[] }) => x.locators[0]),
+    ).toContain('[data-testid="account-menu"]');
+    expect(
+      g.composer.filter((x: { visible: boolean }) => x.visible),
+    ).toHaveLength(1);
+    await guest.context().close();
+    await member.context().close();
+  });
+
+  test("rejects generated classes and says why", async () => {
+    const page = await open(true);
+    const c = await probe(page, "window.__cbProbe.census()");
+    const composer = c.composer.find((x: { visible: boolean }) => x.visible);
+    expect(composer.unstable.join(" ")).toContain("class");
+    await page.context().close();
+  });
+
+  test("finds the message list after two turns and keeps text out of the output", async () => {
+    const page = await open(true);
+    await sendTurn(
+      page,
+      "hello there this is a long enough message to be cut at forty characters",
+    );
+    await sendTurn(page, "second");
+    const c = await probe(page, "window.__cbProbe.census()");
+    const list = c.messageLists.find(
+      (l: { locator: string }) => l.locator === '[role="log"]',
+    );
+    expect(list.children).toBe(4);
+    expect(list.childShape).toContain("data-turn");
+    expect(JSON.stringify(c)).not.toContain("forty characters");
+    await page.context().close();
+  });
+
+  test("never carries more than 40 characters of page text", async () => {
+    const page = await open(true);
+    const long =
+      "abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789klmnop";
+    await sendTurn(page, long);
+    await page.fill('[data-testid="composer-input"]', long);
+    const c = await probe(page, "window.__cbProbe.census()");
+    // No string anywhere in the output holds 41 characters of the message.
+    expect(JSON.stringify(c)).not.toContain(long.slice(0, 41));
+    const heads: string[] = [];
+    const walk = (node: unknown) => {
+      if (Array.isArray(node)) {
+        for (const item of node) walk(item);
+        return;
+      }
+      if (node === null || typeof node !== "object") return;
+      const record = node as Record<string, unknown>;
+      if (typeof record.head === "string" && typeof record.length === "number")
+        heads.push(record.head);
+      for (const value of Object.values(record)) walk(value);
+    };
+    walk(c);
+    expect(heads.length).toBeGreaterThan(0);
+    for (const head of heads) expect(head.length).toBeLessThanOrEqual(40);
+    await page.context().close();
+  });
+});
+
+describe("recordTurn", () => {
+  test("sees the placeholder, the streaming element and the stop button leaving last", async () => {
+    const page = await open(true);
+    await page.fill('[data-testid="composer-input"]', "md: sample");
+    expect(await probe(page, "window.__cbProbe.recordTurn.start()")).toBe(
+      "recording",
+    );
+    await page.click('[data-testid="send-button"]');
+    await page.waitForSelector('[data-testid="stop-button"]');
+    await page.waitForSelector('[data-testid="stop-button"]', {
+      state: "detached",
+    });
+    const r = await probe(page, "window.__cbProbe.recordTurn.stop()");
+    expect(r.summary.placeholderTurns).toHaveLength(1);
+    expect(r.summary.placeholderTurns[0]).toContain("data-placeholder");
+    expect(r.summary.streamingElement).toContain("data-message-id");
+    expect(r.summary.doneCandidates[0]).toContain("stop-button");
+    expect(r.summary.doneCandidates[0]).toContain("gone");
+    expect(
+      r.buttonsSwapped.some((b: { gone?: string }) =>
+        b.gone?.includes("send-button"),
+      ),
+    ).toBe(true);
+    await page.context().close();
+  });
+
+  test("stop without start reports an error object, not a throw", async () => {
+    const page = await open(true);
+    const r = await probe(page, "window.__cbProbe.recordTurn.stop()");
+    expect(r.error).toBe("recordTurn.start() was not called on this page");
+    await page.context().close();
+  });
+
+  test("a second start disconnects the first observer", async () => {
+    const page = await open(true);
+    await page.evaluate(`(() => {
+      const Real = window.MutationObserver;
+      window.__obs = { made: 0, disconnected: 0 };
+      window.MutationObserver = class extends Real {
+        constructor(cb) { super(cb); window.__obs.made++; }
+        disconnect() { window.__obs.disconnected++; return super.disconnect(); }
+      };
+    })()`);
+    await probe(page, "window.__cbProbe.recordTurn.start()");
+    await probe(page, "window.__cbProbe.recordTurn.start()");
+    const obs = await probe(page, "window.__obs");
+    expect(obs.made).toBe(2);
+    expect(obs.disconnected).toBe(1);
+    await probe(page, "window.__cbProbe.recordTurn.stop()");
+    expect((await probe(page, "window.__obs")).disconnected).toBe(2);
+    await page.context().close();
+  });
+});
+
+describe("replyShape", () => {
+  test("separates content from chrome and finds the content root", async () => {
+    const page = await open(true);
+    await sendTurn(page, "md: sample");
+    const s = await probe(page, "window.__cbProbe.replyShape()");
+    expect(s.contentRoot).toContain('[data-part="content"]');
+    expect(
+      s.chrome.some((c: { kind: string }) => c.kind === "code-header"),
+    ).toBe(true);
+    expect(s.chrome.some((c: { kind: string }) => c.kind === "button")).toBe(
+      true,
+    );
+    expect(s.codeLanguage).toBe("class");
+    expect(s.chromeInsideContent.join(" ")).toContain("code-header");
+    await page.context().close();
+  });
+});
+
+describe("verify", () => {
+  test("flags selectors that match none or several", async () => {
+    const page = await open(true);
+    await sendTurn(page, "one");
+    await sendTurn(page, "two");
+    const v = await probe(
+      page,
+      `window.__cbProbe.verify({
+        composer: '[data-testid="composer-input"]',
+        anyComposer: 'textarea, [contenteditable]',
+        missing: '[data-testid="nope"]',
+        assistantMessages: { selector: 'article[data-turn="assistant"]', many: true },
+        broken: 'div[[',
+      })`,
+    );
+    expect(v.composer).toEqual({ count: 1, visibleCount: 1, ok: true });
+    expect(v.anyComposer.ok).toBe(false);
+    expect(v.anyComposer.count).toBe(2);
+    expect(v.missing).toEqual({ count: 0, visibleCount: 0, ok: false });
+    expect(v.assistantMessages).toEqual({
+      count: 2,
+      visibleCount: 2,
+      ok: true,
+    });
+    expect(v.broken.ok).toBe(false);
+    expect(v.broken.error).toContain("invalid selector");
+    await page.context().close();
+  });
+});
