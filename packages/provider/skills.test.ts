@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
+import { $ } from "bun";
 
 const SKILLS = join(import.meta.dir, "skills");
 const read = (p: string) => readFileSync(join(SKILLS, p), "utf8");
@@ -58,5 +59,29 @@ describe("creating-provider-repo", () => {
     for (const m of selectors.matchAll(/^export const ([A-Z_]+) = "/gm))
       expect(body, m[1]).toContain(m[1] ?? "");
     expect(body).not.toContain("headless and cannot");
+  });
+});
+
+describe("packaging", () => {
+  test("the tarball carries the skills", async () => {
+    const out = await $`bun pm pack --dry-run`.cwd(import.meta.dir).text();
+    expect(out).toContain("skills/creating-provider-repo/SKILL.md");
+    expect(out).toContain(
+      "skills/creating-provider-repo/probes/chatbridge-probes.js",
+    );
+    expect(out).toContain(
+      "skills/creating-provider-repo/templates/src/provider.ts",
+    );
+    expect(out).not.toContain("skills.test.ts");
+  });
+
+  test("this repository reads the same files through symlinks", () => {
+    const root = join(import.meta.dir, "../..");
+    const link = join(root, ".claude/skills/creating-provider-repo");
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(realpathSync(link)).toBe(
+      realpathSync(join(SKILLS, "creating-provider-repo")),
+    );
+    expect(lstatSync(join(root, ".agents/skills")).isSymbolicLink()).toBe(true);
   });
 });
