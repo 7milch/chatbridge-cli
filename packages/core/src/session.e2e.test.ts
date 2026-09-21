@@ -220,4 +220,58 @@ describe("ChatSession", () => {
     server.invalidateSessions();
     await expect(session.send("one")).rejects.toBeInstanceOf(AuthExpiredError);
   }, 60_000);
+
+  test("a later session restores the conversation from its handle", async () => {
+    const server = await startDummyChat(0);
+    cleanups.push(server.stop);
+    const provider = createDummyProvider(server.url);
+    const store = tempStore(provider.name);
+    await prepareAuth(provider, store);
+    const opts = {
+      provider,
+      authStore: store,
+      headless: true,
+      timeoutMs: 30_000,
+    };
+
+    const first = await ChatSession.open(opts);
+    await first.send("hello");
+    expect(await first.send("turns?")).toContain("turn 2");
+    const handle = first.conversation;
+    expect(handle).toMatch(/\/chat\/c\/[a-z0-9]{8}$/);
+    await first.close();
+
+    const second = await ChatSession.open({ ...opts, conversation: handle });
+    try {
+      expect(second.restored).toBe(true);
+      // The restored page already holds two turns, so this also proves the
+      // provider's streaming/completion checks read the new reply, not a
+      // stale one.
+      expect(await second.send("turns?")).toContain("turn 3");
+    } finally {
+      await second.close();
+    }
+  }, 90_000);
+
+  test("an unknown handle falls back to a new chat", async () => {
+    const server = await startDummyChat(0);
+    cleanups.push(server.stop);
+    const provider = createDummyProvider(server.url);
+    const store = tempStore(provider.name);
+    await prepareAuth(provider, store);
+
+    const session = await ChatSession.open({
+      provider,
+      authStore: store,
+      headless: true,
+      timeoutMs: 30_000,
+      conversation: `${server.url}/chat/c/zzzzzzzz`,
+    });
+    try {
+      expect(session.restored).toBe(false);
+      expect(await session.send("turns?")).toContain("turn 1");
+    } finally {
+      await session.close();
+    }
+  }, 60_000);
 });
