@@ -38,7 +38,8 @@ describe.skipIf(!enabled)("<vendor> real service", () => {
   }, 300_000);
 
   test("a guest is not logged in", async () => {
-    // A fresh context has no auth state: a composer that guests can see, or a
+    // Can pass vacuously on a service that challenges a headless browser: the
+    // challenge page also reads as logged out. A fresh context has no auth state: a composer that guests can see, or a
     // URL test, must not read as logged in.
     const browser = await chromium.launch();
     try {

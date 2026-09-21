@@ -16,7 +16,9 @@ point is `.cjs` and not `.js`. The template's `package` script runs `vsce
 package --no-dependencies`, which is only a CI packaging smoke test.
 
 Brand the view with the optional `ui` option (plain text only; the banner
-path is relative to the extension root and must ship in the `.vsix`):
+path is relative to the extension root and must ship in the `.vsix` — a
+missing file fails activation. The template ships a placeholder
+`templates/vscode/media/banner.svg`; replace it or drop the `banner` line):
 
 ```ts
 ui: {

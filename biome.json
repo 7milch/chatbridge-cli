@@ -6,7 +6,8 @@
       "dist",
       "*.tsbuildinfo",
       ".claude",
-      ".vscode-test"
+      ".vscode-test",
+      ".tmp-template-*"
     ]
   },
   "formatter": { "enabled": true, "indentStyle": "space" },

@@ -106,6 +106,19 @@ describe("creating-provider-repo", () => {
   });
 });
 
+describe("VSCode template", () => {
+  test("every media file the extension and its manifest name is shipped", () => {
+    const dir = "creating-provider-repo/templates/vscode";
+    const named = new Set<string>();
+    for (const file of ["src/extension.ts", "package.json"])
+      for (const m of read(`${dir}/${file}`).matchAll(/media\/[\w.-]+/g))
+        named.add(m[0]);
+    expect(named.size).toBeGreaterThanOrEqual(2);
+    for (const path of named)
+      expect(existsSync(join(SKILLS, dir, path)), path).toBe(true);
+  });
+});
+
 describe("the playwright-core pin", () => {
   test("both skills query a dependency that @chatbridge/runtime really has", () => {
     const runtime = JSON.parse(
@@ -226,6 +239,7 @@ describe("packaging", () => {
       "skills/creating-provider-repo/templates/vscode/package.json",
       "skills/creating-provider-repo/templates/vscode/vscodeignore",
       "skills/creating-provider-repo/templates/vscode/media/icon.svg",
+      "skills/creating-provider-repo/templates/vscode/media/banner.svg",
       "skills/upgrading-provider-repo/SKILL.md",
       "skills/upgrading-provider-repo/upgrade-guide.md",
     ];

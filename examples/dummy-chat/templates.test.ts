@@ -153,6 +153,46 @@ describe("template provider on the hard skin", () => {
     await context.close();
   }, 30_000);
 
+  test("empty STOP_BUTTON and NEW_CHAT_BUTTON need no code edit", async () => {
+    const root = instantiate({
+      ENTRY_URL: `${server.url}/hard/login`,
+      CHAT_URL: `${server.url}/hard/chat`,
+      SIGN_IN_CONTROL: '[data-testid="sign-in-link"]',
+      ACCOUNT_CONTROL: '[data-testid="account-menu"]',
+      COMPOSER: '[data-testid="composer-input"]',
+      SEND_BUTTON: '[data-testid="send-button"]',
+      ASSISTANT_MESSAGE:
+        'article[data-turn="assistant"]:not([data-placeholder])',
+      USER_MESSAGE: 'article[data-turn="user"]',
+      ASSISTANT_MESSAGE_BODY: '[data-part="content"]',
+    });
+    const bare: Provider = (await import(join(root, "src", "provider.ts")))
+      .default;
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await bare.navigateToLogin(page);
+    await page.click('[data-testid="login-submit"]');
+    await bare.startNewChat(page);
+    await bare.sendMessage(page, "first question");
+    const first = await bare.waitForResponse(page);
+    expect(first).not.toBe("…");
+    expect(first.length).toBeGreaterThan(0);
+    await bare.sendMessage(page, "md: sample");
+    const second = await bare.waitForResponse(page);
+    expect(second).not.toBe(first);
+    expect(second).toMatch(/^```\w+$/m);
+    // New chat by URL: the thread is gone and the composer is empty.
+    await page.fill('[data-testid="composer-input"]', "left over");
+    await bare.startNewChat(page);
+    expect(await page.locator('article[data-turn="assistant"]').count()).toBe(
+      0,
+    );
+    expect(
+      (await page.locator('[data-testid="composer-input"]').innerText()).trim(),
+    ).toBe("");
+    await context.close();
+  }, 60_000);
+
   test("off-origin pages are logged out without touching the DOM", async () => {
     const context = await browser.newContext();
     const page = await context.newPage();

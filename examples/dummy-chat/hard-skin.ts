@@ -53,7 +53,8 @@ export function hardChatHtml(
     b.innerHTML = '<svg width="16" height="16"></svg>';
     return b;
   };
-  // The send button exists only while there is something to send.
+  // The send button exists only while there is something to send. The stop
+  // button is decorative: it marks the generating state and aborts nothing.
   const renderAction = () => {
     slot.replaceChildren();
     if (busy) slot.appendChild(button("stop-button", "生成を停止"));

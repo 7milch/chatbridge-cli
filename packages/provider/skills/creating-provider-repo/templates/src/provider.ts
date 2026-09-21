@@ -18,6 +18,15 @@ const countBefore = new WeakMap<Page, number>();
 const visibleOnly = (page: Page, selector: string): Locator =>
   page.locator(selector).locator("visible=true");
 
+/** What the composer holds: a form control's value, else its rendered text. */
+const composerText = (composer: Locator): Promise<string> =>
+  composer.evaluate((el) =>
+    ("value" in el && typeof el.value === "string"
+      ? el.value
+      : ((el as { innerText?: string }).innerText ?? "")
+    ).trim(),
+  );
+
 /** The newest assistant turn's readable content. ASSISTANT_MESSAGE_BODY is a
  * selector for a DESCENDANT of one turn, so a `:scope > …` form is fine here.
  * VARIANT (decision table "the reply has no content child"): when the turn
@@ -72,19 +81,32 @@ export default defineProvider({
   },
 
   async startNewChat(page) {
-    // VARIANT (decision table "new chat is a URL"): replace the click with
-    // page.goto(<new chat URL>).
-    const button = visibleOnly(page, S.NEW_CHAT_BUTTON);
+    // Decision table "new chat is a URL": NEW_CHAT_BUTTON stays empty and new
+    // chat is a navigation to CHAT_URL, with no edit here. VARIANT: when new
+    // chat has a URL of its own, add a NEW_CHAT_URL constant to selectors.ts
+    // and goto that instead. An empty selector never reaches page.locator().
+    const button =
+      S.NEW_CHAT_BUTTON.length > 0
+        ? visibleOnly(page, S.NEW_CHAT_BUTTON)
+        : undefined;
     // count() does not auto-wait: without this the first paint after a
     // navigation would look like "there is no button" and take the fallback.
     await button
-      .first()
-      .waitFor({ state: "visible", timeout: 10_000 })
+      ?.first()
+      .waitFor({ state: "visible", timeout: 3_000 })
       .catch(() => {});
-    if ((await button.count()) > 0) await button.first().click();
+    if (button && (await button.count()) > 0) await button.first().click();
     else await page.goto(S.CHAT_URL);
     const composer = visibleOnly(page, S.COMPOSER).first();
     await composer.waitFor({ state: "visible" });
+    // The contract is "visible AND empty": a draft the service restored would
+    // be sent in front of the next prompt.
+    const emptyBy = Date.now() + 10_000;
+    while ((await composerText(composer)) !== "") {
+      if (Date.now() > emptyBy)
+        throw new Error("startNewChat: the composer still holds text");
+      await page.waitForTimeout(200);
+    }
   },
 
   async sendMessage(page, prompt) {
@@ -98,12 +120,14 @@ export default defineProvider({
     // reply was simply faster than the wait — but if the service takes
     // LONGER than this to start generating, waitForResponse's done check
     // passes immediately and the whole turn rests on the stability read.
-    // Raise the timeout for a service that is slow to start.
-    await page
-      .locator(S.STOP_BUTTON)
-      .first()
-      .waitFor({ state: "visible", timeout: 3_000 })
-      .catch(() => {});
+    // Raise the timeout for a service that is slow to start. Skipped when
+    // STOP_BUTTON is empty (decision table "`doneCandidates` is empty").
+    if (S.STOP_BUTTON.length > 0)
+      await page
+        .locator(S.STOP_BUTTON)
+        .first()
+        .waitFor({ state: "visible", timeout: 3_000 })
+        .catch(() => {});
   },
 
   async waitForResponse(page) {
@@ -112,16 +136,22 @@ export default defineProvider({
     // 1. Done signal first: a placeholder turn may come and go before the
     //    real one. VARIANT (decision table "state attribute"): wait for the
     //    attribute's idle value instead.
-    await page
-      .locator(S.STOP_BUTTON)
-      .first()
-      .waitFor({ state: "hidden", timeout: TURN_LIMIT_MS });
+    //    With STOP_BUTTON empty there is no done signal: the new turn's
+    //    arrival (step 2, then given the whole budget) and the stability read
+    //    carry the turn, and ASSISTANT_MESSAGE's placeholder exclusion is all
+    //    that keeps a placeholder from being read as the answer.
+    const hasDoneSignal = S.STOP_BUTTON.length > 0;
+    if (hasDoneSignal)
+      await page
+        .locator(S.STOP_BUTTON)
+        .first()
+        .waitFor({ state: "hidden", timeout: TURN_LIMIT_MS });
     // 2. Then the new turn must exist.
     await page.waitForFunction(
       ({ selector, count }: { selector: string; count: number }) =>
         document.querySelectorAll(selector).length > count,
       { selector: S.ASSISTANT_MESSAGE, count: before },
-      { timeout: NEW_TURN_TIMEOUT_MS },
+      { timeout: hasDoneSignal ? NEW_TURN_TIMEOUT_MS : TURN_LIMIT_MS },
     );
     // 3. Stability read: two equal reads 500 ms apart. `deadline` was set
     //    before step 1, so the whole method shares one budget: if the done
