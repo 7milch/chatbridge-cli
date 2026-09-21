@@ -3,6 +3,7 @@ import type { Message } from "../protocol.js";
 import {
   commonPrefix,
   messageKey,
+  nextRenderDelay,
   onPartial,
   onState,
 } from "./stream-state.js";
@@ -84,5 +85,23 @@ describe("partial lifecycle", () => {
   );
   test("nothing in, nothing out", () => {
     expect(onState(undefined, "busy", 1)).toBeUndefined();
+  });
+});
+
+describe("nextRenderDelay", () => {
+  test("a cheap render waits for nothing but the next frame", () => {
+    expect(nextRenderDelay(0)).toBe(0);
+  });
+  test("a render that cost nothing measurable does not stall the stream", () => {
+    expect(nextRenderDelay(Number.NaN)).toBe(0);
+    expect(nextRenderDelay(-1)).toBe(0);
+  });
+  test("the wait is four times the last render's cost", () => {
+    expect(nextRenderDelay(5)).toBe(20);
+    expect(nextRenderDelay(50)).toBe(200);
+  });
+  test("a very long reply still redraws about once a second", () => {
+    expect(nextRenderDelay(400)).toBe(1000);
+    expect(nextRenderDelay(5000)).toBe(1000);
   });
 });
