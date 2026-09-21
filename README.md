@@ -257,6 +257,11 @@ Pass `ui` to brand the view: `welcome` text and a `banner` image above the
 empty history, a `footer` line under the composer, `sendButton` colours and
 a `userMessage` border colour.
 
+An assistant reply renders as Markdown when the provider sets
+`responseFormat: "markdown"` (code blocks get a language label and a Copy
+button) and streams into view while it is being written when the provider
+has `streaming`, the same as the TUI.
+
 `examples/vscode-dummy-chat` is the template (esbuild CJS bundle, `vscode`
 and `playwright` external, webview assets copied next to the bundle). The
 browser runs inside the extension host and opens lazily on the first
@@ -391,6 +396,15 @@ detection that keys on DOM state rather than on a running animation, which
 never needs the opt-out. The user's `idle` config key, the
 `CHATBRIDGE_IDLE_TIMEOUT` environment variable and the VSCode setting
 override `idle.timeoutMs`.
+
+A provider may also declare a `conversation` handle so the interactive UIs
+(the TUI, the VSCode view) return to the same conversation after `/reopen`
+and after an idle close; `/new` and logout still start fresh. When the
+conversation id is in the page URL, use the exported `urlConversation({
+match })` helper from `@chatbridge/provider`; otherwise implement `{
+handle(page), open(page, handle) }` by hand. See `@chatbridge/provider`'s
+README for details. This is in-process only — nothing is written to disk,
+and resuming a conversation across processes is not part of this release.
 
 ## Upgrading to 0.10
 

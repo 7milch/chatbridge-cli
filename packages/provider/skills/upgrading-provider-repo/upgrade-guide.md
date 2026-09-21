@@ -158,6 +158,47 @@ Verify: `<VENDOR>_E2E=1 bun test src/provider.e2e.test.ts` — "a guest is not
 logged in" passes: a fresh browser context on the chat URL reads as logged
 out, while the two-turn test still reads the saved state as logged in.
 
+## 0.11.0
+
+**Required:** none.
+
+**Optional:**
+
+### Conversation handle
+
+Needs DOM observation: yes.
+
+Change: when the service puts the conversation id in the page URL, add to
+`src/provider.ts` a top-level `conversation: urlConversation({ match })`, with
+`urlConversation` imported from `@chatbridge/provider` and `match` a RegExp
+(no `g` or `y` flag) that accepts a conversation URL and rejects the plain chat
+page. Observe the URL after the first reply of a new chat to write it, and note
+it in `docs/dom-notes.md`. The interactive UIs then return to the same
+conversation after `/reopen` and after an idle close; `/new` still starts a
+fresh one. When the id is not in the URL, implement
+`conversation: { handle(page), open(page, handle) }` by hand: `handle` returns a
+string naming the conversation or `undefined` before the first turn, and `open`
+throws when it cannot show that conversation.
+
+Verify: `bun run check`, then interactively send two turns, type `/reopen`, and
+ask something that depends on the earlier turns — the answer is in context and
+the separator reads `reopened · conversation restored`.
+
+### Markdown and streaming in the VSCode view
+
+Needs DOM observation: no.
+
+Change: nothing in `src/provider.ts`. Bump `@chatbridge/vscode` in `vscode/`
+and rebuild so `dist/webview` is copied again. The view renders replies as
+Markdown when the provider has `responseFormat: "markdown"` and shows them while
+they are written when it has `streaming`.
+
+Verify: build and launch the extension, send a prompt whose reply has a list and
+a code block — the reply grows while it is written and ends formatted, and the
+code block's Copy button works.
+
+**VSCode manifest:** none.
+
 ## 0.10.1
 
 **Required:** none. No runtime code changed; 0.10.1 only adds the skills to the

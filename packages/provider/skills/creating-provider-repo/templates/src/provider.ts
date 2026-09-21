@@ -180,6 +180,10 @@ export default defineProvider({
     },
   },
 
+  // Optional. When the conversation id is in the URL, this lets the UIs
+  // return to the same conversation after /reopen or an idle close.
+  // conversation: urlConversation({ match: /\/c\/[0-9a-f-]+$/ }),
+
   async detectBlock(page) {
     try {
       return (await page.title()) === S.CHALLENGE_TITLE
