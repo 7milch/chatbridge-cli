@@ -166,6 +166,31 @@ describe("census", () => {
   });
 });
 
+describe("dom-discovery step 5", () => {
+  test("its button diff finds the send control without reading a label", async () => {
+    const doc = readFileSync(
+      new URL("../dom-discovery.md", `file://${PROBE.replace(/[^/]+$/, "")}`),
+      "utf8",
+    );
+    // The call exactly as the procedure prints it, so the two cannot drift.
+    const call =
+      /"function": "(\(\) => window\.__cbProbe\.census\(\)\.buttons\.filter[^\n]+)" }/.exec(
+        doc,
+      )?.[1];
+    expect(call).toBeDefined();
+    const expr = `(${JSON.parse(`"${call}"`)})()`;
+    const page = await open(true);
+    const before = await probe<{ locator: string }[]>(page, expr);
+    await page.fill('[data-testid="composer-input"]', ".");
+    const after = await probe<{ locator: string }[]>(page, expr);
+    const known = new Set(before.map((b) => b.locator));
+    expect(after.filter((b) => !known.has(b.locator))).toEqual([
+      { locator: '[data-testid="send-button"]', label: "送信" },
+    ]);
+    await page.context().close();
+  });
+});
+
 describe("census on a demanding page", () => {
   test("lists descriptive attributes before per-turn identity ones", async () => {
     const page = await open(true);
@@ -406,6 +431,23 @@ describe("replyShape", () => {
       '<div data-part="content" data-message-id="m9"><p>hello</p><ul><li>a</li></ul></div>',
     );
     expect(descriptive.contentRootWithin).toBe('[data-part="content"]');
+    // An id is never kept, even one that does not look per-turn: nothing in one
+    // observation can tell "#content" from "#msg_abc".
+    const plainId = await shapeOf(
+      '<div id="content"><p>hello</p><ul><li>a</li></ul></div>',
+    );
+    expect(plainId.contentRootWithin).toBe(":scope > div");
+    // A label carries page text and is translated: structure wins.
+    const labelled = await shapeOf(
+      '<div aria-label="Reply"><p>hello</p><ul><li>a</li></ul></div>',
+    );
+    expect(labelled.contentRootWithin).toBe(":scope > div");
+    // Two same-tag children, the content second: no structural form resolves
+    // to it first, and a label is not a fallback.
+    const second = await shapeOf(
+      '<div><button>x</button></div><div aria-label="Reply" id="content"><p>hello</p><ul><li>a</li></ul></div>',
+    );
+    expect(second.contentRootWithin).toBeNull();
     await page.context().close();
   });
 });
@@ -422,6 +464,24 @@ describe("census composer text", () => {
     const area = c.find((x: { tag: string }) => x.tag === "textarea");
     expect(area.text.length).toBe("typed into a textarea".length);
     expect(area.text.head).toBe("typed into a textarea");
+    await page.context().close();
+  });
+
+  test("never reports an <input>'s value", async () => {
+    const page = await open(true);
+    await page.evaluate(`(() => {
+      const i = document.createElement("input");
+      i.type = "password";
+      i.setAttribute("role", "textbox");
+      i.setAttribute("data-testid", "secret-field");
+      i.value = "hunter2secret";
+      document.body.appendChild(i);
+    })()`);
+    const c = await probe(page, "window.__cbProbe.census()");
+    const field = c.composer.find((x: { tag: string }) => x.tag === "input");
+    expect(field).toBeDefined();
+    expect(field.text).toBeUndefined();
+    expect(JSON.stringify(c)).not.toContain("hunter2");
     await page.context().close();
   });
 });

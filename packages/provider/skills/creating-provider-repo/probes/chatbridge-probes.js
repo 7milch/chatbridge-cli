@@ -175,13 +175,6 @@
     );
   };
 
-  /** An `#id` that names one turn rather than one part of the page: it ends in
-   * a counter (`#msg-1`, `#turn_12`) or its value is generated. */
-  const perTurnId = (s) => {
-    const id = s.slice(1);
-    return generated(id) || /[-_]?\d+$/.test(id);
-  };
-
   /** A selector built from one element's own identity, such as `#id` or
    * `[data-message-id="m2"]`: right for this turn, wrong for the next one. */
   const identitySelector = (s) => {
@@ -275,14 +268,15 @@
     const label = el.getAttribute("aria-label");
     if (role) c.role = role;
     if (label) c.ariaLabel = label;
-    // A form control's content is its value, not its textContent: a filled
-    // <textarea> reads as empty otherwise, which is the most common composer.
-    const raw =
-      el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement
-        ? el.value
-        : el.textContent;
-    const t = text(raw);
-    if (t.length > 0) c.text = t;
+    // A <textarea>'s content is its value, not its textContent: the most
+    // common composer reads as empty otherwise. An <input> gets no text at
+    // all: its value can be a whole secret, and 40 characters would hold it.
+    if (!(el instanceof HTMLInputElement)) {
+      const t = text(
+        el instanceof HTMLTextAreaElement ? el.value : el.textContent,
+      );
+      if (t.length > 0) c.text = t;
+    }
     return c;
   };
 
@@ -658,23 +652,28 @@
         return false;
       }
     };
-    // This selector is kept and replayed on every later turn, so anything
-    // naming THIS turn is worse than no answer: `[data-message-id="m1"]` and
-    // an id that ends in a counter are dropped. Label-bearing attributes are
-    // held back as a last resort — they carry page text and are translated.
-    const own = selectorsOf(el).filter(
-      (s) => !identitySelector(s) || (s.startsWith("#") && !perTurnId(s)),
+    // This selector is kept and replayed on every later turn, so it is built
+    // from structure and descriptive hooks only. An id or a per-turn attribute
+    // names THIS turn; a label carries page text and is translated. Neither is
+    // ever used, not even as a last resort: no answer is better.
+    const identities = new Set(
+      Array.from(el.attributes)
+        .filter((a) => identityAttr(a.name))
+        .map((a) => a.value),
     );
-    const labelled = (s) => /\[(aria-label|title|placeholder|name)=/.test(s);
-    for (const s of own) if (!labelled(s) && hit(s)) return s;
+    for (const a of el.attributes) {
+      if (!a.name.startsWith("data-") || identityAttr(a.name)) continue;
+      if (!short(a.value) || generated(a.value) || identities.has(a.value))
+        continue;
+      const s = `[${a.name}=${q(a.value)}]`;
+      if (hit(s)) return s;
+    }
     const tag = el.tagName.toLowerCase();
-    const child = el.parentElement === root;
-    const combinator = child ? ":scope > " : ":scope ";
+    const combinator = el.parentElement === root ? ":scope > " : ":scope ";
     const role = el.getAttribute("role");
     if (short(role) && hit(`${combinator}${tag}[role=${q(role)}]`))
       return `${combinator}${tag}[role=${q(role)}]`;
     if (hit(`${combinator}${tag}`)) return `${combinator}${tag}`;
-    for (const s of own) if (labelled(s) && hit(s)) return s;
     return null;
   };
 

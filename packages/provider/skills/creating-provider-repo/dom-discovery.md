@@ -232,14 +232,14 @@ Send a prompt whose reply takes a few seconds, so that streaming, the
 "generating" state and any placeholder turn are all visible in one recording. A
 one-word reply shows none of them.
 
-**Do** — in `playwright`, in this order, one call each. Every call below is
-`browser_evaluate` unless it names another tool.
+**Do** — in `playwright`, in this order, one call each. How to send is decided
+**before** sending, from what the page shows, never from a button's label — so
+it works the same in every language.
 
-1. `browser_evaluate`:
+1. `browser_evaluate`, with the composer still empty — the visible buttons:
    ```json
-   { "function": "() => window.__cbProbe.recordTurn.start()" }
+   { "function": "() => window.__cbProbe.census().buttons.filter(b => b.visible && b.locators.length > 0).map(b => ({ locator: b.locators[0], label: b.ariaLabel ?? b.text?.head ?? '' }))" }
    ```
-   Returns `"recording"`.
 2. `browser_type` one character, so that a send button which exists only while
    the composer is non-empty is on the page:
    ```json
@@ -248,23 +248,26 @@ one-word reply shows none of them.
    ```
    (`target` takes a CSS selector — use your `COMPOSER` value. Without
    `"slowly": true`, `browser_type` **fills**: it replaces whatever the
-   composer holds, so call 4 below overwrites this `.` rather than appending
-   to it. No clearing step is needed.)
-3. `browser_evaluate` — look for the send control while it exists:
+   composer holds, so call 5 overwrites this `.` rather than appending to it.
+   No clearing step is needed.)
+3. `browser_evaluate` — call 1 again, unchanged. Keep the entries whose
+   `locator` is **not** in call 1's result: they exist *because* the composer is
+   non-empty.
+
+   | New entries | How to send in call 5 |
+   |---|---|
+   | exactly one | **5a**, clicking that `locator` |
+   | none (a send button that is always there cannot be told apart this way) | **5b**, Enter |
+   | more than one | **Human** — ask: "Which of these controls sends the message?" and list their `label` values; then **5a** with the one they name |
+
+4. `browser_evaluate`:
    ```json
-   { "function": "() => window.__cbProbe.census().buttons.filter(b => /send|submit|送信/i.test((b.ariaLabel ?? '') + (b.text?.head ?? '') + b.locators.join(' ')))" }
+   { "function": "() => window.__cbProbe.recordTurn.start()" }
    ```
-   Take the first `locators` entry of the first match.
+   Returns `"recording"`.
+5. Send the real prompt, the way call 3 decided.
 
-   These words are English and Japanese. If `census().lang` from step 4 is
-   **neither** `en` nor `ja`, skip this call: do not try to pick a button by
-   label. Go straight to call 4b.
-
-   If the result is `[]`, do the same. Either way the recorded turn, not the
-   label, is the authority for `SEND_BUTTON` — call 7 settles it.
-4. Send the real prompt, one of two ways.
-
-   **4a — there is a send control.** `browser_type`:
+   **5a — click.** `browser_type`:
    ```json
    { "element": "message composer", "target": "[data-testid=\"composer-input\"]",
      "text": "List 30 short facts about the solar system as a numbered list, one line each.",
@@ -275,57 +278,37 @@ one-word reply shows none of them.
    { "element": "send button", "target": "[data-testid=\"send-button\"]" }
    ```
 
-   **4b — call 3 was skipped or returned `[]`.** One `browser_type`,
-   submitting with Enter:
+   **5b — Enter.** One `browser_type`:
    ```json
    { "element": "message composer", "target": "[data-testid=\"composer-input\"]",
      "text": "List 30 short facts about the solar system as a numbered list, one line each.",
      "submit": true }
    ```
-   Enter is not always what sends, so check the thread, not the composer.
-   Before call 4b, and again a second or two after it, run `browser_evaluate`:
-   ```json
-   { "function": "() => window.__cbProbe.census().messageLists" }
-   ```
-   Compare the two results:
 
-   | After vs. before | Meaning | Next |
-   |---|---|---|
-   | a list's `children` went up, or a list appears that was not there before (an empty thread often has no list at all) | Enter sent | carry on with call 5 |
-   | identical | Enter did **not** send | the branch below |
-
-   Only in the second case, list the controls that exist *because* the composer
-   is non-empty:
-   ```json
-   { "function": "() => window.__cbProbe.census().buttons.filter(b => b.visible)" }
-   ```
-   and keep the candidates whose `locators[0]` does **not** appear in step 4's
-   census (that census was taken with an empty composer). Click the single
-   survivor with `browser_click`. If there is more than one, ask the user:
-   "Which of these controls sends the message?" and list their `ariaLabel` /
-   `text` values. If none survives, ask the user to send the message by hand in
-   the browser window and to say when the reply has finished; the recording is
-   still running, so call 7 is unaffected.
-5. `browser_evaluate`, immediately, while the reply is being written — look for
-   the stop control:
-   ```json
-   { "function": "() => window.__cbProbe.census().buttons.filter(b => /stop|cancel|abort|停止|中止/i.test((b.ariaLabel ?? '') + (b.text?.head ?? '') + b.locators.join(' ')))" }
-   ```
-   With an unknown `lang`, skip this call too. An empty result is not a
-   problem either: `buttonsSwapped` in call 7 names the stop control.
+   Never click any other button to "try" sending: while a reply is being
+   written, the one new button on the page is the **stop** button.
 6. `browser_wait_for`:
    ```json
    { "time": 20 }
    ```
-   then `browser_snapshot` to confirm the reply is complete. If it is still
-   being written, wait again.
+   then `browser_snapshot`. If the reply is still being written, wait again. If
+   there is no new turn at all, do not wait again — go on to call 7, which tells
+   you whether anything was sent.
 7. `browser_evaluate`:
    ```json
    { "function": "() => window.__cbProbe.recordTurn.stop()",
      "filename": ".playwright-mcp/turn-1.json" }
    ```
 
-**Read** — from `turn-1.json`. A normal record looks like this, trimmed:
+**Read** — first, was anything sent? If `textGrowth` is `[]` **and** `added[]`
+has no row that stayed (every row has `removedAt` or `"isControl": true`, or
+`added` is `[]`), nothing was sent. Then do exactly this, once: run call 4
+again, and **Human** — say: "The message did not send. The prompt is in the
+composer: please send it yourself in the browser window, then tell me when the
+reply has finished and which control you used to send it." After their reply,
+run call 7 again and read that record instead.
+
+From `turn-1.json`. A normal record looks like this, trimmed:
 
 ```json
 { "durationMs": 837,
@@ -372,14 +355,12 @@ Field by field:
   signal to build on. `attrs[]` rows carry `detached: true` when the element was
   gone by the time the record was rendered.
 - `buttonsSwapped` — the send → stop → nothing sequence, captured at event
-  time. This is where `SEND_BUTTON` and `STOP_BUTTON` come from when call 3 or
-  call 5 found nothing, and the check on them when it did:
+  time. It is the authority for both button constants:
   - **`SEND_BUTTON`** = the `gone` locator of the row just *before* the user
     turn was added (`{ "t": 33, "gone": "[data-testid=\"send-button\"]" }`
-    above). A send control that stays on the page all along produces no row —
-    then keep call 3's locator, and if call 3 was empty too, leave
-    `SEND_BUTTON` empty and take the `sendMessage` VARIANT (Enter), which is
-    what call 4b already proved works.
+    above). A send control that stays on the page all along produces no such
+    row — then see the decision table, rows **"no send button"** and "sent by
+    hand"; after 5a, keep the locator you clicked.
   - **`STOP_BUTTON`** = the locator that `appeared` early and is `gone` again
     at the end of the turn (`[data-testid="stop-button"]` above); the same
     locator is normally `doneCandidates[0]`.
@@ -428,7 +409,7 @@ argument it uses the element that just streamed):
   | `contentRootWithin` | Write |
   |---|---|
   | `[data-part="content"]` | that value |
-  | `:scope > div` (the content child has no attribute of its own) | that value — `:scope` is valid because the selector is always evaluated under one turn |
+  | a `:scope …` form — `:scope > div`, `:scope > div[role="…"]`, `:scope div` (the content element has no descriptive `data-*` attribute; ids and labels are never used) | that value — `:scope` is valid because the selector is always evaluated under one turn |
   | `""` (empty: the turn element *is* the content) | `ASSISTANT_MESSAGE`'s own value, plus the `newestBody` VARIANT in `templates/src/provider.ts` |
   | `null` (no relative selector exists) | see the decision table |
 
@@ -451,8 +432,8 @@ argument it uses the element that just streamed):
 
 ### Step 7 — a second turn
 
-**Do** — repeat step 5's calls 1, 4, 6 and 7 (no need to re-capture the
-buttons) with a second, different prompt, saving to
+**Do** — repeat step 5's calls 4 to 7 with a second, different prompt, sending
+the same way as in step 5 (5a, 5b, or the user by hand), saving to
 `.playwright-mcp/turn-2.json`.
 
 **Read** — confirm three things:
@@ -506,7 +487,7 @@ others:
 `CHALLENGE_TITLE` is a document title, not a selector — leave it out.
 
 ```json
-{ "function": "() => window.__cbProbe.verify({ SIGN_IN_CONTROL: '[data-testid=\"sign-in\"]', ACCOUNT_CONTROL: '[data-testid=\"account-menu\"]', COMPOSER: '[data-testid=\"composer-input\"]', SEND_BUTTON: '[data-testid=\"send-button\"]', STOP_BUTTON: '[data-testid=\"stop-button\"]', NEW_CHAT_BUTTON: '[data-testid=\"new-chat\"]', ASSISTANT_MESSAGE: { selector: 'article[data-turn=\"assistant\"]', many: true }, USER_MESSAGE: { selector: 'article[data-turn=\"user\"]', many: true }, ASSISTANT_MESSAGE_BODY: { selector: ':scope > [data-part=\"content\"]', within: 'article[data-turn=\"assistant\"]' } })" }
+{ "function": "() => window.__cbProbe.verify({ SIGN_IN_CONTROL: '[data-testid=\"sign-in\"]', ACCOUNT_CONTROL: '[data-testid=\"account-menu\"]', COMPOSER: '[data-testid=\"composer-input\"]', SEND_BUTTON: '[data-testid=\"send-button\"]', STOP_BUTTON: '[data-testid=\"stop-button\"]', NEW_CHAT_BUTTON: '[data-testid=\"new-chat\"]', ASSISTANT_MESSAGE: { selector: 'article[data-turn=\"assistant\"]', many: true }, USER_MESSAGE: { selector: 'article[data-turn=\"user\"]', many: true }, ASSISTANT_MESSAGE_BODY: { selector: '[data-part=\"content\"]', within: 'article[data-turn=\"assistant\"]' } })" }
 ```
 
 **Read** — each name gets `{ count, visibleCount, ok }`. `ok` is `count === 1`
@@ -556,7 +537,8 @@ Read the left column off probe output; do exactly what the right column says.
 | `attrs` shows a `data-state` / `aria-busy` flipping back at the end, and it is in `doneCandidates` | Done = that attribute's idle value. Take the `waitForResponse` VARIANT in `templates/src/provider.ts` — decision table **"state attribute"** |
 | `doneCandidates` lists **both** a state attribute and a button swap | Prefer the state attribute for the done signal (VARIANT), and keep the button as `STOP_BUTTON` for `sendMessage`'s "generation started" wait |
 | `doneCandidates` is empty | There is no done signal. Say so in §Generation indicator, leave `STOP_BUTTON` empty (step 9 reports it as `skipped`) and rely on the stability read alone — expect slower, occasionally truncated turns |
-| No send button in step 5's call 3 filter, and no send-control row in `buttonsSwapped` | Take the `sendMessage` VARIANT in `templates/src/provider.ts` — decision table **"no send button"** — `page.keyboard.press("Enter")`. Leave `SEND_BUTTON` empty — step 9 reports it as `skipped` — and say so in §Composer. Step 5's call 4b already sent this way, so you know it works |
+| Step 5 sent with Enter (5b) and `buttonsSwapped` has no `gone` row before the user turn | Take the `sendMessage` VARIANT in `templates/src/provider.ts` — decision table **"no send button"** — `page.keyboard.press("Enter")`. Leave `SEND_BUTTON` empty — step 9 reports it as `skipped` — and say so in §Composer. Step 5 already sent this way, so you know it works |
+| Step 5's record showed nothing sent and the user sent by hand | `SEND_BUTTON` = `locators[0]` of the step 4 `buttons` candidate that is the control the user named; if they pressed a key instead, leave it empty and adapt the **"no send button"** VARIANT to that key. Record in §Composer that Enter does not send. Verify in step 9 |
 | `textGrowth` is empty after a long prompt | The reply is not streamed into the DOM (it is replaced whole), so there is no `streamingElement` and no `streamingCollection`. Take `ASSISTANT_MESSAGE` from the `added[]` row for the assistant turn instead: turn its **descriptive** `shape` into a selector the same way as for `USER_MESSAGE` (`article[data-message-id][data-turn]` → `article[data-turn="assistant"]`, dropping identity attributes), and confirm it in step 9 as a `many` selector whose `count` equals the number of replies on the page. Say in §Streaming behaviour that nothing grew; `streaming.responseText` still works off the count |
 | `replyShape().chromeInsideContent` is non-empty | `ASSISTANT_MESSAGE_BODY` still takes `contentRootWithin` as printed; list the leaking chrome in §Streaming behaviour so the E2E's expectations are read with it in mind |
 | `replyShape().contentRoot` is `null` while a reply is still streaming | `streaming.responseText` returns `undefined` until it exists — the template already returns `undefined` when the body matches nothing |
@@ -566,7 +548,7 @@ Read the left column off probe output; do exactly what the right column says.
 | `title` is `"Just a moment..."`, or the page is an IdP refusal | Keep `CHALLENGE_TITLE` as the interstitial's title, `detectBlock` returns `"challenge page"`, the CLI tells the user to try `--headful`. Record it in §Errors and rate limits. Bot-protection evasion is out of scope: no stealth plugins, no UA spoofing, no attaching to a personal Chrome profile |
 | No new-chat control in `census().buttons`, or clicking it navigates (step 8's `url` changed) | New chat is a URL. Take the `startNewChat` VARIANT in `templates/src/provider.ts` — decision table **"new chat is a URL"** — and replace the click with `page.goto(<that URL>)`. Record the URL, not a selector, in §New chat, and leave `NEW_CHAT_BUTTON` empty; step 9 reports it as `skipped` |
 | `replyShape().contentRootWithin` is `""` (the reply element has no content child) | The turn element *is* the content. Set `ASSISTANT_MESSAGE_BODY` to the same value as `ASSISTANT_MESSAGE` and take the `newestBody` VARIANT in `templates/src/provider.ts` — decision table **"the reply has no content child"** — which drops the second `.locator()` call |
-| `replyShape().contentRootWithin` is `null` | No selector describes the content child from inside the turn. Use `ASSISTANT_MESSAGE`'s own value for `ASSISTANT_MESSAGE_BODY` with the `newestBody` VARIANT, and record in §Messages that the reply's chrome (`chrome`) will appear in the Markdown |
+| `replyShape().contentRootWithin` is `null` | No structural selector reaches the content element first from inside the turn (for example it is the second of two `div` children). Use `ASSISTANT_MESSAGE`'s own value for `ASSISTANT_MESSAGE_BODY` with the `newestBody` VARIANT, and record in §Messages that the reply's chrome (`chrome`) will appear in the Markdown |
 | The login page is on the chat page's own origin | Say so in §Login. The off-origin check in `isLoggedIn` is then a no-op and the sign-in / account pair decides alone. Do not replace the pair with a URL test |
 
 ## When a locator stops matching later
