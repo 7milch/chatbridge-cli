@@ -12,8 +12,8 @@ import {
   type Renderable,
   ScrollBoxRenderable,
   type StyledText,
-  TextRenderable,
-  TextareaRenderable,
+  type TextRenderable,
+  type TextareaRenderable,
 } from "@opentui/core";
 import { formatSize } from "../mentions/expand-mentions.js";
 import type { FileIndex } from "../mentions/file-index.js";
@@ -28,6 +28,7 @@ import {
 } from "./chat-model.js";
 import { MAX_ROWS, MentionPopup, type PopupRow } from "./mention-popup.js";
 import type { ResolvedSpinner } from "./spinner.js";
+import { markdown, text, textarea } from "./text.js";
 import {
   MUTED_COLOR,
   type Styler,
@@ -283,7 +284,7 @@ export class ChatView {
       height: "100%",
     });
     root.add(
-      new TextRenderable(renderer, {
+      text(renderer, {
         id: "header",
         content: styled(
           theme.badge(` ${opts.title} `),
@@ -318,7 +319,7 @@ export class ChatView {
     });
     for (const line of opts.banner) {
       this.banner.add(
-        new TextRenderable(renderer, {
+        text(renderer, {
           content: line,
           wrapMode: "none",
           selectable: false,
@@ -342,7 +343,7 @@ export class ChatView {
       visible: false,
     });
     for (let i = 0; i < MAX_QUEUE_ROWS; i++) {
-      const row = new TextRenderable(renderer, {
+      const row = text(renderer, {
         content: "",
         visible: false,
         wrapMode: "none",
@@ -360,14 +361,14 @@ export class ChatView {
       border: ["top", "bottom"],
       borderColor: MUTED_COLOR,
     });
-    this.prompt = new TextRenderable(renderer, {
+    this.prompt = text(renderer, {
       id: "prompt",
       content: styled(theme.muted("> ")),
       flexShrink: 0,
       selectable: false,
     });
     inputBox.add(this.prompt);
-    this.input = new TextareaRenderable(renderer, {
+    this.input = textarea(renderer, {
       id: "input",
       flexGrow: 1,
       height: 1,
@@ -390,7 +391,7 @@ export class ChatView {
     // Inline: the popup occupies the rows between the input and the status.
     this.popup = new MentionPopup(renderer, root);
 
-    this.status = new TextRenderable(renderer, {
+    this.status = text(renderer, {
       id: "status",
       content: styled(theme.muted(GUIDE)),
       // Fixed: a guide longer than the terminal must not wrap and push the
@@ -637,14 +638,14 @@ export class ChatView {
       flexDirection: "column",
       marginBottom: 1,
     });
-    const label = new TextRenderable(this.renderer, {
+    const label = text(this.renderer, {
       content: "",
       wrapMode: "none",
       selectable: false,
     });
     // Hidden until a partial arrives: with no body the indicator is the
     // whole row, and a hidden renderable takes no rows.
-    const tail = new TextRenderable(this.renderer, {
+    const tail = text(this.renderer, {
       content: "",
       wrapMode: "none",
       selectable: false,
@@ -725,14 +726,14 @@ export class ChatView {
     streaming: boolean,
   ): Renderable {
     if (message.format === "markdown") {
-      return new MarkdownRenderable(this.renderer, {
+      return markdown(this.renderer, {
         content: message.text,
         syntaxStyle: this.markdownStyle,
         conceal: true,
         streaming,
       });
     }
-    return new TextRenderable(this.renderer, {
+    return text(this.renderer, {
       content:
         message.role === "error"
           ? styled(theme.errorText(message.text))
@@ -1072,7 +1073,7 @@ export class ChatView {
     });
     if (message.role === "separator") {
       box.add(
-        new TextRenderable(this.renderer, {
+        text(this.renderer, {
           content: styled(theme.muted(`── ${message.text} ──`)),
           wrapMode: "none",
           selectable: false,
@@ -1084,7 +1085,7 @@ export class ChatView {
       // Pre-aligned columns: wrapping would break them, so a narrow
       // terminal clips instead.
       box.add(
-        new TextRenderable(this.renderer, {
+        text(this.renderer, {
           content: styled(theme.muted(message.text)),
           wrapMode: "none",
         }),
@@ -1092,7 +1093,7 @@ export class ChatView {
       return box;
     }
     box.add(
-      new TextRenderable(this.renderer, {
+      text(this.renderer, {
         content: LABELS[message.role](),
         // A label is chrome: a selection spanning messages must come back as
         // their text alone.
@@ -1101,17 +1102,17 @@ export class ChatView {
     );
     if (message.role === "shell") {
       box.add(
-        new TextRenderable(this.renderer, {
+        text(this.renderer, {
           content: styled(theme.shell(`$ ${message.text}`)),
           wrapMode: "word",
         }),
       );
-      const output = new TextRenderable(this.renderer, {
+      const output = text(this.renderer, {
         content: "",
         wrapMode: "word",
         visible: false,
       });
-      const footer = new TextRenderable(this.renderer, {
+      const footer = text(this.renderer, {
         content: "",
         wrapMode: "word",
         visible: false,
@@ -1133,7 +1134,7 @@ export class ChatView {
     box.add(this.bodyFor(message, false));
     if (message.incomplete) {
       box.add(
-        new TextRenderable(this.renderer, {
+        text(this.renderer, {
           content: styled(theme.muted(INCOMPLETE_NOTE)),
           wrapMode: "none",
           selectable: false,
@@ -1142,7 +1143,7 @@ export class ChatView {
     }
     for (const a of message.attachments ?? []) {
       box.add(
-        new TextRenderable(this.renderer, {
+        text(this.renderer, {
           content: styled(theme.muted(`📎 ${a.path} (${formatSize(a.bytes)})`)),
           selectable: false,
         }),

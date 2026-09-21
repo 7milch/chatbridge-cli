@@ -2371,3 +2371,59 @@ describe("ChatView: input focus", () => {
     expect(t.captureCharFrame()).toBe(before);
   });
 });
+
+describe("ChatView: light terminals", () => {
+  /** Visible text drawn in fixed truecolour white, which a light terminal
+   * background swallows. Indexed and default-intent colours follow the
+   * terminal palette and are fine. */
+  function fixedWhite(t: Awaited<ReturnType<typeof setup>>): string[] {
+    return t
+      .captureSpans()
+      .lines.flatMap((line) => line.spans)
+      .filter(
+        (s) =>
+          s.text.trim() !== "" &&
+          s.fg.intent === "rgb" &&
+          s.fg
+            .toInts()
+            .slice(0, 3)
+            .every((v) => v === 255),
+      )
+      .map((s) => s.text);
+  }
+
+  test("nothing is drawn in fixed white: banner, input, plain reply", async () => {
+    const t = await setup();
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    await t.frameWith("Echo: hi");
+    await t.mockInput.typeText("typed text");
+    await t.frameWith("typed text");
+    expect(fixedWhite(t)).toEqual([]);
+  });
+
+  test("nothing is drawn in fixed white: markdown reply", async () => {
+    const t = await setup({
+      session: {
+        responseFormat: "markdown",
+        async send() {
+          return "## Title\n\nplain prose\n\n- **bold** item\n\n```ts\nconst a = 1;\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |";
+        },
+        async close() {},
+        async kill() {},
+      },
+    });
+    await t.mockInput.typeText("hi");
+    t.mockInput.pressEnter();
+    await t.settledFrame("bold item", ["##", "**", "```"]);
+    expect(fixedWhite(t)).toEqual([]);
+  });
+
+  test("the input cursor is not fixed white", async () => {
+    const t = await setup();
+    const input = t.renderer.root.findDescendantById("input") as unknown as {
+      cursorColor: { intent: string };
+    };
+    expect(input.cursorColor.intent).toBe("default");
+  });
+});
