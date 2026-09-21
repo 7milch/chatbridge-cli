@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type TreeNode, toTree } from "./markdown-tree.js";
+import { type TreeNode, safeHref, toTree } from "./markdown-tree.js";
 
 /** Flattens to a compact string: tag(children) with text in quotes. */
 function show(nodes: TreeNode[]): string {
@@ -277,5 +277,26 @@ describe("toTree inline structure", () => {
     expect(() => toTree(deepList)).not.toThrow();
     const deepEmphasis = `${"*".repeat(200)}x${"*".repeat(200)}`;
     expect(() => toTree(deepEmphasis)).not.toThrow();
+  });
+});
+
+describe("safeHref", () => {
+  test.each(["https://e.test/p", "http://e.test"])("%s is a link", (href) => {
+    expect(safeHref(href)).toBe(href);
+  });
+  test.each([
+    "javascript:alert(1)",
+    "JaVaScRiPt:alert(1)",
+    "java\nscript:alert(1)",
+    "data:text/html,x",
+    "command:workbench.action.quit",
+    "vscode://x",
+    "//e.test/p",
+    "/p",
+    "#x",
+    "mailto:a@e.test",
+    "",
+  ])("%p is not", (href) => {
+    expect(safeHref(href)).toBeUndefined();
   });
 });

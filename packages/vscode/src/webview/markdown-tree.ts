@@ -27,10 +27,12 @@ const text = (value: string): TreeNode => ({ tag: "#text", text: value });
 
 /**
  * http(s) only, absolute only. Everything else — javascript:, data:,
- * command:, vscode:, protocol-relative, relative — is shown as text: a
- * webview link must never run a command or open a local resource.
+ * command:, vscode:, mailto:, protocol-relative, relative, a bare fragment —
+ * is rejected: a webview link must never run a command or open a local
+ * resource. Exported because the renderer applies it again at the point it
+ * sets the attribute, so the sink does not depend on its producers.
  */
-function safeHref(href: string): string | undefined {
+export function safeHref(href: string): string | undefined {
   try {
     const url = new URL(href);
     return url.protocol === "http:" || url.protocol === "https:"

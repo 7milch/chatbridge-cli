@@ -494,6 +494,11 @@ body {
 .text.markdown .align-right {
   text-align: right;
 }
+/* A reply that was cut short reads as unfinished at a glance, without
+   competing with `.message.error`'s red. */
+.message.incomplete {
+  border-left: 3px solid var(--vscode-descriptionForeground);
+}
 .incomplete-note {
   margin-top: 4px;
   font-size: 90%;

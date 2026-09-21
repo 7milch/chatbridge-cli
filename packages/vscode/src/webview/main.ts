@@ -20,7 +20,7 @@ import {
   typingMenuAction,
   typingMenuPrefix,
 } from "./command-menu.js";
-import { type TreeNode, toTree } from "./markdown-tree.js";
+import { type TreeNode, safeHref, toTree } from "./markdown-tree.js";
 import {
   type StreamState,
   commonPrefix,
@@ -63,8 +63,7 @@ const queueIcon = sendButton.querySelector(".icon-queue") as SVGElement;
  * scrollHeight) and shrinks it back; CSS max-height caps it at 8 rows. The
  * history stays pinned to its end when it was there before. */
 function fitComposer(): void {
-  const atBottom =
-    history.scrollHeight - history.scrollTop - history.clientHeight < 2;
+  const atBottom = isAtBottom();
   input.style.height = "auto";
   // The textarea has no border of its own any more (the box around it
   // draws one), so scrollHeight is the exact content height; the CSS
@@ -224,12 +223,18 @@ function renderNode(node: TreeNode): Node {
   if (!known) {
     // Not a tag `toTree` produces. Its text still reaches the reader; the
     // element it asked for does not get created.
+    if (node.text !== undefined)
+      e.appendChild(document.createTextNode(node.text));
     e.appendChild(renderTree(node.children ?? []));
     return e;
   }
   if (node.className) e.className = node.className;
   if (node.tag === "a") {
-    if (node.href) e.setAttribute("href", node.href);
+    // Checked again here, where the attribute is set: this sink must stay
+    // safe whatever produced the node. A link left without a target still
+    // shows its words.
+    const href = node.href === undefined ? undefined : safeHref(node.href);
+    if (href !== undefined) e.setAttribute("href", href);
     e.setAttribute("rel", "noopener noreferrer");
   } else if (node.tag === "input") {
     const box = e as HTMLInputElement;
@@ -408,19 +413,34 @@ function isAtBottom(): boolean {
   return history.scrollHeight - history.scrollTop - history.clientHeight < 2;
 }
 
-/** Brings the streaming node in line with `stream`, creating it on first
- * use and removing it once the turn is over. */
-function syncStreamNode(): void {
+/** Creates the streaming node on first use, keeps it last in the history and
+ * removes it once the turn is over. Drawing is `drawStreamNode`'s job, so a
+ * state frame that leaves the stream alone costs nothing. */
+function placeStreamNode(): void {
   if (stream === undefined) {
     streamNode?.remove();
     streamNode = undefined;
     return;
   }
-  const markdown = stream.format === "markdown";
-  if (!streamNode) streamNode = el("div", "message assistant streaming");
-  streamNode.replaceChildren(renderText(stream.text, markdown));
+  if (!streamNode) {
+    streamNode = el("div", "message assistant streaming");
+    // `#history` is a polite live region and this node's content is replaced
+    // wholesale several times a second; without this a screen reader would
+    // re-announce the whole growing reply on every redraw. The settled
+    // message, appended to the history below, is the one announcement.
+    streamNode.setAttribute("aria-live", "off");
+  }
   // Always last: the settled reply arrives as a history message below it.
-  history.appendChild(streamNode);
+  // Moving a node that is already there would be a remove plus an insert.
+  if (history.lastElementChild !== streamNode) history.appendChild(streamNode);
+}
+
+/** Paints `stream` into the node `placeStreamNode` put in the history. */
+function drawStreamNode(): void {
+  if (stream === undefined || !streamNode) return;
+  streamNode.replaceChildren(
+    renderText(stream.text, stream.format === "markdown"),
+  );
 }
 
 /** Set while a render is pending, so a burst of partials coalesces into one.
@@ -432,16 +452,22 @@ function scheduleStreamRender(): void {
   if (streamRenderPending) return;
   streamRenderPending = true;
   const run = (): void => {
+    if (stream === undefined) {
+      // The turn ended before the frame. Stop here rather than re-queueing
+      // for the rest of the budget.
+      streamRenderPending = false;
+      return;
+    }
     if (performance.now() < renderNotBefore) {
       // Still inside the budget the last render earned; try again next frame.
       requestAnimationFrame(run);
       return;
     }
     streamRenderPending = false;
-    if (stream === undefined) return; // the turn ended before the frame
     const atBottom = isAtBottom();
     const started = performance.now();
-    syncStreamNode();
+    placeStreamNode();
+    drawStreamNode();
     const done = performance.now();
     renderNotBefore = done + nextRenderDelay(done - started);
     if (atBottom) history.scrollTop = history.scrollHeight;
@@ -468,7 +494,9 @@ function render(s: State): void {
   for (const m of added) history.appendChild(renderMessage(m));
   renderedKeys = next;
   stream = onState(stream, s.status, s.messages.length);
-  syncStreamNode();
+  // Only place it: a stream that survived is already drawn, and re-lexing it
+  // here would run outside the render budget.
+  placeStreamNode();
   renderStatus(s);
   renderNotice(s);
   renderQueue(s);
