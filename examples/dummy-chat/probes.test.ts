@@ -48,6 +48,22 @@ async function sendTurn(page: Page, text: string) {
   });
 }
 
+/** Appends an attribute-free element under `parentExpr` and grows its text in
+ * separate tasks, so the observer sees one added node and several updates. */
+async function grow(page: Page, parentExpr: string) {
+  await page.evaluate(`(async () => {
+    const el = document.createElement("div");
+    el.className = "css-t1g6h0";
+    (${parentExpr}).appendChild(el);
+    const wait = () => new Promise((r) => setTimeout(r, 20));
+    await wait();
+    for (let i = 0; i < 3; i++) {
+      el.textContent = "chunk ".repeat(i + 1);
+      await wait();
+    }
+  })()`);
+}
+
 describe("probe source", () => {
   test("never names browser storage or cookies", () => {
     const source = readFileSync(PROBE, "utf8");
@@ -250,6 +266,49 @@ describe("recordTurn", () => {
       count: 2,
     });
     expect(r.textGrowth[0].collection).toEqual(r.summary.streamingCollection);
+    await page.context().close();
+  });
+
+  test("anchors the collection when the turns carry no attribute at all", async () => {
+    const page = await open(true);
+    await page.evaluate(`(() => {
+      const log = document.querySelector('[role="log"]');
+      log.replaceChildren();
+      for (let i = 0; i < 2; i++) {
+        const turn = document.createElement("div");
+        turn.className = "css-t1g6h0";
+        turn.textContent = "old turn";
+        log.appendChild(turn);
+      }
+    })()`);
+    await probe(page, "window.__cbProbe.recordTurn.start()");
+    await grow(page, `document.querySelector('[role="log"]')`);
+    const r = await probe(page, "window.__cbProbe.recordTurn.stop()");
+    expect(r.summary.streamingCollection).toEqual({
+      selector: '[role="log"] > div',
+      count: 3,
+    });
+    expect(r.textGrowth[0].collection).toEqual(r.summary.streamingCollection);
+    const siblings = await probe<boolean>(
+      page,
+      `(() => {
+        const log = document.querySelector('[role="log"]');
+        return [...document.querySelectorAll('[role="log"] > div')]
+          .every((el) => el.parentElement === log);
+      })()`,
+    );
+    expect(siblings).toBe(true);
+    await page.context().close();
+  });
+
+  test("says so rather than handing back a bare tag", async () => {
+    const page = await open(true);
+    await probe(page, "window.__cbProbe.recordTurn.start()");
+    await grow(page, "document.body");
+    const r = await probe(page, "window.__cbProbe.recordTurn.stop()");
+    expect(r.summary.streamingCollection.selector).toBe(null);
+    expect(r.summary.streamingCollection.count).toBe(0);
+    expect(r.summary.streamingCollection.note).toContain("messageLists");
     await page.context().close();
   });
 

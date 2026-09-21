@@ -175,10 +175,40 @@
     );
   };
 
+  /** A selector built from one element's own identity, such as `#id` or
+   * `[data-message-id="m2"]`: right for this turn, wrong for the next one. */
+  const identitySelector = (s) => {
+    if (s.startsWith("#")) return true;
+    const attr = /^\[([^\]=]+)=/.exec(s);
+    return !!attr && identityAttr(attr[1]);
+  };
+
+  const NO_COLLECTION =
+    "no stable attribute or anchor distinguishes this element; " +
+    "pick an ancestor from census().messageLists";
+
+  /** How many elements `selector` matches, or 0 unless every one of them is a
+   * sibling of `el` — which is what "the same-shaped turns of this thread"
+   * means. A selector that reaches outside that family is not one to keep. */
+  const familyCount = (selector, el) => {
+    let found;
+    try {
+      found = Array.from(document.querySelectorAll(selector));
+    } catch {
+      return 0;
+    }
+    if (found.length === 0) return 0;
+    const parent = el.parentElement;
+    return found.every((m) => m.parentElement === parent) ? found.length : 0;
+  };
+
   /** A selector for the element's whole family: what it has in common with the
    * same element from every other turn. Identity attributes are left out on
-   * purpose — this is the selector a provider keeps. */
+   * purpose — this is the selector a provider keeps. Falls back to anchoring
+   * the element under an ancestor, and reports failure rather than handing back
+   * a bare tag, which would match hundreds of unrelated elements. */
   const collectionOf = (el) => {
+    const tag = el.tagName.toLowerCase();
     const identities = new Set(
       Array.from(el.attributes)
         .filter((a) => identityAttr(a.name))
@@ -191,10 +221,32 @@
         continue;
       parts.push(`[${a.name}=${q(a.value)}]`);
     }
+    if (parts.length > 0) {
+      const selector = tag + parts.join("");
+      return { selector, count: count(selector) };
+    }
+    // Nothing describes the element itself. A role alone only counts if it
+    // stays inside the family; a tag alone never does.
     const role = el.getAttribute("role");
-    if (short(role)) parts.push(`[role=${q(role)}]`);
-    const selector = el.tagName.toLowerCase() + parts.join("");
-    return { selector, count: count(selector) };
+    if (short(role)) {
+      const selector = `${tag}[role=${q(role)}]`;
+      const n = familyCount(selector, el);
+      if (n > 0) return { selector, count: n };
+    }
+    for (
+      let a = el.parentElement;
+      a && a !== document.body;
+      a = a.parentElement
+    ) {
+      const anchor = selectorsOf(a).find(
+        (s) => !identitySelector(s) && count(s) === 1,
+      );
+      if (!anchor) continue;
+      const selector = `${anchor}${a === el.parentElement ? " > " : " "}${tag}`;
+      const n = familyCount(selector, el);
+      if (n > 0) return { selector, count: n };
+    }
+    return { selector: null, count: 0, note: NO_COLLECTION };
   };
 
   const name = (el) =>
@@ -389,6 +441,7 @@
               state.swaps.push({
                 t: now(),
                 el,
+                snap: selectorsOf(el, [], true)[0],
                 attr: m.attributeName,
                 from: cut(m.oldValue),
                 to: cut(to),
@@ -398,8 +451,11 @@
             continue;
           if (room())
             state.attrs.push({
+              // The element may be gone by stop(); its own attributes are the
+              // only honest handle left, and reading them costs no query.
               t: now(),
               el,
+              snap: selectorsOf(el, [], true)[0],
               attr: m.attributeName,
               from: cut(m.oldValue),
               to: cut(to),
@@ -467,6 +523,10 @@
     const durationMs = Math.round(performance.now() - state.t0);
     // An event names the element it happened to, so identity attributes lead.
     const at = (el) => describeEl(el, true);
+    /** The locator of an element an event happened to: a live element can be
+     * located in the page, a detached one only by what it carried at the time,
+     * since any query would now find some other element instead. */
+    const was = (e) => (e.el.isConnected ? at(e.el) : (e.snap ?? shape(e.el)));
 
     const grown = Array.from(state.growth, ([el, g]) => ({ el, ...g }))
       .filter((g) => g.updates >= 2)
@@ -492,19 +552,23 @@
       if (a.removedAt !== undefined) entry.removedAt = a.removedAt;
       return entry;
     });
-    const attrs = state.attrs.map((a) => ({
-      t: a.t,
-      locator: at(a.el),
-      attr: a.attr,
-      from: a.from,
-      to: a.to,
-    }));
+    const attrs = state.attrs.map((a) => {
+      const row = {
+        t: a.t,
+        locator: was(a),
+        attr: a.attr,
+        from: a.from,
+        to: a.to,
+      };
+      if (!a.el.isConnected) row.detached = true;
+      return row;
+    });
     const buttonsSwapped = state.swaps.map((s) => {
       if (s.gone !== undefined) return { t: s.t, gone: s.gone };
       if (s.appeared) return { t: s.t, appeared: at(s.el) };
       return {
         t: s.t,
-        changed: `${at(s.el)} ${s.attr}: ${s.from} → ${s.to}`,
+        changed: `${was(s)} ${s.attr}: ${s.from} → ${s.to}`,
       };
     });
 
