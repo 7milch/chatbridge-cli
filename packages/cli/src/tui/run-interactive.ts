@@ -195,16 +195,19 @@ export async function runInteractive(
     model = new ChatModel({
       openSession:
         opts.createSession ??
-        ((report, onIdleExpired) =>
+        ((report, onIdleExpired, conversation) =>
           // Opening messages paint the live status row; everything the
           // session reports later (from close(), including the idle one)
           // keeps going to the buffering onProgress above. Each session
           // gets its own expiry callback, so the model can tell a stale
-          // session's expiry from the current one's.
+          // session's expiry from the current one's. `conversation` is the
+          // handle the model remembers, so a reopen lands back in the same
+          // chat; undefined starts a new one.
           ChatSession.open({
             ...sessionOpts,
             onOpenProgress: report,
             onIdleExpired,
+            conversation,
           })),
       login:
         opts.login ??

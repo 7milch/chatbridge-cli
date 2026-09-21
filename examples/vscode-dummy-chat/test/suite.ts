@@ -57,11 +57,31 @@ export async function run(): Promise<void> {
   assert.equal(s.queue.length, 0);
   assert.match(s.messages.at(-1)?.text ?? "", /^Echo: second of two/);
 
-  // Reopen: the browser is replaced and the history marked.
+  // Reopen: the browser is replaced and the history marked. A handle was
+  // learned after the three settled turns above ("with file", "first of
+  // two", "second of two"), so the dummy provider restores the same
+  // server-side conversation and the separator carries the restore note.
+  // (`withRestoreNote(REOPENED_SEPARATOR, true)` in @chatbridge/core /
+  // @chatbridge/vscode; hardcoded here rather than importing, since neither
+  // is a declared dependency of this example.)
+  const RESTORED_SEPARATOR = "reopened · conversation restored";
   await vscode.commands.executeCommand("chatbridge-dummy.reopen");
   s = controller.getState();
   assert.equal(s.status, "idle");
-  assert.deepEqual(s.messages.at(-1), { role: "separator", text: "reopened" });
+  assert.deepEqual(s.messages.at(-1), {
+    role: "separator",
+    text: RESTORED_SEPARATOR,
+  });
+
+  // Prove the restore is real: continuing after reopen lands back in the
+  // same server-side conversation, so the dummy server's turn counter picks
+  // up where it left off (3 turns settled before the reopen) rather than
+  // resetting to 1.
+  const turnsReply = await controller.send("turns?");
+  assert.deepEqual(turnsReply, { ok: true });
+  await waitForIdle(controller);
+  s = controller.getState();
+  assert.match(s.messages.at(-1)?.text ?? "", /^Echo: turns\? \(turn 4\)$/);
 
   // Reopen mid-turn: the in-flight reply is dropped, not appended.
   const stale = controller.send("stale me");
@@ -76,9 +96,12 @@ export async function run(): Promise<void> {
     false,
     "the reply from before the reopen must not reach the history",
   );
+  // The in-flight "stale me" turn never settled, so the remembered handle
+  // is still the one from the last turn that did settle ("turns?" above);
+  // it exists, so this reopen restores too.
   assert.deepEqual(s.messages.filter((m) => m.role === "separator").at(-1), {
     role: "separator",
-    text: "reopened",
+    text: RESTORED_SEPARATOR,
   });
   assert.equal(s.status, "idle");
 

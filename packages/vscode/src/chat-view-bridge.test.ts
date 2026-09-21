@@ -48,6 +48,7 @@ const noopHandlers: ChatViewHandlers = {
   customCommand() {},
   attachUris() {},
   pasted() {},
+  copyText() {},
 };
 
 describe("ChatViewBridge", () => {
@@ -314,5 +315,31 @@ describe("ChatViewBridge", () => {
       w.receive({ type: "command", name });
       expect(calls.at(-1)).toEqual(name);
     }
+  });
+});
+
+describe("ChatViewBridge: streaming and copyText", () => {
+  test("copyText is validated and routed", () => {
+    const calls: string[] = [];
+    const bridge = new ChatViewBridge(() => state, {
+      ...noopHandlers,
+      copyText: (text) => calls.push(text),
+    });
+    const w = fakeWebview();
+    bridge.attach(w.webview);
+    w.receive({ type: "copyText", text: "a code block" });
+    w.receive({ type: "copyText", text: 42 } as unknown as ToHost);
+    w.receive({ type: "copyText" } as unknown as ToHost);
+    expect(calls).toEqual(["a code block"]);
+  });
+
+  test("pushPartial posts the streamed text with its format", () => {
+    const bridge = new ChatViewBridge(() => state, noopHandlers);
+    const w = fakeWebview();
+    bridge.attach(w.webview);
+    bridge.pushPartial("half a re", "markdown");
+    expect(w.posted).toEqual([
+      { type: "partial", text: "half a re", format: "markdown" },
+    ]);
   });
 });

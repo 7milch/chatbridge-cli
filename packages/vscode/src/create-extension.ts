@@ -133,6 +133,10 @@ export function createExtension(opts: CreateExtensionOptions) {
           void handlers.customCommand(name, args, text),
         attachUris: (uris) => void handlers.attachUris(uris),
         pasted: (id, text) => bridge.pushPasteResult(id, handlers.pasted(text)),
+        // A part of a reply the webview picked out, not the whole last
+        // one the `copy` command takes; the handler shares the clipboard
+        // seam and the failure warning with it.
+        copyText: (text) => void handlers.copyText(text),
       },
     );
 
@@ -178,14 +182,18 @@ export function createExtension(opts: CreateExtensionOptions) {
     }
 
     controller = new SessionController({
-      openSession: (onIdleExpired) =>
+      // `conversation` is the handle the controller remembers, so a reopen
+      // lands back in the same chat; undefined starts a new one.
+      openSession: (onIdleExpired, conversation) =>
         ChatSession.open({
           provider: opts.provider,
           authStore,
           ...settings(),
           onProgress: progress,
           onIdleExpired,
+          conversation,
         }),
+      onPartial: (text, format) => bridge.pushPartial(text, format),
       expandUrls: (text) =>
         resolveUrlHooks(text, opts.provider.urlHooks ?? [], {
           timeoutMs: settings().timeoutMs,

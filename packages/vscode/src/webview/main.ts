@@ -20,6 +20,15 @@ import {
   typingMenuAction,
   typingMenuPrefix,
 } from "./command-menu.js";
+import { type TreeNode, safeHref, toTree } from "./markdown-tree.js";
+import {
+  type StreamState,
+  commonPrefix,
+  messageKey,
+  nextRenderDelay,
+  onPartial,
+  onState,
+} from "./stream-state.js";
 import {
   hintText,
   isActive,
@@ -54,8 +63,7 @@ const queueIcon = sendButton.querySelector(".icon-queue") as SVGElement;
  * scrollHeight) and shrinks it back; CSS max-height caps it at 8 rows. The
  * history stays pinned to its end when it was there before. */
 function fitComposer(): void {
-  const atBottom =
-    history.scrollHeight - history.scrollTop - history.clientHeight < 2;
+  const atBottom = isAtBottom();
   input.style.height = "auto";
   // The textarea has no border of its own any more (the box around it
   // draws one), so scrollHeight is the exact content height; the CSS
@@ -129,6 +137,136 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// --- Markdown replies -------------------------------------------------
+// `toTree` decides everything; this layer only creates elements, sets text
+// and sets the handful of attributes listed below. No markup string is ever
+// parsed here, so nothing a reply carries can become a node of its own.
+
+/** Every tag `toTree` can emit. Anything else becomes a `span`. */
+const RENDERABLE_TAGS = new Set([
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "p",
+  "span",
+  "ul",
+  "ol",
+  "li",
+  "blockquote",
+  "table",
+  "thead",
+  "tbody",
+  "tr",
+  "th",
+  "td",
+  "hr",
+  "br",
+  "strong",
+  "em",
+  "del",
+  "code",
+  "a",
+  "input",
+]);
+
+/** How long the code block's button says `Copied` after a click. */
+const COPIED_LABEL_MS = 1500;
+
+/** The `start-N` class `toTree` puts on an ordered list that does not
+ * start at 1; it becomes the `start` attribute and the class is dropped. */
+function listStart(className: string | undefined): string | undefined {
+  const match = /^start-(-?\d+)$/.exec(className ?? "");
+  return match?.[1];
+}
+
+function copyButton(text: string): HTMLElement {
+  const b = button(
+    "Copy",
+    () => {
+      // The host owns the clipboard and reports success or failure itself;
+      // the label flip is only the local acknowledgement of the click.
+      vscode.postMessage({ type: "copyText", text });
+      b.textContent = "Copied";
+      setTimeout(() => {
+        b.textContent = "Copy";
+      }, COPIED_LABEL_MS);
+    },
+    "action code-copy",
+  );
+  b.title = "Copy this code block";
+  return b;
+}
+
+function codeBlock(node: TreeNode): HTMLElement {
+  const code = node.text ?? "";
+  const wrapper = el("div", "code-block");
+  const header = el("div", "code-header");
+  header.appendChild(el("span", "code-lang", node.lang ?? ""));
+  header.appendChild(copyButton(code));
+  wrapper.appendChild(header);
+  const pre = document.createElement("pre");
+  const body = document.createElement("code");
+  body.textContent = code;
+  pre.appendChild(body);
+  wrapper.appendChild(pre);
+  return wrapper;
+}
+
+function renderNode(node: TreeNode): Node {
+  if (node.tag === "#text") return document.createTextNode(node.text ?? "");
+  if (node.tag === "pre") return codeBlock(node);
+  const known = RENDERABLE_TAGS.has(node.tag);
+  const e = document.createElement(known ? node.tag : "span");
+  if (!known) {
+    // Not a tag `toTree` produces. Its text still reaches the reader; the
+    // element it asked for does not get created.
+    if (node.text !== undefined)
+      e.appendChild(document.createTextNode(node.text));
+    e.appendChild(renderTree(node.children ?? []));
+    return e;
+  }
+  if (node.className) e.className = node.className;
+  if (node.tag === "a") {
+    // Checked again here, where the attribute is set: this sink must stay
+    // safe whatever produced the node. A link left without a target still
+    // shows its words.
+    const href = node.href === undefined ? undefined : safeHref(node.href);
+    if (href !== undefined) e.setAttribute("href", href);
+    e.setAttribute("rel", "noopener noreferrer");
+  } else if (node.tag === "input") {
+    const box = e as HTMLInputElement;
+    box.type = "checkbox";
+    box.disabled = true;
+    box.checked = node.checked === true;
+  } else if (node.tag === "ol") {
+    const start = listStart(node.className);
+    if (start !== undefined) {
+      e.setAttribute("start", start);
+      e.removeAttribute("class");
+    }
+  }
+  if (node.children) e.appendChild(renderTree(node.children));
+  return e;
+}
+
+function renderTree(nodes: readonly TreeNode[]): DocumentFragment {
+  const fragment = document.createDocumentFragment();
+  for (const node of nodes) fragment.appendChild(renderNode(node));
+  return fragment;
+}
+
+/** The message body: a Markdown reply is a node tree, everything else is
+ * the text as it came. */
+function renderText(text: string, markdown: boolean): HTMLElement {
+  if (!markdown) return el("div", "text", text);
+  const box = el("div", "text markdown");
+  box.appendChild(renderTree(toTree(text)));
+  return box;
+}
+
 function renderMessage(m: Message): HTMLElement {
   const box = el("div", `message ${m.role}`);
   if (m.role === "separator") {
@@ -139,11 +277,17 @@ function renderMessage(m: Message): HTMLElement {
     box.textContent = m.text;
     return box;
   }
-  box.appendChild(el("div", "text", m.text));
+  if (m.incomplete) box.classList.add("incomplete");
+  box.appendChild(
+    renderText(m.text, m.role === "assistant" && m.format === "markdown"),
+  );
   for (const a of m.attachments ?? []) {
     box.appendChild(
       el("div", "attachment", `📎 ${a.path} (${formatSize(a.bytes)})`),
     );
+  }
+  if (m.incomplete) {
+    box.appendChild(el("div", "incomplete-note", "(incomplete)"));
   }
   return box;
 }
@@ -253,12 +397,106 @@ function renderAttachments(s: State): void {
   });
 }
 
+// --- the history and the streaming node -------------------------------
+
+/** The keys of the messages currently rendered into `#history`, in order.
+ * The history is append-mostly, so a state frame only has to remove what
+ * changed and append what is new — rebuilding it would drop the reader's
+ * selection and scroll position on every frame. */
+let renderedKeys: string[] = [];
+/** The reply being streamed, or `undefined` between turns. */
+let stream: StreamState | undefined;
+/** The node showing `stream`; always the last child of `#history`. */
+let streamNode: HTMLElement | undefined;
+
+function isAtBottom(): boolean {
+  return history.scrollHeight - history.scrollTop - history.clientHeight < 2;
+}
+
+/** Creates the streaming node on first use, keeps it last in the history and
+ * removes it once the turn is over. Drawing is `drawStreamNode`'s job, so a
+ * state frame that leaves the stream alone costs nothing. */
+function placeStreamNode(): void {
+  if (stream === undefined) {
+    streamNode?.remove();
+    streamNode = undefined;
+    return;
+  }
+  if (!streamNode) {
+    streamNode = el("div", "message assistant streaming");
+    // `#history` is a polite live region and this node's content is replaced
+    // wholesale several times a second; without this a screen reader would
+    // re-announce the whole growing reply on every redraw. The settled
+    // message, appended to the history below, is the one announcement.
+    streamNode.setAttribute("aria-live", "off");
+  }
+  // Always last: the settled reply arrives as a history message below it.
+  // Moving a node that is already there would be a remove plus an insert.
+  if (history.lastElementChild !== streamNode) history.appendChild(streamNode);
+}
+
+/** Paints `stream` into the node `placeStreamNode` put in the history. */
+function drawStreamNode(): void {
+  if (stream === undefined || !streamNode) return;
+  streamNode.replaceChildren(
+    renderText(stream.text, stream.format === "markdown"),
+  );
+}
+
+/** Set while a render is pending, so a burst of partials coalesces into one.
+ * `renderNotBefore` is the timestamp the next one may start at. */
+let streamRenderPending = false;
+let renderNotBefore = 0;
+
+function scheduleStreamRender(): void {
+  if (streamRenderPending) return;
+  streamRenderPending = true;
+  const run = (): void => {
+    if (stream === undefined) {
+      // The turn ended before the frame. Stop here rather than re-queueing
+      // for the rest of the budget.
+      streamRenderPending = false;
+      return;
+    }
+    if (performance.now() < renderNotBefore) {
+      // Still inside the budget the last render earned; try again next frame.
+      requestAnimationFrame(run);
+      return;
+    }
+    streamRenderPending = false;
+    const atBottom = isAtBottom();
+    const started = performance.now();
+    placeStreamNode();
+    drawStreamNode();
+    const done = performance.now();
+    renderNotBefore = done + nextRenderDelay(done - started);
+    if (atBottom) history.scrollTop = history.scrollHeight;
+  };
+  requestAnimationFrame(run);
+}
+
 function render(s: State): void {
   // A status without a spinner ends the phase the progress line belonged to,
   // so the next opening/busy/reopening starts from its own default text.
   if (!isActive(s.status)) lastProgress = undefined;
-  history.replaceChildren(...s.messages.map(renderMessage));
-  history.scrollTop = history.scrollHeight;
+  const atBottom = isAtBottom();
+  // The streaming node sits after the history messages, so it comes out
+  // before the diff counts children and goes back in with `syncStreamNode`.
+  streamNode?.remove();
+  const next = s.messages.map(messageKey);
+  const keep = commonPrefix(renderedKeys, next);
+  while (history.childElementCount > keep) {
+    history.removeChild(
+      history.children[history.childElementCount - 1] as Node,
+    );
+  }
+  const added = s.messages.slice(keep);
+  for (const m of added) history.appendChild(renderMessage(m));
+  renderedKeys = next;
+  stream = onState(stream, s.status, s.messages.length);
+  // Only place it: a stream that survived is already drawn, and re-lexing it
+  // here would run outside the render budget.
+  placeStreamNode();
   renderStatus(s);
   renderNotice(s);
   renderQueue(s);
@@ -268,6 +506,12 @@ function render(s: State): void {
   welcome.hidden =
     s.messages.length > 0 || (!config.welcome && !config.bannerUri);
   history.hidden = !welcome.hidden;
+  // Follow the end only when the reader was already there, or when the turn
+  // they just started put their own message at the bottom. Scrolling after
+  // the unhide above: a hidden element has no scroll height to reach.
+  if (atBottom || added.some((m) => m.role === "user")) {
+    history.scrollTop = history.scrollHeight;
+  }
   // The composer stays usable while a turn is in flight: what is typed then
   // is queued instead of sent.
   input.disabled = false;
@@ -484,6 +728,16 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
       lastState && !isActive(lastState.status) ? undefined : m.text;
     const t = status.querySelector(".progress-text");
     if (t) t.textContent = m.text;
+  } else if (m.type === "partial") {
+    // The host always posts the turn's `state` frame first, so the history
+    // length here is the one the partial belongs to.
+    stream = onPartial(
+      stream,
+      m.text,
+      m.format,
+      lastState?.messages.length ?? 0,
+    );
+    scheduleStreamRender();
   } else if (m.type === "pasteResult") {
     const p = pendingPastes.get(m.id);
     if (!p) return;

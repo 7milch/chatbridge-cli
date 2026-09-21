@@ -75,6 +75,29 @@ a `pollIntervalMs` that is not a finite number greater than 0. Without
 `onPartial` on the caller's side, or without `streaming` on the provider,
 core never polls.
 
+## Optional: `conversation`
+
+`conversation` lets the interactive UIs (the TUI, the VSCode view) return to
+the same conversation after `/reopen` and after an idle close; `/new` and
+logout still start fresh, and nothing is written to disk. When the service
+puts the conversation id in the page URL, use the exported
+`urlConversation({ match })` helper — `match` is a RegExp (no `g` or `y` flag)
+or a function that accepts a conversation URL and rejects the plain chat page;
+its `open` throws when the page does not end on a conversation URL. Otherwise
+implement `conversation: { handle(page), open(page, handle) }` by hand:
+`handle` returns a string naming the conversation, or `undefined` before the
+first turn; `open` throws when it cannot show that conversation.
+
+`match` is tested against the full `page.url()`, including any query string or
+fragment. If conversation URLs can carry one, do not anchor with `$`, or
+`handle` returns `undefined` forever and nothing is ever restored.
+
+```typescript
+import { urlConversation } from "@chatbridge/provider";
+
+conversation: urlConversation({ match: /\/c\/[0-9a-f-]+(?:[/?#]|$)/ }),
+```
+
 ## Optional: `browser` and `idle`
 
 `browser.reducedMotion` is the `prefers-reduced-motion` value emulated for

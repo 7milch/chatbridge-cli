@@ -2,6 +2,7 @@ import {
   type Provider,
   defineProvider,
   elementToMarkdown,
+  urlConversation,
 } from "@chatbridge/provider";
 
 /** Reference Provider implementation, targeting the bundled dummy chat.
@@ -60,6 +61,9 @@ export function createDummyProvider(baseUrl: string): Provider {
       },
       pollIntervalMs: 50,
     },
+
+    // The conversation id is in the URL once the first reply exists.
+    conversation: urlConversation({ match: /\/chat\/c\/[a-z0-9]{8}$/ }),
 
     async detectBlock(page) {
       // The challenge page has no chat controls, so isLoggedIn is false;

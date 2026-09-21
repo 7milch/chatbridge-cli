@@ -201,3 +201,90 @@ describe("POST /reply", () => {
     expect(chunks.at(-1)).toBe(`<p>Echo: ${text}</p>`);
   });
 });
+
+describe("conversations", () => {
+  /** One turn of a conversation: the id comes back, and is sent along on
+   * every later turn the way the chat page's script does it. */
+  async function reply(
+    url: string,
+    text: string,
+    conversation?: string,
+  ): Promise<{ chunks: string[]; conversation: string }> {
+    const res = await fetch(`${url}/reply`, {
+      method: "POST",
+      body: text,
+      headers: {
+        cookie: "session=ok",
+        ...(conversation ? { "x-conversation": conversation } : {}),
+      },
+    });
+    expect(res.status).toBe(200);
+    return (await res.json()) as { chunks: string[]; conversation: string };
+  }
+
+  test("the first reply mints an id and later turns keep it", async () => {
+    const s = await startDummyChat(0);
+    stop = s.stop;
+    const first = await reply(s.url, "hello");
+    expect(first.conversation).toMatch(/^[a-z0-9]{8}$/);
+    const second = await reply(s.url, "again", first.conversation);
+    expect(second.conversation).toBe(first.conversation);
+  });
+
+  test("`turns?` answers with that conversation's turn count", async () => {
+    const s = await startDummyChat(0);
+    stop = s.stop;
+    const first = await reply(s.url, "hello");
+    const second = await reply(s.url, "turns?", first.conversation);
+    expect(second.chunks.at(-1)).toContain("turn 2");
+  });
+
+  test("a known id serves the earlier turns and the id in a meta tag", async () => {
+    const s = await startDummyChat(0);
+    stop = s.stop;
+    const { conversation } = await reply(s.url, "hello there");
+    const res = await fetch(`${s.url}/chat/c/${conversation}`, {
+      headers: { cookie: "session=ok" },
+    });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("hello there");
+    expect(html).toContain(
+      `<meta name="conversation" content="${conversation}">`,
+    );
+  });
+
+  test("an unknown id redirects to a new chat", async () => {
+    const s = await startDummyChat(0);
+    stop = s.stop;
+    const res = await fetch(`${s.url}/chat/c/zzzzzzzz`, {
+      headers: { cookie: "session=ok" },
+      redirect: "manual",
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/chat");
+  });
+
+  test("a conversation page without a session redirects to /login", async () => {
+    const s = await startDummyChat(0);
+    stop = s.stop;
+    const { conversation } = await reply(s.url, "hello");
+    const res = await fetch(`${s.url}/chat/c/${conversation}`, {
+      redirect: "manual",
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/login");
+  });
+
+  test("a prior prompt is escaped in the restored page", async () => {
+    const s = await startDummyChat(0);
+    stop = s.stop;
+    const { conversation } = await reply(s.url, "<b>x</b>");
+    const res = await fetch(`${s.url}/chat/c/${conversation}`, {
+      headers: { cookie: "session=ok" },
+    });
+    const html = await res.text();
+    expect(html).toContain("&lt;b&gt;x&lt;/b&gt;");
+    expect(html).not.toContain("<b>x</b>");
+  });
+});

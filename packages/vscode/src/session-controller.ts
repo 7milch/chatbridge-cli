@@ -5,16 +5,29 @@ import {
   MAX_TOTAL_BYTES,
   type ProviderCommandResult,
   type ResolvedUrl,
+  type SendOptions,
   UrlHookError,
   closeOrKill,
   formatAttachment,
+  restoreNote,
   totalSizeProblem,
+  withRestoreNote,
 } from "@chatbridge/core";
 import type { Message, QueueEntry, State, Status } from "./protocol.js";
 
 /** What the controller needs from a ChatSession; lets tests inject a fake. */
 export interface ChatSessionLike {
-  send(prompt: string): Promise<string>;
+  send(prompt: string, opts?: SendOptions): Promise<string>;
+  /** What the provider's replies are written in, so the webview can pick a
+   * renderer. Optional so older fakes keep working; absent means "text". */
+  readonly responseFormat?: "markdown" | "text";
+  /** The service-side conversation this session is on, as of its last
+   * successful turn. The controller remembers it and hands it to the next
+   * open. Absent when the provider cannot name its conversations. */
+  readonly conversation?: string;
+  /** How the opening phase treated the handle it was given: true restored
+   * it, false fell back to a new chat, undefined never tried. */
+  readonly restored?: boolean;
   runCommand?(name: string, args: string): Promise<ProviderCommandResult>;
   close(): Promise<void>;
   kill(): Promise<void>;
@@ -33,7 +46,8 @@ export type SendResult =
 export const REOPENED_SEPARATOR = "reopened";
 
 /** Pushed when the idle timeout closed the browser; the next send reopens
- * it lazily, so the user is told the conversation starts over. */
+ * it lazily. The conversation only starts over when it cannot be restored,
+ * which the lazy open says with a note of its own. */
 export const IDLE_CLOSED_SEPARATOR = "closed after idle";
 
 /** Controller-internal queue entry: the attachments keep their content. */
@@ -67,14 +81,20 @@ export interface SessionControllerOptions {
   /** Opens a ChatSession; called lazily on the first send after `closed`.
    * `onIdleExpired` is handed to the session so core can tell the
    * controller it closed the browser after the idle timeout, passing the
-   * promise of that close so deactivate can wait for the auth-state save. */
+   * promise of that close so deactivate can wait for the auth-state save.
+   * `conversation` is the handle the controller remembers, for the open to
+   * return to; undefined asks for a new chat. */
   openSession: (
     onIdleExpired: (closing: Promise<void>) => void,
+    conversation: string | undefined,
   ) => Promise<ChatSessionLike>;
   /** How long newChat / discard / close wait before killing. Default 5 s. */
   closeTimeoutMs?: number;
   /** Called with the full state after every change. */
   onChange?: (state: State) => void;
+  /** Called with the streamed text of the turn in flight, whole text so
+   * far. Never called for a turn a reopen or a close has made stale. */
+  onPartial?: (text: string, format: "markdown" | "text") => void;
   /** Extra line appended to the history entry of a failed turn, keyed by
    * `ChatBridgeError.code`. Core's messages carry no UI-specific remedy;
    * the extension adds the VSCode-side one. */
@@ -133,6 +153,11 @@ export class SessionController {
    * already dropped that session, so this is the only handle close() has
    * to wait for the auth-state save. Cleared once it settles. */
   private idleClosing: Promise<void> | undefined;
+  /** The service-side conversation the next open should return to, as of
+   * the last successful turn. In memory only: it dies with the extension
+   * host, so a restart starts a new chat. New chat and logout forget it,
+   * and so does an open that could not restore it. */
+  private conversationHandle: string | undefined;
   private readonly closeTimeoutMs: number;
 
   constructor(private readonly opts: SessionControllerOptions) {
@@ -410,6 +435,9 @@ export class SessionController {
     generation: number,
   ): Promise<ChatSessionLike | undefined> {
     if (this.session !== undefined) return this.session;
+    // What the open below is given. An open with nothing to restore has
+    // nothing to report either, whatever the new session claims.
+    const requested = this.conversationHandle;
     const session = await this.trackOpen(this.open());
     // A reopen ran while we were opening: this browser is an orphan.
     // dropSession may have closed it already; close/kill are idempotent.
@@ -418,6 +446,19 @@ export class SessionController {
       return undefined;
     }
     this.session = session;
+    const restored = requested === undefined ? undefined : session.restored;
+    // A handle the service would not open again is a dead one: drop it so
+    // the next open does not spend another restore budget on it.
+    if (restored === false) this.conversationHandle = undefined;
+    const note = restoreNote(restored);
+    if (note !== undefined) {
+      // The caller pushed the user entry before this lazy open ran, so the
+      // note belongs in front of it: it is about the session, not the turn.
+      const last = this.messages.length - 1;
+      const before =
+        this.messages[last]?.role === "user" ? last : this.messages.length;
+      this.messages.splice(before, 0, { role: "separator", text: note });
+    }
     return session;
   }
 
@@ -493,7 +534,8 @@ export class SessionController {
 
   /** Re-runs the last prompt after a recoverable fatal error (a missing
    * browser that was just installed). Drops the trailing error entry so
-   * the history reads user → assistant. */
+   * the history reads user → assistant, or, when the failed turn had
+   * already streamed some text, user → incomplete assistant → assistant. */
   async retryLast(): Promise<SendResult> {
     if (this.lastPrompt === undefined) return EMPTY;
     if (!this.canStartTurn) {
@@ -518,14 +560,38 @@ export class SessionController {
     // `lastError` would keep the webview's error banner up after a
     // successful send from `dead`.
     this.lastError = undefined;
+    // What has streamed so far, and the session it streamed from: a turn
+    // that fails part-way keeps its text as an incomplete reply rather
+    // than losing it behind the error.
+    let partial: string | undefined;
+    let streaming: ChatSessionLike | undefined;
     this.claimTurn();
     try {
       const session = await this.ensureSession(generation);
       if (session === undefined) return { ok: true }; // stale
+      streaming = session;
       if (this.status !== "busy") this.setStatus("busy");
-      const reply = await session.send(prompt);
+      const reply = await session.send(prompt, {
+        onPartial: (text) => {
+          // A reopen or a close owns the view now; this turn's text would
+          // paint over whatever replaced it.
+          if (generation !== this.generation) return;
+          partial = text;
+          this.opts.onPartial?.(text, formatOf(session));
+        },
+      });
       if (generation !== this.generation) return { ok: true }; // stale
-      this.messages.push({ role: "assistant", text: reply });
+      // Past the stale check, and with no await in between, so a turn whose
+      // conversation a reopen has already replaced never writes its handle
+      // over the live one. The fallback keeps the last known handle when a
+      // provider that cannot name its conversations reports none.
+      this.conversationHandle = session.conversation ?? this.conversationHandle;
+      const format = formatOf(session);
+      this.messages.push({
+        role: "assistant",
+        text: reply,
+        ...(format === "markdown" ? { format } : {}),
+      });
       // Claim the next turn before emitting, so no idle frame is shown.
       this.status = "idle";
       this.drain();
@@ -533,6 +599,15 @@ export class SessionController {
       return { ok: true };
     } catch (err) {
       if (generation !== this.generation) return { ok: true }; // stale
+      if (partial !== undefined && partial !== "" && streaming !== undefined) {
+        const format = formatOf(streaming);
+        this.messages.push({
+          role: "assistant",
+          text: partial,
+          ...(format === "markdown" ? { format } : {}),
+          incomplete: true,
+        });
+      }
       return this.fail(err);
     }
   }
@@ -587,7 +662,7 @@ export class SessionController {
     return this.opts
       .openSession((closing) => {
         if (opened !== undefined) this.idleExpired(opened, closing);
-      })
+      }, this.conversationHandle)
       .then((session) => {
         opened = session;
         return session;
@@ -665,6 +740,9 @@ export class SessionController {
     const generation = ++this.generation;
     this.setStatus("reopening");
     await this.dropSession();
+    // What the open below is given; read before it, so a reopen with
+    // nothing to restore reports nothing whatever the new session claims.
+    const requested = this.conversationHandle;
     try {
       const session = await this.trackOpen(this.open());
       // `close()` (deactivate) ran while the browser was opening: this one
@@ -676,7 +754,13 @@ export class SessionController {
       }
       this.session = session;
       this.lastError = undefined;
-      this.messages.push({ role: "separator", text: REOPENED_SEPARATOR });
+      const restored = requested === undefined ? undefined : session.restored;
+      // A handle the service would not open again is a dead one.
+      if (restored === false) this.conversationHandle = undefined;
+      this.messages.push({
+        role: "separator",
+        text: withRestoreNote(REOPENED_SEPARATOR, restored),
+      });
       this.status = "idle";
       this.drain();
       this.emit();
@@ -691,6 +775,9 @@ export class SessionController {
    * false) while a turn is in flight. Clears a dead state. */
   async discard(separator: string): Promise<boolean> {
     if (!this.canStartTurn) return false;
+    // Before the drop, so it is forgotten even if the close throws: new
+    // chat and logout both mean the next open starts a fresh conversation.
+    this.conversationHandle = undefined;
     await this.dropSession();
     this.lastError = undefined;
     // A fresh chat must not re-send a prompt from before the break.
@@ -726,6 +813,11 @@ export class SessionController {
     if (this.status !== "dead") this.status = "closed";
     this.emit();
   }
+}
+
+/** What a session's replies are written in; absent means plain text. */
+function formatOf(session: ChatSessionLike): "markdown" | "text" {
+  return session.responseFormat ?? "text";
 }
 
 /** Why attachments went missing, for the message the user reads (or hears):

@@ -99,6 +99,16 @@ export const { activate, deactivate } = createExtension({
   chip (`path:L2-L3`) instead of inline text; unrelated clipboard text is
   pasted as usual.
 
+## Replies
+
+An assistant reply renders as Markdown when the provider sets
+`responseFormat: "markdown"` (headings, lists including task lists, tables,
+blockquotes, and fenced code blocks with a language label and a Copy button;
+links are limited to `http`/`https`, images are shown as links, and raw HTML
+is shown as text rather than rendered). A reply streams into view while it is
+being written when the provider has `streaming`; one interrupted by an error
+keeps what had streamed, marked incomplete.
+
 ## Manifest
 
 The vendor's `package.json` must contribute, with `<id>` replaced by the

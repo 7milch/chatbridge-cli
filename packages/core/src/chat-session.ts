@@ -2,6 +2,7 @@ import type {
   Page,
   Provider,
   ProviderCommandResult,
+  ProviderConversation,
 } from "@chatbridge/provider";
 import {
   type AuthStore,
@@ -49,6 +50,25 @@ export const IDLE_CLOSE_BUDGET_MS = 5_000;
 /** Default interval between `streaming.responseText` polls. */
 export const DEFAULT_POLL_INTERVAL_MS = 250;
 
+/** How long a turn may wait for the provider to name its conversation. */
+const HANDLE_BUDGET_MS = 5_000;
+
+/** Resolves `fallback` when `p` has not settled within `ms`. The two
+ * `conversation` hooks are best effort and run on a page the framework does
+ * not control, so neither may park an open or a finished turn forever;
+ * `runStep` only renames a Playwright timeout, it does not impose one. */
+function withBudget<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const capped = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+  });
+  // `p` may still reject after the budget expired, with nobody left to
+  // receive it; this handler keeps that from becoming an unhandled rejection
+  // without hiding a rejection that wins the race.
+  void p.catch(() => {});
+  return Promise.race([p, capped]).finally(() => clearTimeout(timer));
+}
+
 export interface SendOptions {
   /** Interactive UIs only. Receives the whole reply text so far — not a
    * delta — each time it changes, while the turn is pending. Never called
@@ -65,6 +85,11 @@ export interface ChatSessionOptions {
   /** Opening-phase knobs. Default: `{ timeoutMs, retries: 0 }`, which is
    * the pre-0.8.3 behaviour. */
   open?: OpenOptions;
+  /** Interactive callers only. A handle from an earlier session's
+   * `conversation` getter: the opening phase restores that conversation
+   * instead of starting a new chat, when the provider has `conversation`.
+   * Restoring never fails the open; see `restored`. */
+  conversation?: string;
   /** Progress messages (stderr in the CLI). Never receives auth content. */
   onProgress?: (message: string) => void;
   /** Progress messages for the opening phase only (attempt lines). Defaults
@@ -120,6 +145,10 @@ export class ChatSession {
   /** The close in flight, so a second close joins it rather than
    * returning while the first is still saving the auth state. */
   private closing: Promise<void> | undefined;
+  /** Outcome of the opening phase's restore; see the `restored` getter. */
+  private restoredFlag: boolean | undefined;
+  /** Last known conversation handle; see the `conversation` getter. */
+  private handle: string | undefined;
 
   private constructor(
     private readonly rt: RuntimeLike,
@@ -132,6 +161,18 @@ export class ChatSession {
   /** What `send` resolves with, for the UI to pick a renderer. */
   get responseFormat(): "markdown" | "text" {
     return this.provider.responseFormat ?? "text";
+  }
+
+  /** Handle of the conversation on the page, as of the last successful
+   * turn. A UI keeps it to pass as `conversation` on its next open. */
+  get conversation(): string | undefined {
+    return this.handle;
+  }
+
+  /** `true`: the opening phase restored `opts.conversation`. `false`: it
+   * tried and fell back to a new chat. `undefined`: nothing to restore. */
+  get restored(): boolean | undefined {
+    return this.restoredFlag;
   }
 
   /** Arms the idle close, unless the resolved timeout disables it. */
@@ -234,11 +275,12 @@ export class ChatSession {
           : `Opening browser... (attempt ${attempt}/${attempts})`,
       );
       try {
-        const rt = await ChatSession.attempt(
+        const { rt, restored } = await ChatSession.attempt(
           () => launch({ headless: opts.headless, provider, authStore }),
           preCheck,
           provider,
           open.timeoutMs,
+          opts.conversation,
         );
         // The opening phase set the page default to open.timeoutMs; turns
         // run under --timeout, so hand the page back to that budget.
@@ -251,6 +293,10 @@ export class ChatSession {
             ((ms) => new Promise<void>((r) => setTimeout(r, ms))),
           onProgress,
         );
+        session.restoredFlag = restored;
+        // Only a restored conversation is the one on the page; a fallback
+        // starts a new chat, whose handle the first turn will name.
+        if (restored === true) session.handle = opts.conversation;
         // Only once the opening phase succeeded: a session that never
         // opened has no browser to close.
         session.startIdleWatch(opts);
@@ -266,29 +312,108 @@ export class ChatSession {
     }
   }
 
-  /** One opening attempt: launch → goto chatUrl → isLoggedIn →
-   * startNewChat. If any step after launch fails, the browser is closed
-   * before the error propagates. */
+  /** One opening attempt: launch → goto chatUrl → isLoggedIn → restore the
+   * conversation, or startNewChat. If any step after launch fails, the
+   * browser is closed before the error propagates. */
   private static async attempt(
     launch: () => Promise<RuntimeLike>,
     preCheck: (() => string | undefined) | undefined,
     provider: Provider,
     timeoutMs: number,
-  ): Promise<RuntimeLike> {
-    const rt = await launchRuntime(launch, preCheck);
+    conversation: string | undefined,
+  ): Promise<{ rt: RuntimeLike; restored: boolean | undefined }> {
+    let rt: RuntimeLike | undefined;
     try {
-      rt.page.setDefaultTimeout(timeoutMs);
-      await runStep("goto", timeoutMs, () => rt.page.goto(provider.chatUrl));
-      await ChatSession.assertLoggedIn(provider, rt.page, timeoutMs);
-      await runStep("startNewChat", timeoutMs, () =>
-        provider.startNewChat(rt.page),
-      );
+      rt = await launchRuntime(launch, preCheck);
+      await ChatSession.enterChat(rt, provider, timeoutMs);
+      let restored: boolean | undefined;
+      if (conversation !== undefined && provider.conversation !== undefined) {
+        const outcome = await ChatSession.restore(
+          provider,
+          provider.conversation,
+          rt.page,
+          conversation,
+          timeoutMs,
+        );
+        restored = outcome === "restored";
+        if (outcome === "timeout") {
+          // The provider's `open` is still running on that page and may
+          // navigate it at any time, so the page is given up rather than
+          // reused: a late navigation would otherwise land after the
+          // fallback and leave the session somewhere `restored: false`
+          // does not describe.
+          const abandoned = rt;
+          rt = undefined;
+          await closeOrKill(abandoned, IDLE_CLOSE_BUDGET_MS);
+          rt = await launchRuntime(launch, preCheck);
+          await ChatSession.enterChat(rt, provider, timeoutMs);
+        } else if (outcome === "failed") {
+          // `open` has settled, so the page is ours again; it may just have
+          // been left anywhere.
+          const current = rt;
+          await runStep("goto", timeoutMs, () =>
+            current.page.goto(provider.chatUrl),
+          );
+        }
+      }
+      if (restored !== true) {
+        const current = rt;
+        await runStep("startNewChat", timeoutMs, () =>
+          provider.startNewChat(current.page),
+        );
+      }
+      return { rt, restored };
     } catch (err) {
       // A failing close must not mask the step error that caused it.
-      await rt.close().catch(() => {});
+      await rt?.close().catch(() => {});
       throw err;
     }
-    return rt;
+  }
+
+  /** goto chatUrl → isLoggedIn, on a page that is now under `timeoutMs`. */
+  private static async enterChat(
+    rt: RuntimeLike,
+    provider: Provider,
+    timeoutMs: number,
+  ): Promise<void> {
+    rt.page.setDefaultTimeout(timeoutMs);
+    await runStep("goto", timeoutMs, () => rt.page.goto(provider.chatUrl));
+    await ChatSession.assertLoggedIn(provider, rt.page, timeoutMs);
+  }
+
+  /** `"restored"`: the page now shows the conversation. `"failed"`: `open`
+   * has settled and did not get there (it threw, or left the page on another
+   * origin). `"timeout"`: the budget expired with `open` still running, so
+   * the page cannot be trusted any more — see `attempt`.
+   *
+   * Never throws: a conversation that cannot be restored costs the user the
+   * context, not the session. */
+  private static async restore(
+    provider: Provider,
+    conversation: ProviderConversation,
+    page: Page,
+    handle: string,
+    timeoutMs: number,
+  ): Promise<"restored" | "failed" | "timeout"> {
+    try {
+      // The late rejection of an abandoned `open` is already handled inside
+      // withBudget, so giving up on it leaks nothing.
+      const settled = await withBudget(
+        runStep("openConversation", timeoutMs, () =>
+          conversation.open(page, handle),
+        ).then(() => true),
+        timeoutMs,
+        false,
+      );
+      if (!settled) return "timeout";
+      return new URL(page.url()).origin === new URL(provider.chatUrl).origin
+        ? "restored"
+        : "failed";
+    } catch {
+      // The error may name the conversation, so it is dropped here rather
+      // than reported: the handle never reaches a message or a log.
+      return "failed";
+    }
   }
 
   /** sendMessage → waitForResponse for one turn. A timeout leaves the
@@ -316,13 +441,37 @@ export class ChatSession {
         this.provider.waitForResponse(this.rt.page),
       );
       this.pollPartial(waiting, opts.onPartial);
-      return await waiting;
+      const reply = await waiting;
+      await this.refreshConversation();
+      return reply;
     } catch (err) {
       if (err instanceof ResponseTimeoutError) await this.diagnoseTimeout();
       throw err;
     } finally {
       this.pending = false;
       this.idleWatch?.resume();
+    }
+  }
+
+  /** After a turn: a new chat only gets its id once the first reply exists.
+   * Best effort, and capped well below the turn timeout: the reply is
+   * already here and must not wait on a wedged page. */
+  private async refreshConversation(): Promise<void> {
+    const conversation = this.provider.conversation;
+    if (conversation === undefined) return;
+    const budget = Math.min(this.timeoutMs, HANDLE_BUDGET_MS);
+    try {
+      const handle = await withBudget(
+        runStep("conversationHandle", budget, () =>
+          conversation.handle(this.rt.page),
+        ),
+        budget,
+        undefined,
+      );
+      if (typeof handle === "string" && handle !== "") this.handle = handle;
+    } catch {
+      // Keep the previous handle. The error may name the conversation, so
+      // it is dropped rather than reported.
     }
   }
 

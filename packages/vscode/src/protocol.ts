@@ -7,6 +7,10 @@ export interface Message {
   text: string;
   /** `user` entries: files appended to the prompt, one line each. */
   attachments?: Attachment[];
+  /** `assistant` entries: how to render `text`. Absent means "text". */
+  format?: "markdown" | "text";
+  /** `assistant` entries: the turn failed after this much had streamed. */
+  incomplete?: true;
 }
 
 /** closed: no browser. opening: ChatSession.open in flight. idle: ready.
@@ -64,7 +68,10 @@ export type ToHost =
   /** Files dropped on the webview, as URI strings. */
   | { type: "attachUris"; uris: string[] }
   /** A paste into the input box; `id` pairs it with its `pasteResult`. */
-  | { type: "pasted"; id: number; text: string };
+  | { type: "pasted"; id: number; text: string }
+  /** The host copies `text` to the clipboard: a part of a reply the webview
+   * picked out, rather than the whole last one the `copy` command takes. */
+  | { type: "copyText"; text: string };
 
 /** Vendor UI customisation, as the webview receives it. */
 export interface UiConfig {
@@ -87,4 +94,8 @@ export type ToWebview =
   /** Answer to `pasted`: when attached, the webview drops the pasted text. */
   | { type: "pasteResult"; id: number; attached: boolean }
   /** Answer to `takeBack`: the entries removed from the queue. */
-  | { type: "tookBack"; entries: QueueEntry[] };
+  | { type: "tookBack"; entries: QueueEntry[] }
+  /** The reply being streamed, whole text so far. Not part of `State`: a
+   * state frame carries the whole history and is far too heavy for the
+   * polling rate. The next `state` frame that is not `busy` ends it. */
+  | { type: "partial"; text: string; format: "markdown" | "text" };
