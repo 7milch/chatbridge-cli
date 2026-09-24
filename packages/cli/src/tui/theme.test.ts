@@ -83,7 +83,10 @@ describe("markdownSyntaxStyle", () => {
   // (assets/markdown/highlights.scm, plus markdown_inline) emits, not the
   // names the theme happens to define. The style lookup only falls back to
   // the first dot segment, so a missing exact key renders as plain text.
-  test("registers every markup scope the bundled grammar emits", () => {
+  // The list is the scopes the theme styles, not every capture the grammar
+  // has: link URLs, task markers and strikethrough fall back to `default` on
+  // purpose.
+  test("registers the markup scopes the bundled grammar emits for the styled constructs", () => {
     const style = markdownSyntaxStyle();
     try {
       for (const scope of [
