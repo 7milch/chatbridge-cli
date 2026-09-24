@@ -293,3 +293,11 @@ Two externally reported bugs. `elementToMarkdown` skips MathML `<annotation>`
 theme registers `markup.heading.1`–`6` and `markup.raw.block`, the capture
 names the bundled grammar actually emits, so headings and fenced code are
 styled again, and the theme test asserts those names (#124). Ships as v0.11.1.
+
+### 21. TUI code block styling — done (issue #127, PR #128, 2026-09-24)
+
+A fenced code block in the interactive TUI rendered like a paragraph. The theme
+now styles the code scopes the bundled JavaScript / TypeScript grammars emit,
+and `markdown()` moves a settled fenced block into a muted left-border frame in
+place, so a reply is never rebuilt on settle. The issue's "no `treeSitterClient`"
+root cause was wrong; the spec records what actually happens. Ships as v0.11.2.
