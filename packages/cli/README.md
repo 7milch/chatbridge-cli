@@ -47,3 +47,11 @@ remote machine's clipboard, not yours — and some terminals disable OSC 52
 (tmux needs `set -g set-clipboard on`; macOS Terminal.app ignores it
 outright), so a copy over SSH can silently fail to reach the system
 clipboard in those setups.
+
+## Bundled grammars
+
+Fenced code in a Markdown reply is highlighted with tree-sitter. OpenTUI
+bundles JavaScript, TypeScript, Markdown and Zig; this package adds Python,
+Ruby, JSON, Bash and Go under `assets/<lang>/`, each with the grammar's MIT
+`LICENSE` and a `highlights.scm` whose header names the source repository and
+tag. Grammars load lazily the first time a reply names one.

@@ -22,6 +22,7 @@ import {
 import { ChatView } from "./chat-view.js";
 import { copyToClipboard, spawnClipboardProcess } from "./clipboard.js";
 import { expandInput } from "./expand-input.js";
+import { registerBundledGrammars } from "./grammars.js";
 import { type SpinnerOptions, resolveSpinner } from "./spinner.js";
 
 export interface InteractiveOptions extends ChatSessionOptions {
@@ -159,6 +160,9 @@ export function teardownExitMessage(
 export async function runInteractive(
   opts: InteractiveOptions,
 ): Promise<{ fatal?: unknown }> {
+  // Before any Markdown body exists: the first CodeRenderable creates the
+  // tree-sitter client, which reads the registered grammars once.
+  registerBundledGrammars();
   // Progress messages go to stderr, which would land on top of the live TUI.
   // Forward them directly only until the renderer takes over the terminal;
   // after that a reopen's "Opening browser..." is reported by the status row.

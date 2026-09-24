@@ -420,4 +420,5 @@ Two changes affect embedders of `@chatbridge/core` and provider authors:
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). `@chatbridge/cli` ships five tree-sitter
+grammars under `packages/cli/assets/`, each with its own MIT licence file.

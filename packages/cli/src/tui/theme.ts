@@ -84,11 +84,12 @@ export const theme = {
  *
  * A fenced block is not markup: MarkdownRenderable turns it into its own
  * CodeRenderable whose filetype is the info string, so the JavaScript and
- * TypeScript grammars bundled with OpenTUI emit the code scopes below. A
- * block with no language, or one whose language has no bundled grammar, is
- * not highlighted at all and the frame `text.ts` adds sets it apart. Scopes
- * not listed (`property`, `variable`, `operator`, `punctuation.*`) stay on
- * the terminal foreground.
+ * TypeScript grammars bundled with OpenTUI, and the Python, Ruby, JSON, Bash
+ * and Go grammars this package ships (see `grammars.ts`), emit the code
+ * scopes below. A block with no language, or one whose language has no
+ * grammar, is not highlighted at all and the frame `text.ts` adds sets it
+ * apart. Scopes not listed (`property`, `variable`, `operator`,
+ * `punctuation.*`) stay on the terminal foreground.
  *
  * A style it does not find falls back to `default`, set here to the terminal
  * foreground. The caller owns the returned handle and must `destroy()` it. */
@@ -128,6 +129,10 @@ export function markdownSyntaxStyle(): SyntaxStyle {
     number: literal,
     constant: literal,
     "constant.builtin": literal,
+    // From the grammars shipped in packages/cli/assets: an escape sequence
+    // inside a string, and a JSON object key.
+    escape: string,
+    "string.special.key": { fg: RGBA.fromIndex(ANSI.blue) },
     type,
     "variable.builtin": type,
   });

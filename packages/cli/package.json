@@ -23,7 +23,7 @@
   "bin": {
     "chatbridge": "./dist/bin.js"
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": ["dist", "assets", "README.md", "LICENSE"],
   "publishConfig": {
     "access": "public"
   },
