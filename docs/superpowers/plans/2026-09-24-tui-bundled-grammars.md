@@ -478,7 +478,7 @@ YAML was wanted too but the only prebuilt wasm is language ABI 13 and crashes in
 
 Package size: the cli tarball grows from 60 KB to about 4.2 MB; grammars load lazily on first use.
 
-Nothing a vendor sees changes, so no upgrade-guide entry.
+Nothing a vendor sees changes; the upgrade guide's 0.11.3 entry says so.
 
 Spec: `docs/superpowers/specs/2026-09-24-tui-bundled-grammars-design.md`
 Plan: `docs/superpowers/plans/2026-09-24-tui-bundled-grammars.md`

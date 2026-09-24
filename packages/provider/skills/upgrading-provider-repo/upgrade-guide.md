@@ -158,6 +158,17 @@ Verify: `<VENDOR>_E2E=1 bun test src/provider.e2e.test.ts` — "a guest is not
 logged in" passes: a fresh browser context on the chat URL reads as logged
 out, while the two-turn test still reads the saved state as logged in.
 
+## 0.11.3
+
+**Required:** none. TUI-only: `@chatbridge/cli` now ships tree-sitter grammars
+for Python, Ruby, JSON, Bash and Go, so those fenced blocks get per-token
+colours in the interactive TUI; the package grows by about 4 MB unpacked
+(528 KB in the tarball). Nothing a vendor repository sees changes.
+
+**Optional:** none.
+
+**VSCode manifest:** none.
+
 ## 0.11.2
 
 **Required:** none. One TUI-only change: a fenced code block in a Markdown reply
