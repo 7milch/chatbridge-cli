@@ -120,11 +120,17 @@ test("a settled code block is framed by a muted left border", async () => {
   expect(box.borderColor).toBe(MUTED_COLOR);
   // BoxRenderable (0.5.10) has no paddingLeft getter; read its layout node.
   expect(box.getLayoutNode().getPadding(parseEdge("left")).value).toBe(1);
+  // The gap below the block is the frame's margin, not the code's, or the
+  // border would run on into the blank line.
+  const bottom = parseEdge("bottom");
+  expect(box.getLayoutNode().getMargin(bottom).value).toBe(1);
   const inner = box.getChildren();
   expect(inner).toHaveLength(1);
   expect(inner[0]).toBeInstanceOf(CodeRenderable);
   expect((inner[0] as CodeRenderable).selectionBg).toBe(SELECTION_BG);
   expect((inner[0] as CodeRenderable).selectionFg).toBe(SELECTION_FG);
+  const innerMargin = (inner[0] as CodeRenderable).getLayoutNode();
+  expect(innerMargin.getMargin(bottom).value || 0).toBe(0);
 });
 
 test("a body built already settled frames its code block at once", async () => {

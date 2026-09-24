@@ -9,6 +9,7 @@ import {
   TextTableRenderable,
   type TextareaOptions,
   TextareaRenderable,
+  parseEdge,
 } from "@opentui/core";
 import {
   CURSOR_FALLBACK,
@@ -17,6 +18,8 @@ import {
   SELECTION_BG,
   SELECTION_FG,
 } from "./theme.js";
+
+const BOTTOM = parseEdge("bottom");
 
 const SELECTION = { selectionBg: SELECTION_BG, selectionFg: SELECTION_FG };
 
@@ -75,6 +78,13 @@ function renderBlock(
         paddingLeft: 1,
         flexShrink: 0,
       });
+      // The gap to the next block moves onto the frame, or the border would
+      // run on into the blank line below the code.
+      const gap = block.getLayoutNode().getMargin(BOTTOM).value;
+      if (gap > 0) {
+        frame.marginBottom = gap;
+        block.marginBottom = 0;
+      }
       frame.add(block);
       return frame;
     }
@@ -85,7 +95,9 @@ function renderBlock(
 /** Leaving streaming mode (0.5.10) reuses every block whose source did not
  * change without asking `renderNode`, so a code block would never get its
  * frame. Handing it a fresh `renderNode` is the public way to rebuild every
- * block through the hook, which is done once as streaming ends. */
+ * block through the hook, which is done once as streaming ends. A framed
+ * block is outside OpenTUI's in-place updates: a settled body switched back
+ * to streaming, or given a new style, would not update it (no caller does). */
 class SettlingMarkdownRenderable extends MarkdownRenderable {
   constructor(
     ctx: RenderContext,
@@ -102,10 +114,12 @@ class SettlingMarkdownRenderable extends MarkdownRenderable {
   override set streaming(value: boolean) {
     const settling = super.streaming && !value;
     super.streaming = value;
-    if (settling) this.renderNode = this.freshRenderNode();
+    if (settling && !this.isDestroyed) this.renderNode = this.freshRenderNode();
   }
 }
 
+/** A Markdown body in the terminal's colours, with selection colours on
+ * every block and, once settled, a muted left border on fenced code. */
 export function markdown(
   ctx: RenderContext,
   options: MarkdownOptions,
