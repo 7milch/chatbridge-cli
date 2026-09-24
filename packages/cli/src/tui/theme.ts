@@ -71,16 +71,29 @@ export const theme = {
 
 /** Styles for MarkdownRenderable, from the same ANSI indices as `theme`, so
  * a reply looks like the rest of the history in any terminal palette. The
- * scope names are the ones MarkdownRenderable looks up (0.5.10); a style it
- * does not find falls back to `default`, set here to the terminal foreground.
+ * scope names are the captures the bundled tree-sitter markdown query emits
+ * (0.5.10): headings come per level, fenced and indented code as
+ * `markup.raw.block`, and the lookup falls back only to the first dot
+ * segment, so each must be registered exactly. `markup.heading` stays for
+ * pipe-table header cells and `markup.raw` for inline code. A style it does
+ * not find falls back to `default`, set here to the terminal foreground.
  * The caller owns the returned handle and must `destroy()` it. */
 export function markdownSyntaxStyle(): SyntaxStyle {
+  const heading = { fg: RGBA.fromIndex(ANSI.green), bold: true };
+  const raw = { fg: RGBA.fromIndex(ANSI.yellow) };
   return SyntaxStyle.fromStyles({
     default: { fg: DEFAULT_FG },
-    "markup.heading": { fg: RGBA.fromIndex(ANSI.green), bold: true },
+    "markup.heading": heading,
+    "markup.heading.1": heading,
+    "markup.heading.2": heading,
+    "markup.heading.3": heading,
+    "markup.heading.4": heading,
+    "markup.heading.5": heading,
+    "markup.heading.6": heading,
     "markup.strong": { bold: true },
     "markup.italic": { italic: true },
-    "markup.raw": { fg: RGBA.fromIndex(ANSI.yellow) },
+    "markup.raw": raw,
+    "markup.raw.block": raw,
     "markup.link": { fg: RGBA.fromIndex(ANSI.blue), underline: true },
     "markup.list": { fg: MUTED_COLOR },
     "markup.quote": { fg: MUTED_COLOR, italic: true },
