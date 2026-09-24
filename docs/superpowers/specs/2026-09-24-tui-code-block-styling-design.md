@@ -66,7 +66,7 @@ helper builds the frame for both paths. The hook reads `streaming` from the
 live instance, falling back to the initial option only while the constructor
 runs. Afterwards the body's own block state still points at the inner
 `CodeRenderable`; that is harmless because no caller updates a settled body,
-and `destroy()` tears the frame down as a child. Switching a framed body back
+and `destroyRecursively()` reaches the code through the frame as a child. Switching a framed body back
 to streaming throws. Two facts the hook depends on: a paragraph is also a
 `CodeRenderable` (filetype `markdown`), so the frame requires
 `token.type === "code"`; and `defaultRender()` leaves the inter-block

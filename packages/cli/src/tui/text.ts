@@ -129,7 +129,7 @@ function renderBlock(
  * Afterwards the body's own block state still points at the inner
  * CodeRenderable, not the frame. That is harmless because no caller updates
  * a settled body (chat-view only ever sets `streaming = false`), and
- * `destroy()` tears the frame down as an ordinary child. Switching a framed
+ * `destroyRecursively()` reaches the code through the frame as an ordinary child. Switching a framed
  * body back to streaming is unsupported and throws. */
 class SettlingMarkdownRenderable extends MarkdownRenderable {
   constructor(
