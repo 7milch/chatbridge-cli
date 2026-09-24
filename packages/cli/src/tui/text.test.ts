@@ -56,11 +56,11 @@ afterEach(async () => {
 const FENCED = "before\n\n```javascript\nconst x = 1;\n```\n\nafter\n";
 
 /** A Markdown body over one fenced block, as chat-view builds a reply. */
-async function fencedBody(streaming: boolean) {
+async function fencedBody(streaming: boolean, content = FENCED) {
   const t = await createTestRenderer({ width: 40, height: 12 });
   const style = markdownSyntaxStyle();
   const body = markdown(t.renderer, {
-    content: FENCED,
+    content,
     syntaxStyle: style,
     conceal: true,
     streaming,
@@ -110,12 +110,21 @@ test("a streaming code block stays a bare CodeRenderable with selection colours"
   expect((block as CodeRenderable).selectionFg).toBe(SELECTION_FG);
 });
 
-test("a settled code block is framed by a muted left border", async () => {
+test("settling frames the streamed code block in place", async () => {
   const body = await fencedBody(true);
+  const before = body.getChildren();
+  const code = codeBlockOf(body) as CodeRenderable;
+  const index = before.indexOf(code);
   body.streaming = false;
-  const block = codeBlockOf(body);
-  expect(block).toBeInstanceOf(BoxRenderable);
-  const box = block as BoxRenderable;
+  const after = body.getChildren();
+  expect(after).toHaveLength(before.length);
+  // The prose blocks are the same objects: nothing was rebuilt.
+  after.forEach((b, i) => {
+    if (i !== index) expect(b).toBe(before[i]);
+  });
+  const box = after[index];
+  expect(box).toBeInstanceOf(BoxRenderable);
+  if (!(box instanceof BoxRenderable)) return;
   expect(box.border).toEqual(["left"]);
   expect(box.borderColor).toBe(MUTED_COLOR);
   // BoxRenderable (0.5.10) has no paddingLeft getter; read its layout node.
@@ -124,13 +133,28 @@ test("a settled code block is framed by a muted left border", async () => {
   // border would run on into the blank line.
   const bottom = parseEdge("bottom");
   expect(box.getLayoutNode().getMargin(bottom).value).toBe(1);
-  const inner = box.getChildren();
-  expect(inner).toHaveLength(1);
-  expect(inner[0]).toBeInstanceOf(CodeRenderable);
-  expect((inner[0] as CodeRenderable).selectionBg).toBe(SELECTION_BG);
-  expect((inner[0] as CodeRenderable).selectionFg).toBe(SELECTION_FG);
-  const innerMargin = (inner[0] as CodeRenderable).getLayoutNode();
-  expect(innerMargin.getMargin(bottom).value || 0).toBe(0);
+  expect(box.getChildren()).toEqual([code]);
+  expect(box.getChildren()[0]).toBe(code);
+  expect(code.selectionBg).toBe(SELECTION_BG);
+  expect(code.selectionFg).toBe(SELECTION_FG);
+  expect(code.getLayoutNode().getMargin(bottom).value || 0).toBe(0);
+});
+
+test("settling a prose-only body keeps every block", async () => {
+  const body = await fencedBody(true, "one\n\n# two\n\nthree\n");
+  const before = body.getChildren();
+  body.streaming = false;
+  const after = body.getChildren();
+  expect(after).toHaveLength(before.length);
+  after.forEach((b, i) => expect(b).toBe(before[i]));
+});
+
+test("a settled body with framed code refuses to stream again", async () => {
+  const body = await fencedBody(true);
+  body.streaming = false;
+  expect(() => {
+    body.streaming = true;
+  }).toThrow("cannot stream again");
 });
 
 test("a body built already settled frames its code block at once", async () => {

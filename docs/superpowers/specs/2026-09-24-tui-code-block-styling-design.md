@@ -52,18 +52,27 @@ in-place update path during the reply.
 
 **How the frame appears on settle.** `chat-view.ts`'s `setBody(settled)` sets
 `streaming = false`. In 0.5.10 that alone reuses every block whose source did
-not change and never calls `renderNode`, so `markdown()` returns a small
-subclass whose `streaming` setter, once when streaming ends, assigns a fresh
-`renderNode`: the setter for that option clears the block state and rebuilds
-every block through the hook, which is when the frame appears. The hook reads
-`streaming` from the live instance, falling back to the initial option only
-while the constructor runs. A framed block is outside OpenTUI's in-place
-updates afterwards; no caller changes a settled body's style or streaming
-state today. Two facts the hook depends on: a paragraph is also a
+not change and never calls `renderNode`, so a code block built while streaming
+would never be framed. Rebuilding every block at settle (by assigning a fresh
+`renderNode`) is not an option: a settled paragraph draws nothing until its
+tree-sitter highlight resolves, so every reply's prose would blank for a
+moment. Instead the hook records each bare code block it builds while
+streaming, and `markdown()` returns a small subclass whose `streaming` setter,
+once streaming ends, moves each recorded block that is still attached into a
+frame inserted at the block's index (`remove` the block, then
+`add(frame, index)`). Every block object, and its drawn text, is kept. A body
+built with `streaming: false` gets its frame from the hook directly; one
+helper builds the frame for both paths. The hook reads `streaming` from the
+live instance, falling back to the initial option only while the constructor
+runs. Afterwards the body's own block state still points at the inner
+`CodeRenderable`; that is harmless because no caller updates a settled body,
+and `destroy()` tears the frame down as a child. Switching a framed body back
+to streaming throws. Two facts the hook depends on: a paragraph is also a
 `CodeRenderable` (filetype `markdown`), so the frame requires
 `token.type === "code"`; and `defaultRender()` leaves the inter-block
-`marginBottom` on the code block, so the frame takes it over and the border
-stops at the code.
+`marginBottom` on the code block, so the frame takes it over (read from the
+Yoga node, as `Renderable` has no `marginBottom` getter) and the border stops
+at the code.
 
 Selection colours are applied to the inner `CodeRenderable` before wrapping,
 as the existing `"selectionBg" in block` branch does today.
