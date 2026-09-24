@@ -85,7 +85,10 @@ describe("markdownSyntaxStyle", () => {
   // the first dot segment, so a missing exact key renders as plain text.
   // The list is the scopes the theme styles, not every capture the grammar
   // has: link URLs, task markers and strikethrough fall back to `default` on
-  // purpose.
+  // purpose. `markup.raw.block` covers code the markdown grammar highlights
+  // itself (indented code, blockquote content); a fenced block is its own
+  // CodeRenderable highlighted by the language grammar, see the code scopes
+  // below.
   test("registers the markup scopes the bundled grammar emits for the styled constructs", () => {
     const style = markdownSyntaxStyle();
     try {
@@ -107,6 +110,65 @@ describe("markdownSyntaxStyle", () => {
       ]) {
         expect(style.getStyle(scope)).toBeDefined();
       }
+    } finally {
+      style.destroy();
+    }
+  });
+
+  // The capture names assets/javascript/highlights.scm and
+  // assets/typescript/highlights.scm emit for a fenced block whose info
+  // string names a bundled grammar. Scopes left out (`property`, `variable`,
+  // `operator`, `punctuation.*`, `embedded`) fall to `default` on purpose.
+  test("registers the code scopes the bundled JS and TS grammars emit", () => {
+    const style = markdownSyntaxStyle();
+    try {
+      for (const scope of [
+        "keyword",
+        "string",
+        "string.special",
+        "comment",
+        "function",
+        "function.method",
+        "function.builtin",
+        "constructor",
+        "number",
+        "constant",
+        "constant.builtin",
+        "type",
+        "variable.builtin",
+      ]) {
+        expect(style.getStyle(scope)).toBeDefined();
+      }
+    } finally {
+      style.destroy();
+    }
+  });
+
+  test("code scope colours come from the ANSI palette", () => {
+    const style = markdownSyntaxStyle();
+    try {
+      const slot = (scope: string) => {
+        const s = style.getStyle(scope);
+        expect(s?.fg?.intent).toBe("indexed");
+        return s?.fg?.slot;
+      };
+      expect(slot("keyword")).toBe(5);
+      expect(slot("string")).toBe(2);
+      expect(slot("string.special")).toBe(2);
+      expect(slot("comment")).toBe(8);
+      expect(style.getStyle("comment")?.italic).toBe(true);
+      expect(slot("function")).toBe(4);
+      expect(slot("function.method")).toBe(4);
+      expect(slot("function.builtin")).toBe(4);
+      expect(slot("constructor")).toBe(4);
+      expect(slot("number")).toBe(3);
+      expect(slot("constant")).toBe(3);
+      expect(slot("constant.builtin")).toBe(3);
+      expect(slot("type")).toBe(6);
+      expect(slot("variable.builtin")).toBe(6);
+      // Left to the terminal foreground on purpose.
+      expect(style.getStyle("property")).toBeUndefined();
+      expect(style.getStyle("operator")).toBeUndefined();
     } finally {
       style.destroy();
     }
