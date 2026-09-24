@@ -20,6 +20,8 @@ const ANSI = {
   green: 2,
   yellow: 3,
   blue: 4,
+  magenta: 5,
+  cyan: 6,
   brightBlack: 8,
   brightWhite: 15,
 } as const;
@@ -71,16 +73,34 @@ export const theme = {
 
 /** Styles for MarkdownRenderable, from the same ANSI indices as `theme`, so
  * a reply looks like the rest of the history in any terminal palette. The
- * scope names are the captures the bundled tree-sitter markdown query emits
- * (0.5.10): headings come per level, fenced and indented code as
- * `markup.raw.block`, and the lookup falls back only to the first dot
- * segment, so each must be registered exactly. `markup.heading` stays for
- * pipe-table header cells and `markup.raw` for inline code. A style it does
- * not find falls back to `default`, set here to the terminal foreground.
- * The caller owns the returned handle and must `destroy()` it. */
+ * lookup falls back only to the first dot segment, so every multi-segment
+ * scope that needs a style is registered exactly.
+ *
+ * Markup scopes are the captures the bundled tree-sitter markdown query
+ * emits (0.5.10): headings per level, `markup.raw.block` for code the
+ * markdown grammar highlights itself (indented code, blockquote content),
+ * `markup.heading` for pipe-table header cells and `markup.raw` for inline
+ * code.
+ *
+ * A fenced block is not markup: MarkdownRenderable turns it into its own
+ * CodeRenderable whose filetype is the info string, so the JavaScript and
+ * TypeScript grammars bundled with OpenTUI emit the code scopes below. A
+ * block with no language, or one whose language has no bundled grammar, is
+ * not highlighted at all and the frame `text.ts` adds sets it apart. Scopes
+ * not listed (`property`, `variable`, `operator`, `punctuation.*`) stay on
+ * the terminal foreground.
+ *
+ * A style it does not find falls back to `default`, set here to the terminal
+ * foreground. The caller owns the returned handle and must `destroy()` it. */
 export function markdownSyntaxStyle(): SyntaxStyle {
   const heading = { fg: RGBA.fromIndex(ANSI.green), bold: true };
   const raw = { fg: RGBA.fromIndex(ANSI.yellow) };
+  const keyword = { fg: RGBA.fromIndex(ANSI.magenta) };
+  const string = { fg: RGBA.fromIndex(ANSI.green) };
+  const comment = { fg: MUTED_COLOR, italic: true };
+  const fn = { fg: RGBA.fromIndex(ANSI.blue) };
+  const literal = { fg: RGBA.fromIndex(ANSI.yellow) };
+  const type = { fg: RGBA.fromIndex(ANSI.cyan) };
   return SyntaxStyle.fromStyles({
     default: { fg: DEFAULT_FG },
     "markup.heading": heading,
@@ -97,6 +117,19 @@ export function markdownSyntaxStyle(): SyntaxStyle {
     "markup.link": { fg: RGBA.fromIndex(ANSI.blue), underline: true },
     "markup.list": { fg: MUTED_COLOR },
     "markup.quote": { fg: MUTED_COLOR, italic: true },
+    keyword,
+    string,
+    "string.special": string,
+    comment,
+    function: fn,
+    "function.method": fn,
+    "function.builtin": fn,
+    constructor: fn,
+    number: literal,
+    constant: literal,
+    "constant.builtin": literal,
+    type,
+    "variable.builtin": type,
   });
 }
 
