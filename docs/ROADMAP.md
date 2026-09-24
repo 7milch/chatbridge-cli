@@ -301,3 +301,11 @@ now styles the code scopes the bundled JavaScript / TypeScript grammars emit,
 and `markdown()` moves a settled fenced block into a muted left-border frame in
 place, so a reply is never rebuilt on settle. The issue's "no `treeSitterClient`"
 root cause was wrong; the spec records what actually happens. Ships as v0.11.2.
+
+### 22. TUI syntax colours for more languages — done (issue #129, PR #130, 2026-09-24)
+
+`@chatbridge/cli` ships tree-sitter grammars for Python, Ruby, JSON, Bash and
+Go under `assets/<lang>/` and registers them at TUI start-up, so those fenced
+blocks get per-token colours. Queries are pinned to the tag each wasm was built
+from; YAML stays out because the only prebuilt wasm crashes in OpenTUI's
+web-tree-sitter. Ships as v0.11.3.
