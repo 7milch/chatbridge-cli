@@ -79,14 +79,28 @@ describe("theme", () => {
 });
 
 describe("markdownSyntaxStyle", () => {
-  test("registers the markup scopes MarkdownRenderable looks up", () => {
+  // These are the capture names @opentui/core's bundled tree-sitter query
+  // (assets/markdown/highlights.scm, plus markdown_inline) emits, not the
+  // names the theme happens to define. The style lookup only falls back to
+  // the first dot segment, so a missing exact key renders as plain text.
+  // The list is the scopes the theme styles, not every capture the grammar
+  // has: link URLs, task markers and strikethrough fall back to `default` on
+  // purpose.
+  test("registers the markup scopes the bundled grammar emits for the styled constructs", () => {
     const style = markdownSyntaxStyle();
     try {
       for (const scope of [
+        "markup.heading.1",
+        "markup.heading.2",
+        "markup.heading.3",
+        "markup.heading.4",
+        "markup.heading.5",
+        "markup.heading.6",
         "markup.heading",
         "markup.strong",
         "markup.italic",
         "markup.raw",
+        "markup.raw.block",
         "markup.link",
         "markup.list",
         "markup.quote",
@@ -106,6 +120,9 @@ describe("markdownSyntaxStyle", () => {
       expect(heading?.fg?.intent).toBe("indexed");
       expect(heading?.fg?.slot).toBe(2);
       expect(style.getStyle("markup.raw")?.fg?.slot).toBe(3);
+      expect(style.getStyle("markup.heading.1")?.bold).toBe(true);
+      expect(style.getStyle("markup.heading.1")?.fg?.slot).toBe(2);
+      expect(style.getStyle("markup.raw.block")?.fg?.slot).toBe(3);
       const link = style.getStyle("markup.link");
       expect(link?.fg?.slot).toBe(4);
       expect(link?.underline).toBe(true);

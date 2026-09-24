@@ -142,6 +142,19 @@ const CASES: Array<[name: string, html: string, expected: string]> = [
     "t",
   ],
   ["empty emphasis is dropped", "<p>a<strong></strong>b</p>", "ab"],
+  [
+    // KaTeX renders a MathML branch (visually clipped, holding the rendered
+    // tokens plus the LaTeX source in <annotation>) and an aria-hidden HTML
+    // branch. The annotation is an alternative representation, not text.
+    "KaTeX math emits the rendered text once",
+    '<p>contains <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>99.8</mn><mi mathvariant="normal">%</mi></mrow><annotation encoding="application/x-tex">99.8\\%</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="mord">99.8</span><span class="mord">%</span></span></span></span> of the mass</p>',
+    "contains 99.8% of the mass",
+  ],
+  [
+    "annotation-xml inside math is skipped too",
+    '<p><math><semantics><mn>2</mn><annotation-xml encoding="MathML-Content"><cn>2</cn></annotation-xml></semantics></math></p>',
+    "2",
+  ],
 ];
 
 describe("elementToMarkdown (headless Chromium)", () => {

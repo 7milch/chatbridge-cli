@@ -158,6 +158,16 @@ Verify: `<VENDOR>_E2E=1 bun test src/provider.e2e.test.ts` — "a guest is not
 logged in" passes: a fresh browser context on the chat URL reads as logged
 out, while the two-turn test still reads the saved state as logged in.
 
+## 0.11.1
+
+**Required:** none. Two fixes with no vendor-facing change: `elementToMarkdown`
+no longer doubles KaTeX math (it skips MathML `<annotation>`), and the TUI
+styles Markdown headings and fenced code again.
+
+**Optional:** none.
+
+**VSCode manifest:** none.
+
 ## 0.11.0
 
 **Required:** none.
