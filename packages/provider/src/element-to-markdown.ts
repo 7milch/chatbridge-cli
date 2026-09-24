@@ -12,7 +12,18 @@ export function elementToMarkdown(locator: Locator): Promise<string> {
 /** Runs inside the page: Playwright serialises this one function, so it may
  * not reference anything outside its own body. */
 function walk(root: Element): string {
-  const SKIP = new Set(["BUTTON", "SVG", "SCRIPT", "STYLE", "NOSCRIPT"]);
+  // MathML annotations are alternative representations of their parent (the
+  // LaTeX source under KaTeX), not text to show: reading them next to the
+  // rendered tokens doubles every expression.
+  const SKIP = new Set([
+    "BUTTON",
+    "SVG",
+    "SCRIPT",
+    "STYLE",
+    "NOSCRIPT",
+    "ANNOTATION",
+    "ANNOTATION-XML",
+  ]);
   const BLOCK = new Set([
     "P",
     "DIV",
