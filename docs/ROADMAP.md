@@ -285,3 +285,11 @@ a copy button on code blocks. `Provider` gains an optional
 the TUI and the VSCode view return to the same service-side conversation after
 a reopen or an idle close; nothing is persisted, and resuming across processes
 stays a follow-up (#119). Follow-ups #120, #121, #122. Ships as v0.11.0.
+
+### 20. Markdown rendering fixes — done (issue #125, PR #126, 2026-09-24)
+
+Two externally reported bugs. `elementToMarkdown` skips MathML `<annotation>`
+/ `<annotation-xml>`, so KaTeX math no longer comes out doubled (#125). The TUI
+theme registers `markup.heading.1`–`6` and `markup.raw.block`, the capture
+names the bundled grammar actually emits, so headings and fenced code are
+styled again, and the theme test asserts those names (#124). Ships as v0.11.1.

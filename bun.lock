@@ -40,7 +40,7 @@
     },
     "packages/cli": {
       "name": "@chatbridge/cli",
-      "version": "0.11.0",
+      "version": "0.11.1",
       "bin": {
         "chatbridge": "./dist/bin.js",
       },
@@ -55,7 +55,7 @@
     },
     "packages/core": {
       "name": "@chatbridge/core",
-      "version": "0.11.0",
+      "version": "0.11.1",
       "dependencies": {
         "@chatbridge/provider": "workspace:*",
         "@chatbridge/runtime": "workspace:*",
@@ -66,7 +66,7 @@
     },
     "packages/provider": {
       "name": "@chatbridge/provider",
-      "version": "0.11.0",
+      "version": "0.11.1",
       "devDependencies": {
         "playwright-core": "1.63.0",
       },
@@ -76,7 +76,7 @@
     },
     "packages/runtime": {
       "name": "@chatbridge/runtime",
-      "version": "0.11.0",
+      "version": "0.11.1",
       "dependencies": {
         "@chatbridge/provider": "workspace:*",
         "playwright": "1.63.0",
@@ -87,7 +87,7 @@
     },
     "packages/vscode": {
       "name": "@chatbridge/vscode",
-      "version": "0.11.0",
+      "version": "0.11.1",
       "dependencies": {
         "@chatbridge/core": "workspace:*",
       },
@@ -121,7 +121,7 @@
 
     "@azure/logger": ["@azure/logger@1.4.0", "", { "dependencies": { "@typespec/ts-http-runtime": "^0.3.0", "tslib": "^2.6.2" } }, "sha512-rbAE25KUfjU/s3XHUdJgceoCP5dEOpMx85J04kF+QMdta73XkuG9JGHHinch+XIoKpBdqljin+KqURpJriSzLA=="],
 
-    "@azure/msal-browser": ["@azure/msal-browser@5.22.0", "", { "dependencies": { "@azure/msal-common": "16.14.1" } }, "sha512-5kgu9xeEKgGc2JeidxAtU15NJTqiH/CMCRRQAJ4Rac56kB7KVg91vbNmn+z3RO1vNomPN69UvjKG9h1Pghx6dQ=="],
+    "@azure/msal-browser": ["@azure/msal-browser@5.23.0", "", { "dependencies": { "@azure/msal-common": "16.14.1" } }, "sha512-IRCwkRCK47hBXK+7bu67UZWY7HS0Jx1dZgi4C1HVbjlBum8Jy8fb2l87xFr6HxdQJWy951zRUHtwwDITHFAtaA=="],
 
     "@azure/msal-common": ["@azure/msal-common@16.14.1", "", {}, "sha512-Or6xhPNyi4zHW25158yxBoyxuCqNSPa5YBVqfF1J5Ks4MJWBo/USXdp05DQIPu1Zli00YZu6t0+h6KvHJealxQ=="],
 
@@ -457,7 +457,7 @@
 
     "fs-constants": ["fs-constants@1.0.0", "", {}, "sha512-y6OAwoSIf7FyjMIv94u+b5rdheZEjzR63GTyZJm5qh4Bi+2YgwLCcI/fPFZkL5PSixOt6ZNKm+w+Hfp/Bciwow=="],
 
-    "fs-extra": ["fs-extra@11.4.0", "", { "dependencies": { "graceful-fs": "^4.2.0", "jsonfile": "^6.0.1", "universalify": "^2.0.0" } }, "sha512-EQsFzMUJkCKGr1ePqlYADkIUmHW1s3ZXr5Yqy6wbGrfUCphpl2maM/kyOIRA2HpP3AaFQTZXD4ldjek+nccddA=="],
+    "fs-extra": ["fs-extra@11.4.1", "", { "dependencies": { "graceful-fs": "^4.2.0", "jsonfile": "^6.0.1", "universalify": "^2.0.0" } }, "sha512-KYAb4c9BJQI6QqGKthV68OHe0badztdXJWKo0WtBA9IuCFPTKvE5ZdUBglP833aMjhaSPNO4A5j/EkzZtGlKjA=="],
 
     "function-bind": ["function-bind@1.1.2", "", {}, "sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA=="],
 
@@ -499,7 +499,7 @@
 
     "ieee754": ["ieee754@1.2.1", "", {}, "sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA=="],
 
-    "ignore": ["ignore@7.0.9", "", {}, "sha512-brTTsvFRt5C1gGHtPst/281UjPD5t9fBqbgoMPlVWy11ZLTPfu7HxK4ZYqO9H7o/yC9rSTCI85EaQ4OoY12qYw=="],
+    "ignore": ["ignore@7.0.10", "", {}, "sha512-HpbUakT7xp5miBUywCHf36ZEuAJNklBJDDsGpUIjMzOSmM8ELSfA9Sa/QDPeNeqeoN31u+UTCkL4klCOVvRm4Q=="],
 
     "immediate": ["immediate@3.0.6", "", {}, "sha512-XXOFtyqDjNDAQxVfYxuF7g9Il/IbWmmlQg2MYKOH8ExIT1qg6xc4zyS3HaEEATgs1btfzxq15ciUiY7gjSXRGQ=="],
 
