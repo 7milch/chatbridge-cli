@@ -48,11 +48,22 @@ Same shape as OpenTUI's blockquote, muted colour so the two differ.
 renderable is marked `canUpdateInPlace: false`, so the block is recreated on
 every content update, and a freshly built streaming `CodeRenderable` draws no
 text until its highlight resolves. Wrapping only after settling keeps the
-in-place update path during the reply. `chat-view.ts`'s `setBody(settled)`
-sets `streaming = false`, which re-runs `renderNode` for every block, so the
-frame appears exactly once, when the turn ends. `markdown()` reads
-`streaming` from the instance it creates (captured in the closure), not from
-the initial options.
+in-place update path during the reply.
+
+**How the frame appears on settle.** `chat-view.ts`'s `setBody(settled)` sets
+`streaming = false`. In 0.5.10 that alone reuses every block whose source did
+not change and never calls `renderNode`, so `markdown()` returns a small
+subclass whose `streaming` setter, once when streaming ends, assigns a fresh
+`renderNode`: the setter for that option clears the block state and rebuilds
+every block through the hook, which is when the frame appears. The hook reads
+`streaming` from the live instance, falling back to the initial option only
+while the constructor runs. A framed block is outside OpenTUI's in-place
+updates afterwards; no caller changes a settled body's style or streaming
+state today. Two facts the hook depends on: a paragraph is also a
+`CodeRenderable` (filetype `markdown`), so the frame requires
+`token.type === "code"`; and `defaultRender()` leaves the inter-block
+`marginBottom` on the code block, so the frame takes it over and the border
+stops at the code.
 
 Selection colours are applied to the inner `CodeRenderable` before wrapping,
 as the existing `"selectionBg" in block` branch does today.
