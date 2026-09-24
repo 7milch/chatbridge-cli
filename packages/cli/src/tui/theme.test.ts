@@ -144,6 +144,22 @@ describe("markdownSyntaxStyle", () => {
     }
   });
 
+  // Captures the five grammars shipped in packages/cli/assets emit that
+  // neither the theme nor the first-segment fallback would style: `escape`
+  // has no base, and `string.special.key` (a JSON key) should not read as
+  // an ordinary string.
+  test("registers the scopes the shipped grammars add", () => {
+    const style = markdownSyntaxStyle();
+    try {
+      expect(style.getStyle("escape")?.fg?.intent).toBe("indexed");
+      expect(style.getStyle("escape")?.fg?.slot).toBe(2);
+      expect(style.getStyle("string.special.key")?.fg?.intent).toBe("indexed");
+      expect(style.getStyle("string.special.key")?.fg?.slot).toBe(4);
+    } finally {
+      style.destroy();
+    }
+  });
+
   test("code scope colours come from the ANSI palette", () => {
     const style = markdownSyntaxStyle();
     try {
