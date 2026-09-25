@@ -89,6 +89,9 @@ export const { activate, deactivate } = createExtension({
   `/usr/bin` style paths) is sent verbatim.
 - **`+`** opens the native file picker; the chosen files become the same
   attachment chips a drop produces.
+- The active editor's file appears as a dashed `+ <name>` chip in the
+  attachment row; click it to attach the file (its current buffer, unsaved
+  edits included). Untitled buffers and non-file views show no chip.
 - The send button is `↑` and turns into a queue icon while a turn is in
   flight; it is disabled when there is nothing to send.
 - **Drop files** onto the composer to add them as attachment chips. Hold

@@ -395,7 +395,12 @@ function renderAttachments(s: State): void {
   if (tip) {
     const ghost = button(
       `+ ${tip.name}`,
-      () => vscode.postMessage({ type: "attachUris", uris: [tip.uri] }),
+      () => {
+        // A second click before the host's state frame would attach the
+        // file twice; the next renderAttachments rebuilds the chip anyway.
+        (ghost as HTMLButtonElement).disabled = true;
+        vscode.postMessage({ type: "attachUris", uris: [tip.uri] });
+      },
       "chip ghost",
     );
     ghost.title = tip.path;
