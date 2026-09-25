@@ -44,8 +44,8 @@ For every message typed in the TUI or the VSCode view:
 - URLs inside attached file content are not expanded; only the typed
   text is scanned.
 - Interactive modes only (TUI and VSCode). One-shot `-p` does not run
-  hooks. See [../users/interactive-mode.md](../users/interactive-mode.md#url-hooks)
-  and [../users/vscode.md](../users/vscode.md#composer-and-attachments) for
+  hooks. See [../../users/interactive-mode.md](../../users/interactive-mode.md#url-hooks)
+  and [../../users/vscode.md](../../users/vscode.md#composer-and-attachments) for
   the user-facing behaviour.
 - The framework never fetches and never sees a credential. Whatever the
   hook needs comes from the provider's own code and environment.

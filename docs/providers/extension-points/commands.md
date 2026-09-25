@@ -37,7 +37,7 @@ time.
 - When the session cannot run commands (a state that predates the
   session's `runCommand`), the TUI shows `/<name> is not available in this
   session.` instead of calling it. See
-  [../users/interactive-mode.md](../users/interactive-mode.md#slash-commands)
+  [../../users/interactive-mode.md](../../users/interactive-mode.md#slash-commands)
   for the user-facing behaviour.
 - A `/name` nobody defines (built-in or provider) shows
   `Unknown command: /<name>. Type /help.` in the UI. (Core's `ChatSession.runCommand`

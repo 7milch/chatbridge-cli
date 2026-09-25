@@ -20,7 +20,7 @@ A vendor CLI that pins its provider drops `--provider` from every line above; pa
 | `-p, --prompt <text>` | unset | Runs one-shot mode. The reply is printed to stdout followed by a newline; nothing else goes to stdout. |
 | `--provider <npm-package or ./path>` | unset | Which provider to load. Rejected when the CLI has a fixed provider, with exit 1: `<name> has a fixed provider; --provider is not accepted`. See "Where the provider comes from" below. |
 | `--headful` | false | Shows the browser window instead of running headless. |
-| `--timeout <sec>` | 120 | Per-turn timeout, and per URL-hook resolve in interactive mode (see `configuration.md`). Does not cover the browser's opening phase. Must be a finite number greater than 0, or: `--timeout must be a positive number of seconds`. |
+| `--timeout <sec>` | 120 | Per-turn timeout, and per URL-hook resolve in interactive mode (see [configuration.md](configuration.md)). Does not cover the browser's opening phase. Must be a finite number greater than 0, or: `--timeout must be a positive number of seconds`. |
 | `-h, --help` | | Prints usage to stdout, exit 0. |
 | `-V, --version` | | Prints `<name> v<version>` to stdout, exit 0. |
 
@@ -46,7 +46,7 @@ Sends one prompt, prints the reply to stdout, and exits 0. The whole reply is pr
 chatbridge
 ```
 
-Opens a terminal chat. See `interactive-mode.md` for slash commands, `@file` mentions, `!` shell mode and keys.
+Opens a terminal chat. See [interactive-mode.md](interactive-mode.md) for slash commands, `@file` mentions, `!` shell mode and keys.
 
 Interactive mode requires both stdin and stdout to be a TTY:
 
@@ -87,7 +87,7 @@ No auth state for "<provider>"
 
 ## Where the provider comes from
 
-Resolution order: a provider pinned by the vendor CLI, then `--provider`, then `defaultProvider` in `config.json` (see `configuration.md`).
+Resolution order: a provider pinned by the vendor CLI, then `--provider`, then `defaultProvider` in `config.json` (see [configuration.md](configuration.md)).
 
 A `--provider` value starting with `./`, `../` or `/` is resolved as a path against the current directory. Anything else is treated as an npm package name; a globally installed CLI can only resolve a package name when that package is also installed globally.
 
