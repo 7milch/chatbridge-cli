@@ -24,7 +24,8 @@ Dependency direction is one-way: `cli → core → runtime → provider`. Never 
 Specs live in `docs/superpowers/specs/`, plans in `docs/superpowers/plans/`, both
 named `<date>-<topic>`. The ones for the open milestone are the newest; its
 tracking issue names them. Do not hardcode either path here, it goes stale every
-milestone.
+milestone. The reference guide lives under `docs/users/`, `docs/providers/` and
+`docs/contributing/`, each with an index in its `README.md`.
 
 ## Purpose
 
@@ -147,3 +148,9 @@ Milestone lifecycle, driven by the `starting-next-milestone` skill:
   `packages/provider/skills/upgrading-provider-repo/upgrade-guide.md` in the same
   PR. Vendors upgrade by that file alone, with a smaller model; release notes
   are not enough. The whole-branch review checks it.
+- A PR that changes what a user sees — a CLI command or flag, a `config.json`
+  key, an environment variable, a built-in interactive command, a VSCode
+  command or setting — updates the matching page under `docs/users/` in the
+  same PR. A PR that changes what a vendor sees updates `docs/providers/` in
+  the same PR as well as the upgrade guide. The whole-branch review checks
+  both.
