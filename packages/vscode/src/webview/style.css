@@ -96,6 +96,21 @@ body {
   padding: 2px 8px;
   cursor: pointer;
 }
+/* The attach tip: the active editor's file, one click from being a chip. */
+.chip.ghost {
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  border: 1px dashed var(--vscode-badge-background);
+  cursor: pointer;
+  font: inherit;
+  font-size: 90%;
+}
+.chip.ghost:hover,
+.chip.ghost:focus-visible {
+  color: var(--vscode-foreground);
+  border-style: solid;
+  outline: none;
+}
 /* The notice card's buttons: secondary unless they are the recovery the
    cause calls for. */
 .action {
