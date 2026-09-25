@@ -309,3 +309,11 @@ Go under `assets/<lang>/` and registers them at TUI start-up, so those fenced
 blocks get per-token colours. Queries are pinned to the tag each wasm was built
 from; YAML stays out because the only prebuilt wasm crashes in OpenTUI's
 web-tree-sitter. Ships as v0.11.3.
+
+### 23. VSCode current-file attach tip — done (issue #131, PR #132, 2026-09-25)
+
+The VSCode chat composer shows the active editor's file as a dashed `+ <name>`
+chip in the attachment row; one click attaches it through the same path as a
+drop or the `+` picker. New optional `VscodeUi.onDidChangeActiveEditor` and an
+`activeFile` host → webview message kept out of `State`, so an editor switch
+never re-renders the history. Ships as v0.12.0.
