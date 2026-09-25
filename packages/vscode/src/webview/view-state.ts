@@ -1,4 +1,5 @@
-import type { State, Status } from "../protocol.js";
+import type { Attachment } from "@chatbridge/core";
+import type { ActiveFile, State, Status } from "../protocol.js";
 
 /** A turn, an open or a reopen is running: Enter queues instead of
  * sending, and the status line shows the spinner. Also decides whether a
@@ -72,4 +73,17 @@ export function noticeFor(state: State): Notice | undefined {
       { label: "New chat", command: "newChat", primary: false },
     ],
   };
+}
+
+/** The ghost chip in the attachment row: the active editor's file, unless
+ * it is already a pending attachment. Compared by `path`, which is what
+ * `attachUris` stores on the `Attachment`. */
+export function attachTipState(
+  activeFile: ActiveFile | undefined,
+  pending: Attachment[],
+): ActiveFile | undefined {
+  if (!activeFile) return undefined;
+  return pending.some((a) => a.path === activeFile.path)
+    ? undefined
+    : activeFile;
 }

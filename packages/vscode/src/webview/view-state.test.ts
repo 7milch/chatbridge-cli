@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import type { State, Status } from "../protocol.js";
+import type { ActiveFile, State, Status } from "../protocol.js";
 import {
+  attachTipState,
   hintText,
   isActive,
   noticeFor,
@@ -114,5 +115,26 @@ describe("noticeFor", () => {
     expect(noticeFor(state({ status: "dead" }))?.text).toBe(
       "The chat stopped.",
     );
+  });
+});
+
+describe("attachTipState", () => {
+  const active: ActiveFile = {
+    uri: "file:///ws/src/config/hogehoge.json",
+    path: "src/config/hogehoge.json",
+    name: "hogehoge.json",
+  };
+
+  test("no active file means no tip", () => {
+    expect(attachTipState(undefined, [])).toBeUndefined();
+  });
+
+  test("an active file not yet pending is the tip", () => {
+    expect(attachTipState(active, [file])).toEqual(active);
+  });
+
+  test("a file that is already a pending attachment hides the tip", () => {
+    const pending = { path: active.path, bytes: 3, content: "{}\n" };
+    expect(attachTipState(active, [file, pending])).toBeUndefined();
   });
 });
