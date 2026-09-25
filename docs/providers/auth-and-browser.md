@@ -109,7 +109,7 @@ Sessions run headless unless the user asks otherwise:
 | Where | Headful when |
 |---|---|
 | CLI, one-shot and interactive | `--headful` is passed. |
-| VSCode | The `<id>.headless` setting is `false`. Its default is `true`, unless the vendor passed `headless: false` to `createExtension`. |
+| VSCode | The `<id>.headless` setting is `false`. Its default is the `default` your manifest declares for that setting (`true` in the template). `createExtension({ headless })` applies only when the manifest declares no default. |
 | Login (all three entry points) | Always. |
 
 The browser context is the same in both modes, reduced motion included, so a page you debug with `--headful` behaves like the headless one. What can differ is the service: some services treat headless Chromium as a bot. Test your provider headless before you ship it.
@@ -122,9 +122,9 @@ The errors a provider author meets most around auth and the browser:
 |---|---|---|---|
 | `AuthRequiredError` | No auth-state file for this provider. Raised before the browser launches. | 2 | No |
 | `AuthExpiredError` | `isLoggedIn` returned `false` at open, or after a timeout, and `detectBlock` gave no description. | 3 | No |
-| `BlockedError` | `isLoggedIn` returned `false` and `detectBlock` returned a description. | 6 | No |
+| `BlockedError` | `isLoggedIn` returned `false` at open, or after a timeout, and `detectBlock` returned a description. | 6 | No |
 | `BrowserUnavailableError` | Playwright's Chromium is not installed. | 7 | No |
-| `ResponseTimeoutError` | A provider step hit its Playwright timeout. | 4 | Yes, during the opening phase |
+| `ResponseTimeoutError` | A provider step hit its Playwright timeout. | 4 | If retries are configured, during the opening phase |
 
 The messages:
 
@@ -146,7 +146,7 @@ Set the "<id>.headless" setting to false and try again.
 
 For a missing Chromium, the CLI prints `Run: npx playwright install chromium` and VSCode offers its Install Browser command.
 
-The first four are never retried, because opening again cannot fix them. A timeout and any other error during the opening phase are retried when retries are configured; see [../users/configuration.md](../users/configuration.md#opening-phase). All exit codes are in [../users/cli.md](../users/cli.md#exit-codes). `LoginAbortedError` (a cancelled login, exit 130) is the only other auth-related error.
+The first four are never retried, because opening again cannot fix them. A timeout and any other error during the opening phase are retried when retries are configured; see [../users/configuration.md](../users/configuration.md#opening-phase). All exit codes are in [../users/cli.md](../users/cli.md#exit-codes). Two more errors touch auth: `LoginAbortedError` (a cancelled login, exit 130), and `InvalidProviderError` (exit 5), raised when the provider's `name` cannot be used as the auth-state file name.
 
 ## Bot protection
 
