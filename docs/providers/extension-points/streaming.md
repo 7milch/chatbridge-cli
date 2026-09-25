@@ -35,7 +35,7 @@ One-shot mode (`-p`) never streams: there is no UI to show partials to.
 - `responseText` must never return an earlier turn's text. The trap is the
   moment right after `sendMessage` returns: the last assistant bubble on
   the page still belongs to the previous turn until the new one appears.
-  Write `responseText` as read-only — it runs concurrently with
+  Write `responseText` as read-only. It runs concurrently with
   `waitForResponse` on the same `Page`, and a close can run `isLoggedIn`
   mid-turn (see [contract.md](../contract.md#4-closing-a-session)).
 - `pollIntervalMs` is optional; the built-in default is 250 ms.

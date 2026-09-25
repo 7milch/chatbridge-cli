@@ -96,8 +96,8 @@ Closing the browser after <duration> idle...
 
 `<duration>` is formatted by `formatIdleDuration`: whole minutes or hours
 print without a decimal (`24 h`), everything else with one (`1.5 min`).
-The close then runs like any other close — auth state is saved if
-`isLoggedIn` still returns `true` — with a 5 second budget
+The close then runs like any other close: auth state is saved if
+`isLoggedIn` still returns `true`. It has a 5 second budget
 (`IDLE_CLOSE_BUDGET_MS`) before the browser is killed instead. The next
 prompt reopens the browser as usual.
 

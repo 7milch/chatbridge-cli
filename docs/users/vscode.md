@@ -38,8 +38,8 @@ the next time the browser opens.
 
 | Setting | Default | Notes |
 |---|---|---|
-| `<id>.headless` | `true` | Set to `false` to show the browser; this is the remedy suggested when a turn fails with `BLOCKED`. |
-| `<id>.timeoutSec` | The vendor's `timeoutMs`, or 120 seconds | Applies to each turn and to the opening phase. An invalid value shows one warning per session and falls back to the default. |
+| `<id>.headless` | `true` | Set to `false` to show the browser; this is the remedy suggested when the service blocks the browser. |
+| `<id>.timeoutSec` | The vendor's `timeoutMs`, or 120 seconds | Applies to each turn, and to the opening phase unless the provider sets its own `open.timeoutMs`. An invalid value shows one warning per session and falls back to the default. |
 | `<id>.idleTimeoutMinutes` | The provider's own idle timeout, or 1440 minutes (24 hours); `0` disables it | An invalid value shows one warning per session and falls back to the default. |
 
 See [configuration.md](configuration.md) for how these settings relate to
