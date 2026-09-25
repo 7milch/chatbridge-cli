@@ -135,6 +135,7 @@ It returns `{ activate, deactivate }`. `activate(context)` checks the manifest, 
 | `headless` | `boolean` | `true` | Whether sessions launch a headless browser. The user's `<id>.headless` setting overrides it. |
 | `playwrightCliPath` | `string` | `<extension>/node_modules/playwright/cli.js` | What the Install Browser command runs. Set it only when Playwright is not in the extension's own `node_modules`. |
 | `ui` | `ExtensionUiOptions` | none | Vendor branding; see below. |
+| `baseDir` | `string` | `~/.config` | Test-only override for the directory that holds `<configDir>/`. Do not set it in a shipped extension. |
 
 There is no idle option. The idle close comes from the provider's `idle.timeoutMs` (24 hours when unset), and the user's `<id>.idleTimeoutMinutes` setting overrides it.
 

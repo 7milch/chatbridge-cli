@@ -27,6 +27,10 @@ Type `/` followed by a word. Built-in commands run immediately in any state, eve
 | `/copy` | Copies the last complete reply as raw text. Shows `copied`, `copy failed`, or `nothing to copy yet` on the status line for 2 seconds. |
 | `/help` | Lists built-ins, then the provider's own commands, one aligned line each. |
 
+### The `/` popup
+
+Typing `/` at the start of the input opens a popup of the built-ins and the provider's commands, each with its description, filtered as you type. **Up/Down** select, **Tab** completes the word to `/name ` so you can type arguments, and **Enter** completes too, unless what you typed is already the whole command, in which case it runs. **Esc** closes the popup. Accepting an entry never runs it. `/` has no special meaning in `!` shell mode.
+
 ### Parsing rules
 
 A line matches a slash command when it fits `/<word>`, where `<word>` is letters only (`/usr/bin` is never a command). Giving a built-in arguments is an error: `/<word> takes no arguments.` A word nobody defines reports `Unknown command: /<word>. Type /help.`
@@ -75,7 +79,7 @@ A URL a provider recognises in your typed text is fetched by the provider and at
 |---|---|
 | Enter | Send, or queue while a turn is in flight. |
 | Shift+Enter (needs a kitty-protocol-capable terminal) or Ctrl+J | Insert a newline. The input grows up to 5 rows. |
-| Ctrl+R | Reopen the browser, in any state. |
+| Ctrl+R | Reopen the browser, in any state. The old browser is killed if it has not closed within 5 seconds. |
 | PageUp / PageDown, mouse wheel | Scroll the history. |
 | Up, on the first line, with a queue | Pull the queued entries back into the input box. |
 | Up / Down, Tab / Enter, Esc | In the `@file` popup: move the selection, accept it, or close the popup. Enter submits instead of accepting when the typed word already matches the selected command. |
@@ -107,6 +111,10 @@ After the browser closes from being idle:
 ```
 Browser closed after being idle · your next prompt reopens it
 ```
+
+### Queued messages
+
+A message sent while a reply is pending, while the browser opens, or while a `!` command runs is queued instead of dropped. Queued messages are listed above the input box and go out one per turn, oldest first, once the current turn ends (also after a Ctrl+R reopen). **Up** on the first line of the input takes the whole queue back into the box, one message per line, ahead of anything you have typed; Enter then queues the box again as one message, and clearing it drops them. A `!` command is never queued: it needs an idle session, so Enter leaves it in the box. In shell mode **Up** does not take the queue back; leave shell mode with **Esc** first.
 
 ## `!` shell mode
 
@@ -153,6 +161,6 @@ While the browser is closed from being idle, `/copy` and `!` shell commands stil
 
 ## Copying
 
-`/copy` and a mouse-drag selection both copy the same way. The CLI tries a platform tool first: `pbcopy` on macOS, `clip.exe` on Windows, and on Linux `wl-copy` when `WAYLAND_DISPLAY` is set, otherwise `xclip -selection clipboard`. Each gets a 2-second timeout before falling back to an OSC 52 escape sequence written straight to the terminal.
+A mouse-drag selection copies what is on screen: for a Markdown reply, the rendered text with its markup concealed. `/copy` copies the last complete reply's source text, exactly as the provider returned it (the Markdown source, for a Markdown provider). Both use the same clipboard path. The CLI tries a platform tool first: `pbcopy` on macOS, `clip.exe` on Windows, and on Linux `wl-copy` when `WAYLAND_DISPLAY` is set, otherwise `xclip -selection clipboard`. Each gets a 2-second timeout before falling back to an OSC 52 escape sequence written straight to the terminal.
 
-Over SSH (`SSH_TTY` or `SSH_CONNECTION` set), only OSC 52 is used, since a platform tool would fill the clipboard on the remote machine instead of yours.
+Over SSH (`SSH_TTY` or `SSH_CONNECTION` set), only OSC 52 is used, since a platform tool would fill the clipboard on the remote machine instead of yours. Some terminals disable OSC 52: tmux needs `set -g set-clipboard on`, and macOS Terminal.app ignores it outright, so in those setups a copy over SSH can silently fail to reach your clipboard.

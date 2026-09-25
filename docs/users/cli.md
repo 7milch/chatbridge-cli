@@ -38,7 +38,7 @@ Dispatch order: `--help`, then `--version`, then `auth login` / `auth logout` / 
 chatbridge -p "your prompt"
 ```
 
-Sends one prompt, prints the reply to stdout, and exits 0. Requires Node >= 20 or Bun (no interactive-mode runtime floor applies). Progress lines are written to stderr, and only when stderr is a TTY.
+Sends one prompt, prints the reply to stdout, and exits 0. The whole reply is printed at once, as plain text: for a provider with `responseFormat: "markdown"` that is the Markdown source. Slash commands, URL hooks and `@file` mentions are interactive-only; the prompt is sent verbatim. Requires Node >= 20 or Bun (no interactive-mode runtime floor applies). Progress lines are written to stderr, and only when stderr is a TTY.
 
 ### Interactive mode
 

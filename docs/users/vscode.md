@@ -55,7 +55,12 @@ The composer is a textarea with the placeholder `Message…`.
   editing. Its attachments come back as chips; if any no longer fit, you see
   `N attachment(s) left out: total size limit.`
 - **`+`** opens a native file picker (`Attach`) to add attachments.
-- **`/`** opens the slash-command menu.
+- **`/`** opens the slash-command menu. The `/` button in the action row
+  opens the same menu unfiltered.
+- Queued messages are listed with a `×` each, so one can be removed before
+  it is sent.
+- The send button is `↑`. It turns into a queue icon while a turn is in
+  flight, and is disabled when there is nothing to send.
 - An attachment-only message (no text) is allowed.
 
 Attachments render as chips: `📎 <path> (<size>)` with a `×` to remove them.
