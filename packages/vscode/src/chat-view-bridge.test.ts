@@ -5,7 +5,13 @@ import {
   type ChatViewHandlers,
   type WebviewLike,
 } from "./chat-view-bridge.js";
-import type { State, ToHost, ToWebview, WebviewCommand } from "./protocol.js";
+import type {
+  ActiveFile,
+  State,
+  ToHost,
+  ToWebview,
+  WebviewCommand,
+} from "./protocol.js";
 
 function fakeWebview() {
   const posted: ToWebview[] = [];
@@ -315,6 +321,47 @@ describe("ChatViewBridge", () => {
       w.receive({ type: "command", name });
       expect(calls.at(-1)).toEqual(name);
     }
+  });
+
+  test("pushActiveFile posts the file and ready re-posts it after config and state", () => {
+    const bridge = new ChatViewBridge(() => state, noopHandlers);
+    const w = fakeWebview();
+    bridge.attach(w.webview, { welcome: "hi" });
+    const file: ActiveFile = {
+      uri: "file:///ws/a.ts",
+      path: "a.ts",
+      name: "a.ts",
+    };
+    bridge.pushActiveFile(file);
+    expect(w.posted.at(-1)).toEqual({ type: "activeFile", file });
+    expect(bridge.activeFile).toEqual(file);
+
+    // VSCode recreated the page: the new one starts with no tip.
+    w.posted.length = 0;
+    w.receive({ type: "ready" });
+    expect(w.posted.map((m) => m.type)).toEqual([
+      "config",
+      "state",
+      "activeFile",
+    ]);
+    expect(w.posted.at(-1)).toEqual({ type: "activeFile", file });
+  });
+
+  test("pushActiveFile(undefined) posts the message without a file", () => {
+    const bridge = new ChatViewBridge(() => state, noopHandlers);
+    const w = fakeWebview();
+    bridge.attach(w.webview);
+    bridge.pushActiveFile(undefined);
+    expect(w.posted.at(-1)).toEqual({ type: "activeFile" });
+    expect(bridge.activeFile).toBeUndefined();
+  });
+
+  test("ready with no active file known posts no activeFile message", () => {
+    const bridge = new ChatViewBridge(() => state, noopHandlers);
+    const w = fakeWebview();
+    bridge.attach(w.webview);
+    w.receive({ type: "ready" });
+    expect(w.posted.map((m) => m.type)).toEqual(["state"]);
   });
 });
 
