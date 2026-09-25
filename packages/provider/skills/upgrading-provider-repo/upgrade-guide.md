@@ -158,6 +158,22 @@ Verify: `<VENDOR>_E2E=1 bun test src/provider.e2e.test.ts` — "a guest is not
 logged in" passes: a fresh browser context on the chat URL reads as logged
 out, while the two-turn test still reads the saved state as logged in.
 
+## 0.12.0
+
+**Required:** none. VSCode only: the chat composer shows the active editor's
+file as a dashed `+ <name>` chip in the attachment row, and one click attaches
+it through the same path as a drop or the `+` picker. Nothing a vendor
+repository built on `createExtension` sees changes.
+
+**Optional:** a repository that supplies its own `VscodeUi` (rather than the
+`createVscodeUi` the framework wires in) may implement the new optional
+`onDidChangeActiveEditor(listener)` method to get the tip; without it the
+composer shows no tip and everything else is unchanged. The listener takes an
+`ActiveFile | undefined` (`{ uri, path, name }`, `file:` URIs only) and is
+called once on subscribe.
+
+**VSCode manifest:** none.
+
 ## 0.11.3
 
 **Required:** none. TUI-only: `@chatbridge/cli` now ships tree-sitter grammars

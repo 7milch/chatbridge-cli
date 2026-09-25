@@ -1,4 +1,5 @@
 import type * as vscode from "vscode";
+import type { ActiveFile } from "./protocol.js";
 
 export interface EditorSnapshot {
   /** Workspace-relative, `/`-separated; absolute when outside a workspace. */
@@ -39,6 +40,25 @@ export interface VscodeUi {
    * Optional: a vendor's own VscodeUi written against 0.9.0 has none, and
    * the `+` command is then a no-op. */
   pickFiles?(): Promise<string[]>;
+  /** Fires with the active editor's file, or `undefined` when there is no
+   * editor or its document is not a `file:` URI; also called once with the
+   * current value on subscribe. Optional: without it the composer shows no
+   * attach tip. */
+  onDidChangeActiveEditor?(listener: (file: ActiveFile | undefined) => void): {
+    dispose(): void;
+  };
+}
+
+/** The tip's view of an editor: only a `file:` document has a file. Pure,
+ * so the mapping is unit-tested without a VSCode host. */
+export function activeFileOf(
+  editor: Pick<vscode.TextEditor, "document"> | undefined,
+  relPath: (uri: vscode.Uri) => string,
+): ActiveFile | undefined {
+  const uri = editor?.document.uri;
+  if (!uri || uri.scheme !== "file") return undefined;
+  const name = uri.path.slice(uri.path.lastIndexOf("/") + 1);
+  return { uri: uri.toString(), path: relPath(uri), name };
 }
 
 export function createVscodeUi(api: typeof vscode, id: string): VscodeUi {
@@ -103,6 +123,12 @@ export function createVscodeUi(api: typeof vscode, id: string): VscodeUi {
         openLabel: "Attach",
       });
       return (picked ?? []).map((uri) => uri.toString());
+    },
+    onDidChangeActiveEditor: (listener) => {
+      listener(activeFileOf(api.window.activeTextEditor, relPath));
+      return api.window.onDidChangeActiveTextEditor((editor) =>
+        listener(activeFileOf(editor, relPath)),
+      );
     },
   };
 }

@@ -1,5 +1,6 @@
 import type { CommandInfo } from "@chatbridge/core";
 import type {
+  ActiveFile,
   QueueEntry,
   State,
   ToHost,
@@ -78,6 +79,10 @@ function isToHost(m: unknown): m is ToHost {
  * whichever webview is currently attached (VSCode recreates it). */
 export class ChatViewBridge {
   private webview: WebviewLike | undefined;
+  /** The last active file pushed; re-posted after `ready` because VSCode
+   * recreates the webview and the new page starts with no tip. */
+  private lastActiveFile: ActiveFile | undefined;
+  private hasActiveFile = false;
 
   constructor(
     private readonly getState: () => State,
@@ -102,6 +107,7 @@ export class ChatViewBridge {
             });
           }
           this.pushState(this.getState());
+          if (this.hasActiveFile) this.postActiveFile();
           break;
         case "send":
           this.handlers.send(raw.text);
@@ -142,6 +148,26 @@ export class ChatViewBridge {
 
   pushState(state: State): void {
     void this.webview?.postMessage({ type: "state", ...state });
+  }
+
+  get activeFile(): ActiveFile | undefined {
+    return this.lastActiveFile;
+  }
+
+  /** The active editor's file for the composer's attach tip; `undefined`
+   * clears it. Not a state frame: an editor switch is not a session event
+   * and must not re-send the history. */
+  pushActiveFile(file: ActiveFile | undefined): void {
+    this.lastActiveFile = file;
+    this.hasActiveFile = true;
+    this.postActiveFile();
+  }
+
+  private postActiveFile(): void {
+    const file = this.lastActiveFile;
+    void this.webview?.postMessage(
+      file ? { type: "activeFile", file } : { type: "activeFile" },
+    );
   }
 
   pushPasteResult(id: number, attached: boolean): void {

@@ -30,6 +30,17 @@ export interface QueueEntry {
   attachments: Attachment[];
 }
 
+/** The file behind the active text editor, for the composer's attach tip.
+ * Never part of `State`: an editor switch is not a session event. */
+export interface ActiveFile {
+  /** `vscode.Uri.toString()`, what `attachUris` takes. */
+  uri: string;
+  /** Workspace-relative, `/`-separated; absolute outside a workspace. */
+  path: string;
+  /** Basename, what the chip shows. */
+  name: string;
+}
+
 export interface State {
   status: Status;
   messages: Message[];
@@ -98,4 +109,7 @@ export type ToWebview =
   /** The reply being streamed, whole text so far. Not part of `State`: a
    * state frame carries the whole history and is far too heavy for the
    * polling rate. The next `state` frame that is not `busy` ends it. */
-  | { type: "partial"; text: string; format: "markdown" | "text" };
+  | { type: "partial"; text: string; format: "markdown" | "text" }
+  /** The active editor's file, or none. Posted on every editor switch and
+   * once after `ready`, since VSCode recreates the webview. */
+  | { type: "activeFile"; file?: ActiveFile };

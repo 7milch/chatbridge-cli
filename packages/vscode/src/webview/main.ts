@@ -4,6 +4,7 @@ import {
   unknownCommandMessage,
 } from "@chatbridge/core/slash-commands";
 import type {
+  ActiveFile,
   Message,
   State,
   Status,
@@ -30,6 +31,7 @@ import {
   onState,
 } from "./stream-state.js";
 import {
+  attachTipState,
   hintText,
   isActive,
   noticeFor,
@@ -78,6 +80,10 @@ let commandNames: ReadonlySet<string> = new Set();
 /** The same commands, in order, for the `/` menu. */
 let providerCommands: readonly CommandInfo[] = [];
 let lastState: State | undefined;
+/** The active editor's file, from the host's `activeFile` message. Kept
+ * outside `State`: it changes on every editor switch and must never trigger
+ * a history render. */
+let activeFile: ActiveFile | undefined;
 /** The last `progress` line, so a re-render keeps it instead of falling
  * back to the generic waiting text. Cleared when the status leaves the
  * active set. */
@@ -385,6 +391,22 @@ function renderQueue(s: State): void {
 
 function renderAttachments(s: State): void {
   attachments.replaceChildren();
+  const tip = attachTipState(activeFile, s.pendingAttachments);
+  if (tip) {
+    const ghost = button(
+      `+ ${tip.name}`,
+      () => {
+        // A second click before the host's state frame would attach the
+        // file twice; the next renderAttachments rebuilds the chip anyway.
+        (ghost as HTMLButtonElement).disabled = true;
+        vscode.postMessage({ type: "attachUris", uris: [tip.uri] });
+      },
+      "chip ghost",
+    );
+    ghost.title = tip.path;
+    ghost.setAttribute("aria-label", `Attach ${tip.path}`);
+    attachments.appendChild(ghost);
+  }
   s.pendingAttachments.forEach((a, index) => {
     const chip = el("span", "chip", `📎 ${a.path} (${formatSize(a.bytes)})`);
     const x = button(
@@ -546,7 +568,13 @@ function clearInput(): void {
 
 function submit(): void {
   const text = input.value;
-  if (text.trim() === "" && attachments.childElementCount === 0) return;
+  // The ghost tip is not an attachment: a prompt that is empty apart from
+  // it stays unsendable.
+  if (
+    text.trim() === "" &&
+    attachments.querySelector(".chip:not(.ghost)") === null
+  )
+    return;
   const slash = parseSlashCommand(text, commandNames);
   if (slash && "unknown" in slash) {
     showInlineError(unknownCommandMessage(slash.unknown));
@@ -751,6 +779,11 @@ window.addEventListener("message", (event: MessageEvent<ToWebview>) => {
     fitComposer();
     if (lastState) renderComposer(lastState);
     input.focus();
+  } else if (m.type === "activeFile") {
+    activeFile = m.file;
+    // Only the attachment row: `render()` would rebuild the history diff and
+    // can collapse a selection in it (#121, #122).
+    if (lastState) renderAttachments(lastState);
   }
 });
 
