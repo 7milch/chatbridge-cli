@@ -139,7 +139,7 @@ Milestone lifecycle, driven by the `starting-next-milestone` skill:
   merging that each issue actually closed.
 - Releases are generated from merged PR titles grouped by label, so a PR title must
   make sense to someone who has not seen the code, and every PR carries one of
-  `enhancement`, `bug`, `accessibility` or `documentation`. See `docs/PUBLISHING.md`.
+  `enhancement`, `bug`, `accessibility` or `documentation`. See `docs/contributing/PUBLISHING.md`.
 - Squash-merge. A release commit is the one exception that lands directly on main.
 - A PR that changes what a vendor sees — the `Provider` type, `createCli` or
   `createExtension` options, the VSCode `contributes` a vendor manifest must
