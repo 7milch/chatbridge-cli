@@ -20,7 +20,12 @@ This page says when each member is called and what it must guarantee. The option
 
 ## Lifecycle
 
-Every provider call runs on one `Page`, one call at a time. The framework never calls two provider methods concurrently on the same session.
+Every provider call runs on one `Page`. `sendMessage`, `waitForResponse` and a provider command's `run` never overlap one another. Two calls can overlap:
+
+- `streaming.responseText` is polled while `waitForResponse` is still pending.
+- A close (the user quits or resets mid-turn) runs `isLoggedIn` while a turn may still be pending.
+
+Write `isLoggedIn` and `streaming.responseText` so they only read the page.
 
 ### 1. Opening a session
 
@@ -31,7 +36,7 @@ This runs for one-shot mode, for the first prompt of an interactive session, and
 3. `page.setDefaultTimeout(<opening timeout>)`.
 4. `page.goto(chatUrl)`.
 5. `isLoggedIn(page)`. If it returns `false`: when the provider has `detectBlock`, it is called; a description becomes `BlockedError` (exit 6). Otherwise the open fails with `AuthExpiredError` (exit 3).
-6. If the UI passed a conversation handle and the provider has `conversation`, `conversation.open(page, handle)` runs. If it fails, the page goes back to `chatUrl`. See [extension-points/conversation.md](extension-points/conversation.md).
+6. If the UI passed a conversation handle and the provider has `conversation`, `conversation.open(page, handle)` runs. If it fails, the page goes back to `chatUrl`. If it runs out of its budget, the browser is closed and launched again, and `goto` and `isLoggedIn` repeat, so `isLoggedIn` can run twice in one open. See [extension-points/conversation.md](extension-points/conversation.md).
 7. Otherwise, or after a failed restore, `startNewChat(page)`.
 8. The page's default timeout becomes the per-turn timeout, and the idle watch starts.
 
@@ -41,7 +46,7 @@ If a step after the launch fails, the browser is closed before the error surface
 
 1. `sendMessage(page, prompt)`.
 2. `waitForResponse(page)`. While it is pending, an interactive UI polls `streaming.responseText(page)` if the provider has `streaming`. See [extension-points/streaming.md](extension-points/streaming.md).
-3. If the provider has `conversation`, `conversation.handle(page)` is asked for the current conversation. It has a 5 s budget and its errors are swallowed.
+3. If the provider has `conversation`, `conversation.handle(page)` is asked for the current conversation. Its budget is the per-turn timeout or 5 s, whichever is shorter, and its errors are swallowed.
 
 On a timeout, `isLoggedIn` runs again (and `detectBlock` after a `false`). A lost login is reported as exit 3 or 6 instead of the timeout. If the page is still logged in, or the check itself fails, the original timeout is reported. The session stays usable after a timeout.
 
@@ -141,16 +146,21 @@ Every provider call runs under `page.setDefaultTimeout`, so any Playwright wait 
 | Phase | Default timeout |
 |---|---|
 | Opening (`goto`, `isLoggedIn`, `detectBlock`, `conversation.open`, `startNewChat`) | The opening timeout. See [configuration.md](../users/configuration.md#opening-phase). |
-| Turns and provider commands | The per-turn timeout. See [configuration.md](../users/configuration.md#per-turn-timeout). |
+| Turns, provider commands and close | The per-turn timeout. See [configuration.md](../users/configuration.md#per-turn-timeout). |
 | `auth login` | 30 s. |
 
-A Playwright `TimeoutError` thrown out of a provider call is mapped to `ResponseTimeoutError` with the step name:
+Except where noted below, a Playwright `TimeoutError` thrown out of a provider call is mapped to `ResponseTimeoutError` with the step name:
 
 ```
 Timed out during <step> after <ms> ms.
 ```
 
-Any other error passes through with its own message. Throw an `Error` with a message meant for the user. The exit codes are listed in [cli.md](../users/cli.md#exit-codes).
+Any other error passes through with its own message. The exceptions:
+
+- `isLoggedIn` during `auth login` is not mapped: any error, a timeout included, ends the login as it was thrown.
+- Errors from `streaming.responseText`, `conversation.open` and `conversation.handle` are swallowed. A failed poll is retried on the next tick; a failed restore falls back to a new chat; a failed handle keeps the previous one.
+
+Throw an `Error` with a message meant for the user. The exit codes are listed in [cli.md](../users/cli.md#exit-codes).
 
 Two things follow from this:
 
