@@ -39,8 +39,10 @@ time.
   session.` instead of calling it. See
   [../users/interactive-mode.md](../users/interactive-mode.md#slash-commands)
   for the user-facing behaviour.
-- A `/name` nobody defines (built-in or provider) yields
-  `Unknown provider command "/<name>".` from core.
+- A `/name` nobody defines (built-in or provider) shows
+  `Unknown command: /<name>. Type /help.` in the UI. (Core's `ChatSession.runCommand`
+  also has its own internal guard, `Unknown provider command "/<name>".`, for a UI that
+  passes a name the session's provider does not carry; a well-behaved UI never reaches it.)
 - While the chat page is busy, a typed command is queued like an ordinary
   message and runs when its turn comes.
 
