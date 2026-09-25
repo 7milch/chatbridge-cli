@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { ExtensionApi } from "@chatbridge/vscode";
 import * as vscode from "vscode";
 
@@ -13,7 +15,7 @@ export async function run(): Promise<void> {
       .join(", ")}`,
   );
   const api = (await ext.activate()) as ExtensionApi;
-  const { controller, handlers } = api;
+  const { controller, handlers, bridge } = api;
 
   assert.equal(controller.getState().status, "closed");
 
@@ -114,6 +116,33 @@ export async function run(): Promise<void> {
   assert.equal(controller.getState().pendingAttachments.length, 1);
   controller.removeAttachment(0);
 
+  // Attach tip: opening a file: document publishes it as the active file,
+  // and its uri goes through attachUris like a drop.
+  const tipUri = vscode.Uri.file(
+    path.join(os.tmpdir(), `chatbridge-tip-${process.pid}.json`),
+  );
+  await vscode.workspace.fs.writeFile(tipUri, Buffer.from('{"a":1}\n'));
+  const tipDoc = await vscode.workspace.openTextDocument(tipUri);
+  await vscode.window.showTextDocument(tipDoc);
+  await waitFor(() => bridge.activeFile?.uri === tipUri.toString());
+  assert.equal(bridge.activeFile?.name, path.basename(tipUri.fsPath));
+  await handlers.attachUris([bridge.activeFile?.uri ?? ""]);
+  assert.equal(controller.getState().pendingAttachments.length, 1);
+  assert.equal(
+    controller.getState().pendingAttachments[0]?.path,
+    bridge.activeFile?.path,
+  );
+  controller.removeAttachment(0);
+
+  // An untitled buffer is not a file: the tip clears.
+  const untitled = await vscode.workspace.openTextDocument({
+    language: "plaintext",
+    content: "scratch\n",
+  });
+  await vscode.window.showTextDocument(untitled);
+  await waitFor(() => bridge.activeFile === undefined);
+  await vscode.workspace.fs.delete(tipUri);
+
   // Paste: the active editor's selection becomes a selection chip.
   const pasteDoc = await vscode.workspace.openTextDocument({
     language: "plaintext",
@@ -191,4 +220,15 @@ async function waitForIdle(
   throw new Error(
     `queue did not drain within 10s; status=${controller.getState().status}`,
   );
+}
+
+/** `onDidChangeActiveTextEditor` fires asynchronously after
+ * `showTextDocument` resolves, so poll the bridge rather than assert at once. */
+async function waitFor(check: () => boolean): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (check()) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error("condition not met within 5s");
 }

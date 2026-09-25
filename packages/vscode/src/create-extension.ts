@@ -55,6 +55,8 @@ export interface ExtensionApi {
   controller: SessionController;
   /** The E2E drives the command handlers directly. */
   handlers: CommandHandlers;
+  /** The E2E reads the last active file the host pushed to the view. */
+  bridge: ChatViewBridge;
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -217,10 +219,11 @@ export function createExtension(opts: CreateExtensionOptions) {
     const cliPath =
       opts.playwrightCliPath ??
       join(context.extensionPath, "node_modules", "playwright", "cli.js");
+    const ui = createVscodeUi(vscode, opts.id);
     const handlers: CommandHandlers = createCommands({
       displayName: opts.displayName,
       controller,
-      ui: createVscodeUi(vscode, opts.id),
+      ui,
       runLogin,
       installBrowser,
       loginOptions: () => ({ provider: opts.provider, authStore }),
@@ -249,6 +252,12 @@ export function createExtension(opts: CreateExtensionOptions) {
         ),
       ),
     );
+    // The composer's attach tip. Optional on VscodeUi: a vendor's own
+    // implementation without it simply shows no tip.
+    const tipSub = ui.onDidChangeActiveEditor?.((file) =>
+      bridge.pushActiveFile(file),
+    );
+    if (tipSub) context.subscriptions.push(tipSub);
     for (const name of COMMAND_NAMES) {
       context.subscriptions.push(
         vscode.commands.registerCommand(
@@ -266,7 +275,7 @@ export function createExtension(opts: CreateExtensionOptions) {
         handlers.helpInView(),
       ),
     );
-    return { controller, handlers };
+    return { controller, handlers, bridge };
   }
 
   async function deactivate(): Promise<void> {
