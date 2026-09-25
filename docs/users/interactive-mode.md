@@ -82,7 +82,7 @@ A URL a provider recognises in your typed text is fetched by the provider and at
 | Ctrl+R | Reopen the browser, in any state. The old browser is killed if it has not closed within 5 seconds. |
 | PageUp / PageDown, mouse wheel | Scroll the history. |
 | Up, on the first line, with a queue | Pull the queued entries back into the input box. |
-| Up / Down, Tab / Enter, Esc | In the `@file` popup: move the selection, accept it, or close the popup. Enter submits instead of accepting when the typed word already matches the selected command. |
+| Up / Down, Tab / Enter, Esc | In either popup (`@file` or `/`): move the selection, accept it, or close the popup. Enter submits instead of accepting when the typed word already matches the selected command. |
 | Ctrl+C | Cancel a `/login` in progress, stop a running shell command, or otherwise quit. |
 | Esc / Backspace / Ctrl+U, on an empty `!` prompt | Leave shell mode. |
 
@@ -149,7 +149,7 @@ While a reply streams, a spinner row shows `<frame> <label>  <s>s` and grows int
 
 The spinner defaults to the frames `●○○`, `○●○`, `○○●`, `○●○` at 120 ms per frame, with the label `Thinking…`; a vendor CLI may customise this.
 
-A response timeout leaves the session usable for the next turn. Any other error makes the chat dead (see the guide text above); Ctrl+R or `/login` can bring it back.
+A response timeout leaves the session usable for the next turn. Any other error makes the chat dead (see the guide text above); Ctrl+R or `/login` can bring it back. Quitting while the chat is dead exits with that error's code, for example 3 for an expired login or 6 for a block (see [cli.md](cli.md#exit-codes)).
 
 ## Idle close and reopen
 

@@ -119,6 +119,8 @@ The provider's `name` must match `/^[a-z0-9][a-z0-9._-]{0,63}$/` (lowercase lett
 | 7 | Chromium is not installed: the error message plus `Run: npx playwright install chromium`. |
 | 130 | Login cancelled with Ctrl-C during `auth login`. |
 
+Interactive mode exits 0 on a normal quit. Quitting after a fatal error (the chat is "dead") exits with that error's code from this table.
+
 ## Debugging
 
 Set `CHATBRIDGE_DEBUG=1` to append the underlying cause to a framework error:

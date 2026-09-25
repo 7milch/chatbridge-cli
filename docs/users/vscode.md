@@ -55,8 +55,8 @@ The composer is a textarea with the placeholder `Message…`.
   editing. Its attachments come back as chips; if any no longer fit, you see
   `N attachment(s) left out: total size limit.`
 - **`+`** opens a native file picker (`Attach`) to add attachments.
-- **`/`** opens the slash-command menu. The `/` button in the action row
-  opens the same menu unfiltered.
+- Typing **`/`** opens the slash-command menu, filtered as you type; the
+  `/` button in the action row opens it unfiltered.
 - Queued messages are listed with a `×` each, so one can be removed before
   it is sent.
 - The send button is `↑`. It turns into a queue icon while a turn is in
@@ -74,7 +74,7 @@ A chip can come from:
   a `path:Lx-Ly` chip instead of inline text.
 
 A dashed ghost chip `+ <basename>` offers the active editor's file; clicking
-it attaches the file's current contents, including unsaved edits.
+it attaches the file's current contents, including unsaved edits. Untitled buffers and non-file views show no chip.
 
 Size limits apply per file and in total: `<path>: <kb> KB exceeds 200 KB`
 and `attachments total <size> exceeds 1 MB`.
