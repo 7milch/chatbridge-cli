@@ -18,7 +18,7 @@ When the file is read:
 |---|---|
 | Interactive mode (`chatbridge`) | The whole file, also when the vendor pinned the provider. |
 | One-shot mode (`chatbridge -p`) | The whole file, also when the vendor pinned the provider. |
-| `auth login`, `auth logout`, `auth status` | Only `defaultProvider`, and only when no provider is pinned and no `--provider` is given. |
+| `auth login`, `auth logout`, `auth status` | The file only when no provider is pinned and no `--provider` is given. Only `defaultProvider` is used, but the whole file is still checked, so a broken file fails the command. |
 | `--help`, `--version` | Nothing. |
 
 When the vendor pinned the provider, `defaultProvider` is ignored and not checked.
@@ -100,9 +100,9 @@ Each knob is resolved from layers. A later layer wins, and only for the keys it 
 
 ### Provider selection
 
-1. A provider pinned by the vendor with `createCli({ provider })`. `--provider` is then rejected and `defaultProvider` is ignored.
+1. `defaultProvider` in `config.json`.
 2. `--provider`.
-3. `defaultProvider` in `config.json`.
+3. A provider pinned by the vendor with `createCli({ provider })`. `--provider` is then rejected and `defaultProvider` is ignored.
 
 With none of them, the CLI exits 5. See [cli.md](cli.md) for the message.
 
