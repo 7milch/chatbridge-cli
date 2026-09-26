@@ -326,3 +326,10 @@ extension point and four copy-ready recipes. The root README is a front page,
 package READMEs point at the guide, and `CLAUDE.md` requires a PR that changes
 what a user or vendor sees to update the matching guide page. Docs only, no
 release.
+
+### 25. VSCode template fixes — done (issue #135, PR #136, 2026-09-26)
+
+`createExtension` reads its three settings through `inspect()` and honours only
+values the user set, so a manifest `default` no longer shadows the vendor's
+options. The vendor template's `package` script produces a `.vsix` that ships
+Playwright, with the old flag-only command kept as `package:smoke`.
