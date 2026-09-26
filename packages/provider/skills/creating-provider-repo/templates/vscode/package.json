@@ -142,22 +142,23 @@
         "<vendor>.headless": {
           "type": "boolean",
           "default": true,
-          "description": "Run the browser without a window."
+          "description": "Run the browser without a window. Unset: the extension's own value, normally true."
         },
         "<vendor>.timeoutSec": {
           "type": "number",
-          "description": "Seconds to wait for each browser step. Unset: the provider's own value. Declaring a \"default\" here would override the provider's value, so this setting deliberately has none."
+          "description": "Seconds to wait for each browser step. Unset: the extension's own value, normally 120."
         },
         "<vendor>.idleTimeoutMinutes": {
           "type": "number",
-          "description": "Minutes of inactivity before the browser is closed; 0 disables. Unset: the provider's own value, normally 1440. Declaring a \"default\" here would override the provider's value, so this setting deliberately has none."
+          "description": "Minutes of inactivity before the browser is closed; 0 disables. Unset: the provider's own value, normally 1440."
         }
       }
     }
   },
   "scripts": {
     "build": "node esbuild.mjs",
-    "package": "bunx @vscode/vsce package --no-dependencies --out dist/"
+    "package": "bun run build && rm -rf node_modules && npm install --omit=dev && npx @vscode/vsce package --out dist/ && bun install",
+    "package:smoke": "bunx @vscode/vsce package --no-dependencies --out dist/"
   },
   "dependencies": {
     "playwright": "<latest>"
