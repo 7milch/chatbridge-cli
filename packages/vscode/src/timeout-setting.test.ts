@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { parseIdleTimeoutMin, parseTimeoutSec } from "./timeout-setting.js";
+import {
+  parseIdleTimeoutMin,
+  parseTimeoutSec,
+  userSetting,
+} from "./timeout-setting.js";
 
 describe("parseTimeoutSec", () => {
   test("a positive number is seconds", () => {
@@ -44,5 +48,30 @@ describe("parseIdleTimeoutMin", () => {
       timeoutMs: 86_400_000,
       invalid: false,
     });
+  });
+});
+
+describe("userSetting", () => {
+  test("undefined when nothing is inspectable", () => {
+    expect(userSetting(undefined)).toBeUndefined();
+  });
+
+  test("ignores the manifest default", () => {
+    expect(userSetting({ defaultValue: true })).toBeUndefined();
+  });
+
+  test("returns the global value", () => {
+    expect(userSetting({ defaultValue: true, globalValue: false })).toBe(false);
+  });
+
+  test("workspace beats global, folder beats workspace", () => {
+    expect(userSetting({ globalValue: 1, workspaceValue: 2 })).toBe(2);
+    expect(
+      userSetting({
+        globalValue: 1,
+        workspaceValue: 2,
+        workspaceFolderValue: 3,
+      }),
+    ).toBe(3);
   });
 });

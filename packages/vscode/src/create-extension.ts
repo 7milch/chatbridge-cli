@@ -24,7 +24,11 @@ import {
   SessionController,
   droppedAttachmentsLine,
 } from "./session-controller.js";
-import { parseIdleTimeoutMin, parseTimeoutSec } from "./timeout-setting.js";
+import {
+  parseIdleTimeoutMin,
+  parseTimeoutSec,
+  userSetting,
+} from "./timeout-setting.js";
 import { type ExtensionUiOptions, resolveUiConfig } from "./ui-config.js";
 import { createVscodeUi } from "./vscode-ui.js";
 
@@ -38,7 +42,9 @@ export interface CreateExtensionOptions {
   /** Directory name under ~/.config; defaults to `id`. Use the vendor
    * CLI's `configDir` so one `auth login` serves both. */
   configDir?: string;
-  /** Defaults; the user's `<id>.timeoutSec` / `<id>.headless` settings win. */
+  /** Defaults; a `<id>.timeoutSec` / `<id>.headless` value the user set wins.
+   * A `default` declared in the manifest does not: it only feeds the
+   * Settings UI. */
   timeoutMs?: number;
   headless?: boolean;
   /** Test-only: overrides the config/auth-store base directory. */
@@ -148,7 +154,7 @@ export function createExtension(opts: CreateExtensionOptions) {
       const cfg = vscode.workspace.getConfiguration(opts.id);
       const fallbackMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
       const { timeoutMs, invalid } = parseTimeoutSec(
-        cfg.get<unknown>("timeoutSec"),
+        userSetting(cfg.inspect<unknown>("timeoutSec")),
         fallbackMs,
       );
       if (invalid && !warnedTimeout) {
@@ -161,7 +167,7 @@ export function createExtension(opts: CreateExtensionOptions) {
       const idleFallbackMs =
         opts.provider.idle?.timeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
       const idle = parseIdleTimeoutMin(
-        cfg.get<unknown>("idleTimeoutMinutes"),
+        userSetting(cfg.inspect<unknown>("idleTimeoutMinutes")),
         idleFallbackMs,
       );
       if (idle.invalid && !warnedIdle) {
@@ -171,7 +177,10 @@ export function createExtension(opts: CreateExtensionOptions) {
         );
       }
       return {
-        headless: cfg.get<boolean>("headless", opts.headless ?? true),
+        headless:
+          userSetting(cfg.inspect<boolean>("headless")) ??
+          opts.headless ??
+          true,
         timeoutMs,
         idle: { timeoutMs: idle.timeoutMs },
       };

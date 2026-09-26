@@ -158,6 +158,57 @@ Verify: `<VENDOR>_E2E=1 bun test src/provider.e2e.test.ts` — "a guest is not
 logged in" passes: a fresh browser context on the chat URL reads as logged
 out, while the two-turn test still reads the saved state as logged in.
 
+## 0.12.1
+
+**Required:** none.
+
+**Optional:**
+
+### `createExtension({ headless })` and manifest defaults
+
+Needs DOM observation: no.
+
+Change: nothing in `src/provider.ts`. Bump `@chatbridge/vscode` in `vscode/`
+and rebuild. The extension now reads `<vendor>.headless`, `<vendor>.timeoutSec`
+and `<vendor>.idleTimeoutMinutes` only when the user set them; a `default`
+declared in the manifest no longer shadows `createExtension({ headless,
+timeoutMs })` or the provider's `idle.timeoutMs`. If you edited the manifest's
+`<vendor>.headless` default to `false` as a workaround, you may keep it (it
+only feeds the Settings UI) but it must match the `headless` option you pass.
+This supersedes the no-`default` rule in the 0.10.0 manifest step below.
+
+Verify: build and launch the extension with `headless: false` in
+`createExtension` and no `<vendor>.headless` in your user settings; the
+browser window is visible.
+
+### A `package` script that ships Playwright
+
+Needs DOM observation: no.
+
+Change: in `vscode/package.json` replace the `package` script and add
+`package:smoke`:
+
+```json
+"package": "bun run build && rm -rf node_modules && npm install --omit=dev && npx --yes @vscode/vsce package --out dist/ && bun install",
+"package:smoke": "bunx @vscode/vsce package --no-dependencies --out dist/"
+```
+
+The old `package` script built a `.vsix` without Playwright, so Install
+Browser failed on the user's machine. `package:smoke` keeps that quick
+manifest check under a name that cannot be mistaken for a release build. If
+`package` fails midway, run `bun install` to restore the dev tree.
+
+Verify: in `vscode/`, `bun run package`, then
+`unzip -l dist/*.vsix | grep node_modules/playwright/cli.js` prints one line.
+
+**VSCode manifest:** three `description` fixes, none required. In
+`contributes.configuration.properties`, `<vendor>.headless` reads "Run the
+browser without a window. Unset: the extension's own value, normally true.",
+`<vendor>.timeoutSec` reads "Seconds to wait for each browser step. Unset: the
+extension's own value, normally 120.", and `<vendor>.idleTimeoutMinutes` drops
+the sentence starting "Declaring a \"default\" here". Copy them from
+`../creating-provider-repo/templates/vscode/package.json`.
+
 ## 0.12.0
 
 **Required:** none. VSCode only: the chat composer shows the active editor's
@@ -477,6 +528,8 @@ still passes.
    "number"`, and make sure `<vendor>.timeoutSec` is there too. Neither may
    have a `default`: a declared default silently overrides the provider's own
    value. State the fallback in the `description`, as the template does.
+   (No longer true from 0.12.1, where the extension ignores manifest defaults;
+   see that entry.)
 
 Verify: reload the extension (F5 in VSCode) — the chat view's title bar shows
 the New Chat and Reopen icons, its overflow menu lists Log in, Log out, Install

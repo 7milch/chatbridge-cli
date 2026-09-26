@@ -117,6 +117,29 @@ describe("VSCode template", () => {
     for (const path of named)
       expect(existsSync(join(SKILLS, dir, path)), path).toBe(true);
   });
+
+  test("the package script ships Playwright; only package:smoke skips deps", () => {
+    const pkg = JSON.parse(
+      read("creating-provider-repo/templates/vscode/package.json"),
+    );
+    expect(pkg.scripts.package).not.toContain("--no-dependencies");
+    expect(pkg.scripts.package).toContain("npm install --omit=dev");
+    expect(pkg.scripts["package:smoke"]).toContain("--no-dependencies");
+  });
+
+  test("setting descriptions name the real fallback, not a manifest rule", () => {
+    const pkg = JSON.parse(
+      read("creating-provider-repo/templates/vscode/package.json"),
+    );
+    const props = pkg.contributes.configuration.properties;
+    for (const key of ["headless", "timeoutSec", "idleTimeoutMinutes"]) {
+      const desc: string = props[`<vendor>.${key}`].description;
+      expect(desc, key).toContain("Unset:");
+      expect(desc, key).not.toContain("Declaring");
+    }
+    expect(props["<vendor>.headless"].default).toBe(true);
+    expect(props["<vendor>.timeoutSec"].description).toContain("120");
+  });
 });
 
 describe("the playwright-core pin", () => {

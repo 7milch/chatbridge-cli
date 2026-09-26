@@ -12,8 +12,9 @@ button spawns its CLI (`createExtension` also accepts `playwrightCliPath` to
 point at a non-default `playwright/cli.js` location). Bundle with esbuild
 (CJS, `vscode` and `playwright` external) to `dist/extension.cjs` — the
 template keeps `"type": "module"` in its manifest, which is why the entry
-point is `.cjs` and not `.js`. The template's `package` script runs `vsce
-package --no-dependencies`, which is only a CI packaging smoke test.
+point is `.cjs` and not `.js`. The template's `package` script runs the
+full recipe below (`bun run package` → distributable `.vsix` in `dist/`);
+`package:smoke` is `vsce package --no-dependencies`, a manifest check only.
 
 Brand the view with the optional `ui` option (plain text only; the banner
 path is relative to the extension root and must ship in the `.vsix` — a
@@ -58,8 +59,8 @@ extension"). Verified recipe, run in the extension folder:
    collects dependencies by walking npm's `node_modules` layout, and bun's
    symlinked tree makes that walk escape the folder. Leaves `playwright`
    and `playwright-core` only.
-4. `npx @vscode/vsce package` (no `--no-dependencies`); about 4 MB / 185
-   files. Check with `unzip -l *.vsix | grep node_modules/playwright/cli.js`.
+4. `npx --yes @vscode/vsce package` (vsce is a devDependency, gone after
+   step 3, so npx fetches it); about 4 MB / 185 files. Check with `unzip -l *.vsix | grep node_modules/playwright/cli.js`.
 5. `bun install` to restore the dev tree; `code --install-extension
    <file>.vsix` to try it. Chromium is downloaded by the Install Browser
    button on the user's machine, never packaged.
