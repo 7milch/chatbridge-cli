@@ -27,3 +27,26 @@ export function parseIdleTimeoutMin(
   }
   return { timeoutMs: minutes * 60_000, invalid: false };
 }
+
+/** The subset of `WorkspaceConfiguration.inspect()` we read. */
+export interface InspectedSetting<T> {
+  defaultValue?: T;
+  globalValue?: T;
+  workspaceValue?: T;
+  workspaceFolderValue?: T;
+}
+
+/** The value the user actually set, most specific scope first, or undefined.
+ * The manifest `default` is deliberately ignored: it exists so the Settings
+ * UI can show the effective value, and must not shadow the vendor's
+ * `createExtension` option. */
+export function userSetting<T>(
+  inspected: InspectedSetting<T> | undefined,
+): T | undefined {
+  if (!inspected) return undefined;
+  return (
+    inspected.workspaceFolderValue ??
+    inspected.workspaceValue ??
+    inspected.globalValue
+  );
+}
