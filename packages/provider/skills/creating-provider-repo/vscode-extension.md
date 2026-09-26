@@ -59,7 +59,8 @@ extension"). Verified recipe, run in the extension folder:
    collects dependencies by walking npm's `node_modules` layout, and bun's
    symlinked tree makes that walk escape the folder. Leaves `playwright`
    and `playwright-core` only.
-4. `npx @vscode/vsce package`; about 4 MB / 185 files. Check with `unzip -l *.vsix | grep node_modules/playwright/cli.js`.
+4. `npx --yes @vscode/vsce package` (vsce is a devDependency, gone after
+   step 3, so npx fetches it); about 4 MB / 185 files. Check with `unzip -l *.vsix | grep node_modules/playwright/cli.js`.
 5. `bun install` to restore the dev tree; `code --install-extension
    <file>.vsix` to try it. Chromium is downloaded by the Install Browser
    button on the user's machine, never packaged.

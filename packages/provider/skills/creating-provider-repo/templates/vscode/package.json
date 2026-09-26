@@ -157,7 +157,7 @@
   },
   "scripts": {
     "build": "node esbuild.mjs",
-    "package": "bun run build && rm -rf node_modules && npm install --omit=dev && npx @vscode/vsce package --out dist/ && bun install",
+    "package": "bun run build && rm -rf node_modules && npm install --omit=dev && npx --yes @vscode/vsce package --out dist/ && bun install",
     "package:smoke": "bunx @vscode/vsce package --no-dependencies --out dist/"
   },
   "dependencies": {

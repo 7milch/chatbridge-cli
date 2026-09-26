@@ -360,7 +360,7 @@ A distributable `.vsix` must carry `node_modules/playwright`, or the Install Bro
 4. Package:
 
    ```sh
-   npx @vscode/vsce package
+   npx --yes @vscode/vsce package
    ```
 
 5. Check that Playwright is inside, then restore the dev tree:
