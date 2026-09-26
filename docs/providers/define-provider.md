@@ -131,8 +131,8 @@ It returns `{ activate, deactivate }`. `activate(context)` checks the manifest, 
 | `displayName` | `string` | required | View title, notifications, the Output channel name. |
 | `provider` | `Provider` | required | Always pinned. The extension never loads a provider dynamically. |
 | `configDir` | `string` | `id` | Directory name under `~/.config`. Pass the CLI's `configDir` so one `auth login` serves both. |
-| `timeoutMs` | `number` | `120000` | Per-step timeout. The user's `<id>.timeoutSec` setting overrides it. |
-| `headless` | `boolean` | `true` | Whether sessions launch a headless browser. The user's `<id>.headless` setting overrides it. |
+| `timeoutMs` | `number` | `120000` | Per-step timeout. A `<id>.timeoutSec` value the user set overrides it. |
+| `headless` | `boolean` | `true` | Whether sessions launch a headless browser. A `<id>.headless` value the user set overrides it. |
 | `playwrightCliPath` | `string` | `<extension>/node_modules/playwright/cli.js` | What the Install Browser command runs. Set it only when Playwright is not in the extension's own `node_modules`. |
 | `ui` | `ExtensionUiOptions` | none | Vendor branding; see below. |
 | `baseDir` | `string` | `~/.config` | Test-only override for the directory that holds `<configDir>/`. Do not set it in a shipped extension. |
@@ -294,15 +294,15 @@ The first fires for an empty, absolute or escaping (`..`) path.
         "<vendor>.headless": {
           "type": "boolean",
           "default": true,
-          "description": "Run the browser without a window."
+          "description": "Run the browser without a window. Unset: the extension's own value, normally true."
         },
         "<vendor>.timeoutSec": {
           "type": "number",
-          "description": "Seconds to wait for each browser step. Unset: the provider's own value. Declaring a \"default\" here would override the provider's value, so this setting deliberately has none."
+          "description": "Seconds to wait for each browser step. Unset: the extension's own value, normally 120."
         },
         "<vendor>.idleTimeoutMinutes": {
           "type": "number",
-          "description": "Minutes of inactivity before the browser is closed; 0 disables. Unset: the provider's own value, normally 1440. Declaring a \"default\" here would override the provider's value, so this setting deliberately has none."
+          "description": "Minutes of inactivity before the browser is closed; 0 disables. Unset: the provider's own value, normally 1440."
         }
       }
     }
@@ -334,7 +334,7 @@ What each part does, and what happens without it:
 
 **Not checked.** The keybinding and the two context menus only add shortcuts. The webview also handles Ctrl+R itself when the composer has focus.
 
-**Settings.** A missing setting falls back to the `createExtension` default. Do not give `<id>.timeoutSec` or `<id>.idleTimeoutMinutes` a `default`. VSCode returns a declared `default` whenever the user has set nothing, so it would override your `timeoutMs` option and the provider's `idle.timeoutMs` for every user. Put the intended fallback in the `description` instead, as the template does. The same holds for `<id>.headless`: the template declares `"default": true`, which matches the option's default, so set it to `false` if you pass `headless: false`.
+**Settings.** The extension reads only values the user set, at folder, workspace or global scope. A `default` declared in the manifest is ignored at runtime, so `<id>.headless` falls back to your `headless` option, `<id>.timeoutSec` to your `timeoutMs` option, and `<id>.idleTimeoutMinutes` to the provider's `idle.timeoutMs`. Declare a `default` only where it helps the Settings UI, as the template does for `<id>.headless`, and keep it in step with the option you pass. State the real fallback in each `description`.
 
 The user-facing view of these commands and settings is in [../users/vscode.md](../users/vscode.md).
 
@@ -357,7 +357,7 @@ A distributable `.vsix` must carry `node_modules/playwright`, or the Install Bro
    rm -rf node_modules && npm install --omit=dev
    ```
 
-4. Package, without `--no-dependencies`:
+4. Package:
 
    ```sh
    npx @vscode/vsce package
@@ -376,7 +376,7 @@ A distributable `.vsix` must carry `node_modules/playwright`, or the Install Bro
    code --install-extension <file>.vsix
    ```
 
-The template's own `package` script passes `--no-dependencies`. That is a quick packaging smoke test; its `.vsix` has no Playwright. Use the steps above for anything you hand to users.
+The template's `package` script runs steps 2 to 5 in one go, so `bun run package` in the extension folder produces a distributable `.vsix` under `dist/`. `package:smoke` runs `vsce package --no-dependencies` alone; that is a quick manifest check and its `.vsix` has no Playwright, so never hand it to users.
 
 ## Upgrading between versions
 

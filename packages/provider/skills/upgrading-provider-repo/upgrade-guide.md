@@ -206,6 +206,55 @@ styles Markdown headings and fenced code again.
 
 **VSCode manifest:** none.
 
+## 0.12.1
+
+**Required:** none.
+
+**Optional:**
+
+### `createExtension({ headless })` and manifest defaults
+
+Needs DOM observation: no.
+
+Change: nothing in `src/provider.ts`. Bump `@chatbridge/vscode` in `vscode/`
+and rebuild. The extension now reads `<vendor>.headless`, `<vendor>.timeoutSec`
+and `<vendor>.idleTimeoutMinutes` only when the user set them; a `default`
+declared in the manifest no longer shadows `createExtension({ headless,
+timeoutMs })` or the provider's `idle.timeoutMs`. If you edited the manifest's
+`<vendor>.headless` default to `false` as a workaround, you may keep it (it
+only feeds the Settings UI) but it must match the `headless` option you pass.
+
+Verify: build and launch the extension with `headless: false` in
+`createExtension` and no `<vendor>.headless` in your user settings; the
+browser window is visible.
+
+### A `package` script that ships Playwright
+
+Needs DOM observation: no.
+
+Change: in `vscode/package.json` replace the `package` script and add
+`package:smoke`:
+
+```json
+"package": "bun run build && rm -rf node_modules && npm install --omit=dev && npx @vscode/vsce package --out dist/ && bun install",
+"package:smoke": "bunx @vscode/vsce package --no-dependencies --out dist/"
+```
+
+The old `package` script built a `.vsix` without Playwright, so Install
+Browser failed on the user's machine. `package:smoke` keeps that quick
+manifest check under a name that cannot be mistaken for a release build.
+
+Verify: in `vscode/`, `bun run package`, then
+`unzip -l dist/*.vsix | grep node_modules/playwright/cli.js` prints one line.
+
+**VSCode manifest:** three `description` fixes, none required. In
+`contributes.configuration.properties`, `<vendor>.headless` reads "Run the
+browser without a window. Unset: the extension's own value, normally true.",
+`<vendor>.timeoutSec` reads "Seconds to wait for each browser step. Unset: the
+extension's own value, normally 120.", and `<vendor>.idleTimeoutMinutes` drops
+the sentence starting "Declaring a \"default\" here". Copy them from
+`../creating-provider-repo/templates/vscode/package.json`.
+
 ## 0.11.0
 
 **Required:** none.

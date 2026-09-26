@@ -109,7 +109,7 @@ Sessions run headless unless the user asks otherwise:
 | Where | Headful when |
 |---|---|
 | CLI, one-shot and interactive | `--headful` is passed. |
-| VSCode | The `<id>.headless` setting is `false`. Its default is the `default` your manifest declares for that setting (`true` in the template). `createExtension({ headless })` applies only when the manifest declares no default. |
+| VSCode | The user set `<id>.headless` to `false`, or the vendor passed `createExtension({ headless: false })` and the user set nothing. A `default` declared in the manifest only feeds the Settings UI. |
 | Login (all three entry points) | Always. |
 
 The browser context is the same in both modes, reduced motion included, so a page you debug with `--headful` behaves like the headless one. What can differ is the service: some services treat headless Chromium as a bot. Test your provider headless before you ship it.

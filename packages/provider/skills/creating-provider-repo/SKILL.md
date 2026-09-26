@@ -118,9 +118,8 @@ Two optional fields:
 - `idle: { timeoutMs }` — default idle lifetime of an interactive session (24 h;
   `0` disables), overridden by the user's `idle` config key,
   `CHATBRIDGE_IDLE_TIMEOUT` and the VSCode `idleTimeoutMinutes` setting.
-  Declare `idleTimeoutMinutes` and `timeoutSec` in a VSCode manifest with **no**
-  `default`: a declared default overrides the provider's value; the fallback
-  goes in the `description`.
+  In a VSCode manifest a declared `default` is not read at runtime (only
+  values the user set are); state the real fallback in the `description`.
 
 ## VSCode extension
 
