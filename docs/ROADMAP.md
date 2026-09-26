@@ -317,3 +317,12 @@ chip in the attachment row; one click attaches it through the same path as a
 drop or the `+` picker. New optional `VscodeUi.onDidChangeActiveEditor` and an
 `activeFile` host → webview message kept out of `State`, so an editor switch
 never re-renders the history. Ships as v0.12.0.
+
+### 24. Reference guide — done (issue #133, PR #134, 2026-09-26)
+
+A reader-split reference guide under `docs/` (`users/`, `providers/`,
+`contributing/`), an index `README.md` in every directory, one page per
+extension point and four copy-ready recipes. The root README is a front page,
+package READMEs point at the guide, and `CLAUDE.md` requires a PR that changes
+what a user or vendor sees to update the matching guide page. Docs only, no
+release.
