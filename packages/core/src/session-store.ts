@@ -161,10 +161,14 @@ export class SessionStore {
         continue;
       }
       if (!name.endsWith(JSON_EXT)) continue;
-      const record = await this.load(name.slice(0, -JSON_EXT.length));
+      const id = name.slice(0, -JSON_EXT.length);
+      const record = await this.load(id);
       if (record === undefined) {
         // Unreadable: never deleted on sight, since a newer build may have
-        // written it. It goes by age, and the cap does not count it.
+        // written it. It goes by age, the cap does not count it, and the
+        // current session is exempt whatever its age, same as a readable
+        // record below.
+        if (id === current) continue;
         const mtime = await this.mtimeOf(path);
         if (mtime !== undefined && now - mtime > SESSION_MAX_AGE_MS) {
           await this.remove(path);

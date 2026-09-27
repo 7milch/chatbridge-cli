@@ -204,6 +204,17 @@ describe("SessionStore", () => {
     );
   });
 
+  test("an unreadable file whose name is the current session is kept regardless of age", async () => {
+    const { store } = setup();
+    const path = join(store.dir(), `${idOf(3)}.json`);
+    mkdirSync(store.dir(), { recursive: true });
+    writeFileSync(path, "{ not json");
+    const old = (NOW - SESSION_MAX_AGE_MS - DAY) / 1000;
+    utimesSync(path, old, old);
+    await store.prune({ current: idOf(3) });
+    expect(readdirSync(store.dir())).toEqual([`${idOf(3)}.json`]);
+  });
+
   test("a stale temporary file is removed, a fresh one is left", async () => {
     const { store } = setup();
     await store.save(record(1, NOW));
