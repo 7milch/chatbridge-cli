@@ -15,7 +15,7 @@ export async function run(): Promise<void> {
       .join(", ")}`,
   );
   const api = (await ext.activate()) as ExtensionApi;
-  const { controller, handlers, bridge } = api;
+  const { controller, handlers, bridge, sessions } = api;
 
   assert.equal(controller.getState().status, "closed");
 
@@ -201,6 +201,51 @@ export async function run(): Promise<void> {
   s = controller.getState();
   assert.equal(s.messages.at(-1)?.role, "error");
   assert.match(s.messages.at(-1)?.text ?? "", /404 from dummy chat/);
+
+  // Saved sessions: every settled turn above is on disk under the base dir
+  // the runner passed. "New chat" split the run into two saved sessions.
+  await sessions.flush();
+  await waitForIdle(controller);
+  assert.equal(await controller.newChat(), true);
+  const saved = await sessions.list();
+  assert.ok(
+    saved.length >= 2,
+    `expected at least two saved sessions, got ${saved.length}`,
+  );
+  const firstSession = saved.find((x) => x.title === "hello from vscode");
+  assert.ok(firstSession, "the first session of this run is listed");
+
+  // Resume through the controller: the QuickPick itself cannot be driven
+  // from here, and the handler only chooses which record to pass.
+  // (`resumedSeparator(true)` in @chatbridge/core, hardcoded for the reason
+  // given at RESTORED_SEPARATOR above.)
+  const record = await sessions.load(firstSession.id);
+  assert.ok(record, "the saved session loads");
+  assert.equal(await controller.resume(record), true);
+  s = controller.getState();
+  assert.equal(s.status, "idle");
+  assert.equal(s.messages[0]?.text, "hello from vscode");
+  assert.deepEqual(s.messages.at(-1), {
+    role: "separator",
+    text: "resumed · conversation restored",
+  });
+  // One turn was settled in that conversation before "New chat".
+  const resumedTurn = await controller.send("turns?");
+  assert.deepEqual(resumedTurn, { ok: true });
+  await waitForIdle(controller);
+  s = controller.getState();
+  assert.match(s.messages.at(-1)?.text ?? "", /^Echo: turns\? \(turn 2\)$/);
+
+  // The command is registered even though it is optional in a manifest.
+  const all = await vscode.commands.getCommands(true);
+  assert.ok(all.includes("chatbridge-dummy.resume"));
+
+  // Logout deletes what was saved. The state after the logout is not
+  // asserted: the logout currently leaves the auth state on disk (#137);
+  // whoever fixes #137 adds that assertion here.
+  await handlers.logout();
+  await sessions.flush();
+  assert.deepEqual(await sessions.list(), []);
 
   await controller.close();
   assert.equal(controller.getState().status, "closed");
