@@ -6,7 +6,12 @@ import {
   TextRenderable,
 } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
-import { MAX_ROWS, MentionPopup, POPUP_HINT } from "./mention-popup.js";
+import {
+  MAX_ROWS,
+  MentionPopup,
+  PICKER_HINT,
+  POPUP_HINT,
+} from "./mention-popup.js";
 
 /** Mention rows: the path is both the value and the label. */
 const paths = (...list: string[]) =>
@@ -19,8 +24,8 @@ afterEach(() => {
 });
 
 /** Root: history (grows) / input / popup / status — the ChatView order. */
-async function setup() {
-  const t = await createTestRenderer({ width: 40, height: 14 });
+async function setup(width = 40) {
+  const t = await createTestRenderer({ width, height: 14 });
   const root = new BoxRenderable(t.renderer, {
     id: "root",
     flexDirection: "column",
@@ -267,5 +272,66 @@ describe("MentionPopup.showAll", () => {
     const t = await setup();
     t.popup.showAll([]);
     expect(t.popup.visible).toBe(false);
+  });
+
+  /** The hint row: the last row the popup draws, trimmed. */
+  const hintOf = (t: Awaited<ReturnType<typeof setup>>) =>
+    t
+      .rows()
+      .find((r) => r.includes("↕"))
+      ?.trim();
+
+  test("has a hint of its own: Tab does nothing in the picker", async () => {
+    const t = await setup();
+    t.popup.showAll(many(3));
+    await t.renderOnce();
+    expect(hintOf(t)).toBe(PICKER_HINT);
+    expect(t.captureCharFrame()).not.toContain("Tab");
+  });
+
+  test("a list longer than the rows says where the selection is", async () => {
+    // Wide enough for the counter: 40 columns clip it.
+    const t = await setup(60);
+    t.popup.showAll(many(12));
+    await t.renderOnce();
+    expect(hintOf(t)).toBe(`${PICKER_HINT} · 1/12`);
+    t.popup.move(1);
+    t.popup.move(1);
+    await t.renderOnce();
+    expect(hintOf(t)).toBe(`${PICKER_HINT} · 3/12`);
+    t.popup.move(-1);
+    t.popup.move(-1);
+    t.popup.move(-1);
+    await t.renderOnce();
+    expect(hintOf(t)).toBe(`${PICKER_HINT} · 12/12`);
+  });
+
+  test("a list that fits has no counter", async () => {
+    const t = await setup();
+    t.popup.showAll(many(MAX_ROWS));
+    await t.renderOnce();
+    expect(hintOf(t)).toBe(PICKER_HINT);
+  });
+
+  test("show() after showAll() has the mention hint again", async () => {
+    const t = await setup();
+    t.popup.showAll(many(12));
+    t.popup.show(paths("src/a.ts"));
+    await t.renderOnce();
+    expect(hintOf(t)).toBe(POPUP_HINT);
+  });
+
+  test("labelWidth is what a row can draw after the indent", async () => {
+    const t = await setup();
+    expect(t.popup.labelWidth).toBe(38);
+  });
+
+  test("a wide label is clipped by cells, not code units", async () => {
+    const t = await setup();
+    t.popup.showAll([{ value: "a", label: "日".repeat(30), plain: true }]);
+    await t.renderOnce();
+    const row = t.rows().find((r) => r.includes("日"));
+    expect(row).toContain("日".repeat(19));
+    expect(row).not.toContain("日".repeat(20));
   });
 });

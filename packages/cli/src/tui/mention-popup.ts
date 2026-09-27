@@ -3,12 +3,16 @@ import {
   type CliRenderer,
   type TextRenderable,
 } from "@opentui/core";
+import { clipToWidth } from "./display-width.js";
 import { text } from "./text.js";
 import { styled, theme } from "./theme.js";
 
 /** Rows shown at once; the search already caps candidates to this. */
 export const MAX_ROWS = 8;
 export const POPUP_HINT = "↕ select · Tab/Enter accept · Esc close";
+/** The session picker's hint: Tab does nothing there, and Enter resumes. A
+ * list longer than MAX_ROWS adds ` · <selected>/<total>`. */
+export const PICKER_HINT = "↕ select · Enter resume · Esc cancel";
 const INDENT = "  ";
 /** The hint is 39 cells wide, so a 2-cell indent would clip its last
  * character on an 80/40-column terminal; one cell keeps it whole. */
@@ -33,6 +37,9 @@ export interface PopupRow {
 export class MentionPopup {
   private readonly box: BoxRenderable;
   private readonly rows: TextRenderable[] = [];
+  private readonly hint: TextRenderable;
+  /** True for a showAll() list: the picker's hint and position counter. */
+  private all = false;
   private candidates: PopupRow[] = [];
   private index = 0;
   /** The candidate drawn in the first row. Stays 0 unless a showAll()
@@ -58,17 +65,21 @@ export class MentionPopup {
       this.rows.push(row);
       this.box.add(row);
     }
-    this.box.add(
-      text(renderer, {
-        content: styled(theme.muted(`${HINT_INDENT}${POPUP_HINT}`)),
-        wrapMode: "none",
-      }),
-    );
+    this.hint = text(renderer, {
+      content: styled(theme.muted(`${HINT_INDENT}${POPUP_HINT}`)),
+      wrapMode: "none",
+    });
+    this.box.add(this.hint);
     parent.add(this.box);
   }
 
   get visible(): boolean {
     return this.box.visible;
+  }
+
+  /** Cells a row's label can take: the terminal width minus the indent. */
+  get labelWidth(): number {
+    return Math.max(1, this.renderer.terminalWidth - INDENT.length);
   }
 
   get selected(): string | undefined {
@@ -77,12 +88,14 @@ export class MentionPopup {
 
   /** Replaces the list and selects the first row. Empty list hides. */
   show(candidates: PopupRow[]): void {
+    this.all = false;
     this.open(candidates.slice(0, MAX_ROWS));
   }
 
   /** Like show(), but keeps every row and scrolls: the visible window of
    * MAX_ROWS follows the selection. */
   showAll(rows: PopupRow[]): void {
+    this.all = true;
     this.open([...rows]);
   }
 
@@ -119,8 +132,18 @@ export class MentionPopup {
     this.box.visible = false;
   }
 
+  private hintText(): string {
+    if (!this.all) return POPUP_HINT;
+    const n = this.candidates.length;
+    // Scrolling is otherwise silent: nothing says more rows exist.
+    return n > MAX_ROWS
+      ? `${PICKER_HINT} · ${this.index + 1}/${n}`
+      : PICKER_HINT;
+  }
+
   private paint(): void {
-    const width = Math.max(1, this.renderer.terminalWidth - INDENT.length);
+    const width = this.labelWidth;
+    this.hint.content = styled(theme.muted(`${HINT_INDENT}${this.hintText()}`));
     this.rows.forEach((row, i) => {
       const item = this.candidates[this.top + i];
       if (item === undefined) {
@@ -128,7 +151,7 @@ export class MentionPopup {
         return;
       }
       row.visible = true;
-      const text = item.label.slice(0, width);
+      const text = clipToWidth(item.label, width);
       if (this.top + i === this.index) {
         row.content = styled(theme.selected(`${INDENT}${text}`));
         return;

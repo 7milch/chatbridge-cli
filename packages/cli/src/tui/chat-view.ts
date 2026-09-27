@@ -27,6 +27,7 @@ import {
   type Message,
   type Role,
 } from "./chat-model.js";
+import { displayWidth, fitToWidth, padToWidth } from "./display-width.js";
 import { MAX_ROWS, MentionPopup, type PopupRow } from "./mention-popup.js";
 import type { ResolvedSpinner } from "./spinner.js";
 import { adoptTerminalCursor, markdown, text, textarea } from "./text.js";
@@ -140,14 +141,36 @@ function commandRows(commands: readonly CommandInfo[]): PopupRow[] {
   }));
 }
 
+const SESSION_GAP = "   ";
+
 /** One picker row per saved session: `MM-DD HH:mm   <title>   N turns`,
- * titles padded to the longest so the turn counts line up. */
-export function sessionRows(sessions: readonly SessionSummary[]): PopupRow[] {
+ * titles padded to the widest by display cells so the turn counts line up.
+ * `width` is the cells a row can draw: a title that would push the turn
+ * count past it is shortened, since a Japanese title of the full 60 code
+ * points takes about 120 cells. */
+export function sessionRows(
+  sessions: readonly SessionSummary[],
+  width: number,
+): PopupRow[] {
   if (sessions.length === 0) return [];
-  const widest = Math.max(...sessions.map((s) => s.title.length));
-  return sessions.map((s) => ({
-    value: s.id,
-    label: `${formatSessionTime(s.updatedAt)}   ${s.title.padEnd(widest)}   ${s.turns === 1 ? "1 turn" : `${s.turns} turns`}`,
+  const rows = sessions.map((s) => ({
+    id: s.id,
+    time: formatSessionTime(s.updatedAt),
+    title: s.title,
+    turns: s.turns === 1 ? "1 turn" : `${s.turns} turns`,
+  }));
+  const fixed = Math.max(
+    ...rows.map(
+      (r) =>
+        displayWidth(r.time) + 2 * SESSION_GAP.length + displayWidth(r.turns),
+    ),
+  );
+  const budget = Math.max(1, width - fixed);
+  const titles = rows.map((r) => fitToWidth(r.title, budget));
+  const widest = Math.max(...titles.map(displayWidth));
+  return rows.map((r, i) => ({
+    value: r.id,
+    label: `${r.time}${SESSION_GAP}${padToWidth(titles[i] ?? "", widest)}${SESSION_GAP}${r.turns}`,
     plain: true,
   }));
 }
@@ -245,6 +268,9 @@ export class ChatView {
   /** True while the popup shows the session picker rather than mentions or
    * commands. */
   private picking = false;
+  /** The input's text when the picker opened; a paste under the picker is
+   * undone back to it. */
+  private pickerInput = "";
   /** Shell entries already drawn; their output and footer are refreshed
    * from the model on every update (live output, held → sent). */
   private readonly shellEntries: ShellEntry[] = [];
@@ -437,6 +463,13 @@ export class ChatView {
     this.onSelect = (selection) => this.onSelection(selection);
     (renderer as unknown as SelectionSource).on("selection", this.onSelect);
     this.input.onContentChange = () => {
+      // The picker is modal, but a bracketed paste is no keypress and
+      // reaches the textarea anyway; a pasted `!` would flip shell mode
+      // under the picker.
+      if (this.picking) {
+        this.restorePickerInput();
+        return;
+      }
       this.detectShellMode();
       this.fitInput();
       this.refreshPopup();
@@ -548,7 +581,8 @@ export class ChatView {
     const sessions = this.model.picker;
     if (sessions !== undefined && !this.picking) {
       this.picking = true;
-      this.popup.showAll(sessionRows(sessions));
+      this.pickerInput = this.input.plainText;
+      this.popup.showAll(sessionRows(sessions, this.popup.labelWidth));
     } else if (sessions === undefined && this.picking) {
       this.picking = false;
       this.popup.hide();
@@ -1019,6 +1053,15 @@ export class ChatView {
         this.model.cancelResume();
         break;
     }
+  }
+
+  /** Undoes whatever arrived in the input while the picker is open. The
+   * clear/insert schedules further content changes; those see the restored
+   * text and stop here. */
+  private restorePickerInput(): void {
+    if (this.input.plainText === this.pickerInput) return;
+    this.input.clear();
+    if (this.pickerInput) this.input.insertText(this.pickerInput);
   }
 
   /** `!` typed or pasted into an empty input switches to shell mode; the
