@@ -87,10 +87,14 @@ interface StoredMessage {
     exitCode: number | null;
     interrupted: boolean;
     droppedBytes: number;
+    durationMs: number;
     signal?: string;
   };
 }
 ```
+
+`exitCode` is `null` on disk where the TUI holds `undefined`: a command that
+was killed or stopped has none.
 
 Not stored: the partial reply of a turn in flight, the queue, pending
 attachments, `/help` output, the content of attached files (path and size only,
@@ -189,12 +193,15 @@ Both the TUI `ChatModel` and the VSCode `SessionController` follow this table.
   does not read `config.json`. It works undeclared; a manifest that declares it
   shows it in the settings UI.
 - When off, nothing is saved or pruned, existing files are left alone, and
-  `/resume` answers `Session saving is turned off.`
+  `/resume` answers `Session saving is turned off.` An explicit logout still
+  deletes them: it is the one way to remove what an earlier run saved.
 
 ### 4. `/resume`
 
 `resume` joins `BUILTIN_COMMAND_NAMES` (provider) and `SLASH_COMMANDS` (core)
-with the description `Go back to a saved session`. It takes no arguments.
+with the description `Go back to a saved session`. It takes no arguments. It
+sits after `reopen` in the table: the popups complete the first match in table
+order, and `/re` followed by Tab must keep completing to `/reopen`.
 
 Flow:
 
@@ -221,14 +228,19 @@ When `/resume` does nothing:
 
 | Situation | Response |
 |---|---|
-| A turn, a shell command, a login or a reopen is in flight, or the queue is not empty | `Wait for the current step to finish before /resume.` |
+| A turn, a shell command, a login, a reopen or the first open is in flight, or the queue is not empty | `Wait for the current step to finish before /resume.` |
 | Saving is off | `Session saving is turned off.` |
 | No saved session | `No saved sessions.` |
 | The chosen file turned unreadable | `That session could not be loaded.` The current chat continues. |
 | The browser fails to open after the transcript was swapped | The transcript stays, the error shows as for a failed `/reopen`, the handle is kept so that `/reopen` after a login tries the restore again |
 
 `/new` abandons a turn in flight in the TUI; `/resume` refuses instead, because
-a queued message would otherwise be sent into a different conversation.
+a queued message would otherwise be sent into a different conversation. After
+a fatal error nothing is in flight, so `/resume` works there and is, like
+`/new`, a way out.
+
+The sentences above are status-line notices in the TUI and notifications in
+VSCode. They are not history entries, so they are never saved.
 
 ### 5. TUI picker
 
@@ -281,6 +293,7 @@ a queued message would otherwise be sent into a different conversation.
 | | Change |
 |---|---|
 | Required | A provider that defines its own `/resume` command must rename it: `defineProvider` now rejects the name. |
+| Required | A banner, footer or document that says conversations are not stored is no longer true and must be reworded. The templates said so until now. |
 | Optional | Declare the `<id>.resume` command and the `<id>.saveSessions` setting in the extension manifest. |
 | Unchanged | The `Provider` type, `createCli` options, `createExtension` options. |
 
