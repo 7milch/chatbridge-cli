@@ -811,6 +811,10 @@ export class ChatModel {
           this.onChange();
           return true;
         }
+        // Before the delete is awaited: a turn or a command that settles
+        // meanwhile would otherwise save the logged-out account's history
+        // as a new file, written after the delete.
+        this.beginSession();
         try {
           await this.recorder?.clear();
         } catch {
@@ -822,8 +826,8 @@ export class ChatModel {
           });
           this.onChange();
         }
-        // Before the reset below persists: what is on screen belongs to
-        // the account that was logged out, and must not be saved again.
+        // Again, before the reset below persists: an entry pushed while the
+        // delete ran belongs to the account that was logged out too.
         this.beginSession();
         // The handle belongs to the account that was just logged out of; a
         // new login may not even be able to see that conversation.
@@ -1019,11 +1023,41 @@ export class ChatModel {
     });
   }
 
+  /** Waits for a stopped shell command to settle, capped at the close
+   * timeout. Never rejects. runShell was already awaiting `done`, and
+   * reactions run in the order they were registered, so its stale path has
+   * run by the time this resolves. */
+  private async settleShell(shell: RunningCommand | undefined): Promise<void> {
+    if (shell === undefined) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      shell.done.then(
+        () => {},
+        () => {},
+      ),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, this.closeTimeoutMs);
+      }),
+    ]);
+    clearTimeout(timer);
+  }
+
   private async runReset(separator: string, forget: boolean): Promise<void> {
+    const shell = this.running;
     this.stopShell();
     // Whatever the reason for the reset, the idle close is behind us.
     this.idleClosed = false;
+    this.status = "resetting";
+    this.generation++;
+    // The interrupted turn's partial belongs to a conversation that is about
+    // to be replaced; its own stale guard will not run until it settles.
+    this.partial = undefined;
+    this.onChange();
     if (forget) {
+      // The stopped command's entry gets its interrupted result in the file
+      // it belongs to: its stale path saves it, as long as that is still
+      // the current session.
+      await this.settleShell(shell);
       // The session being left gets its last save under its own handle;
       // what follows is saved to a new file.
       this.persist();
@@ -1032,12 +1066,6 @@ export class ChatModel {
       // new chat rather than the conversation the user just walked away from.
       this.conversationHandle = undefined;
     }
-    this.status = "resetting";
-    this.generation++;
-    // The interrupted turn's partial belongs to a conversation that is about
-    // to be replaced; its own stale guard will not run until it settles.
-    this.partial = undefined;
-    this.onChange();
     // What the open below is given. A reset with nothing to restore has
     // nothing to report either, whatever the new session claims.
     const requested = this.conversationHandle;

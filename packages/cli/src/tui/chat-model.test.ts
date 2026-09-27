@@ -2648,7 +2648,13 @@ describe("ChatModel conversation handle", () => {
  * `at(i)` is the i-th file in creation order. */
 function memoryRecorder(opts: { enabled?: () => boolean } = {}) {
   const files = new Map<string, SessionRecord>();
-  const state = { failSave: false, failClear: false, cleared: 0 };
+  const state = {
+    failSave: false,
+    failClear: false,
+    cleared: 0,
+    /** When set, clear() waits for it before deleting anything. */
+    clearGate: undefined as Promise<void> | undefined,
+  };
   let failures = 0;
   let next = 1;
   const store: SessionStoreLike = {
@@ -2670,6 +2676,7 @@ function memoryRecorder(opts: { enabled?: () => boolean } = {}) {
     async prune() {},
     async clear() {
       state.cleared++;
+      if (state.clearGate) await state.clearGate;
       if (state.failClear) throw new Error("permission denied");
       files.clear();
     },
@@ -2827,6 +2834,99 @@ describe("ChatModel session saving", () => {
     });
   });
 
+  test("/new during a shell command saves its interrupted result to the old file", async () => {
+    const a = fakeSession();
+    const b = fakeSession();
+    const r = memoryRecorder();
+    const runner = fakeRunner();
+    const model = await modelWith(a.session, {
+      openSession: async () => b.session,
+      recorder: r.recorder,
+      closeTimeoutMs: 20,
+      runCommand: runner.runCommand,
+    });
+    void model.runShell("sleep 9");
+    runner.emit("half\n");
+    await model.submit("/new");
+    void model.submit("two");
+    await tick();
+    nth(b.replies, 0).resolve("2");
+    await tick();
+    await r.recorder.flush();
+    expect(r.files.size).toBe(2);
+    expect(r.at(0)?.messages).toEqual([
+      {
+        role: "shell",
+        text: "sleep 9",
+        shell: {
+          command: "sleep 9",
+          output: "half\n",
+          droppedBytes: 0,
+          exitCode: null,
+          interrupted: true,
+          durationMs: 1,
+        },
+      },
+    ]);
+    expect(r.at(1)?.messages).toEqual([
+      { role: "user", text: "two" },
+      { role: "assistant", text: "2" },
+    ]);
+  });
+
+  test("/new waits no longer than the close cap for a command that never ends", async () => {
+    const a = fakeSession();
+    const b = fakeSession();
+    const r = memoryRecorder();
+    const model = await modelWith(a.session, {
+      openSession: async () => b.session,
+      recorder: r.recorder,
+      closeTimeoutMs: 20,
+      runCommand: (): RunningCommand => ({
+        done: new Promise<ShellResult>(() => {}),
+        stop() {},
+      }),
+    });
+    void model.runShell("hang");
+    await model.submit("/new");
+    expect(model.status).toBe("idle");
+    await r.recorder.flush();
+    // Saved as it stood when the wait gave up.
+    expect(r.at(0)?.messages.map((m) => m.role)).toEqual(["shell"]);
+  });
+
+  test("/reopen during a shell command saves its interrupted result in the same file", async () => {
+    const a = fakeSession();
+    const b = fakeSession();
+    const r = memoryRecorder();
+    const runner = fakeRunner();
+    const model = await modelWith(a.session, {
+      openSession: async () => b.session,
+      recorder: r.recorder,
+      closeTimeoutMs: 20,
+      runCommand: runner.runCommand,
+    });
+    void model.runShell("sleep 9");
+    await model.submit("/reopen");
+    await r.recorder.flush();
+    expect(r.files.size).toBe(1);
+    expect(r.at(0)?.messages).toEqual([
+      {
+        role: "shell",
+        text: "sleep 9",
+        shell: {
+          command: "sleep 9",
+          output: "",
+          droppedBytes: 0,
+          exitCode: null,
+          interrupted: true,
+          durationMs: 1,
+        },
+      },
+      { role: "separator", text: "reopened" },
+    ]);
+  });
+
   test("/new starts a second file and leaves the first as it was", async () => {
     const a = fakeSession();
     const b = fakeSession();
@@ -2880,6 +2980,56 @@ describe("ChatModel session saving", () => {
     nth(a.replies, 0).resolve("1");
     await tick();
     await model.submit("/logout");
+    await r.recorder.flush();
+    expect(r.state.cleared).toBe(1);
+    expect(r.files.size).toBe(0);
+  });
+
+  test("/logout: a reply that lands while the sessions are deleted is not saved back", async () => {
+    const a = fakeSession();
+    const b = fakeSession();
+    const r = memoryRecorder();
+    const gate = deferred<void>();
+    r.state.clearGate = gate.promise;
+    const model = await modelWith(a.session, {
+      openSession: async () => b.session,
+      recorder: r.recorder,
+      closeTimeoutMs: 20,
+    });
+    void model.submit("one");
+    await tick();
+    const logout = model.submit("/logout");
+    await tick();
+    expect(r.state.cleared).toBe(1);
+    nth(a.replies, 0).resolve("1");
+    await tick();
+    gate.resolve();
+    await logout;
+    await r.recorder.flush();
+    expect(r.files.size).toBe(0);
+  });
+
+  test("/logout: a reply that lands while the auth state is deleted is deleted too", async () => {
+    const a = fakeSession();
+    const b = fakeSession();
+    const r = memoryRecorder();
+    const authGate = deferred<void>();
+    const model = await modelWith(a.session, {
+      openSession: async () => b.session,
+      recorder: r.recorder,
+      closeTimeoutMs: 20,
+      clearAuth: () => authGate.promise,
+    });
+    void model.submit("one");
+    await tick();
+    const logout = model.submit("/logout");
+    await tick();
+    nth(a.replies, 0).resolve("1");
+    await tick();
+    // The turn settled into the session that is about to be deleted.
+    expect(r.files.size).toBe(1);
+    authGate.resolve();
+    await logout;
     await r.recorder.flush();
     expect(r.state.cleared).toBe(1);
     expect(r.files.size).toBe(0);
