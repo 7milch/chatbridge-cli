@@ -205,4 +205,50 @@ describe("loadConfig", () => {
     await expect(p).rejects.toBeInstanceOf(ChatBridgeError);
     await expect(p).rejects.toThrow(message);
   });
+
+  test("reads sessions.enabled", async () => {
+    writeFileSync(setup(), JSON.stringify({ sessions: { enabled: false } }));
+    const cfg = await loadConfig({ configDir: "test-cli", baseDir });
+    expect(cfg.sessions).toEqual({ enabled: false });
+  });
+
+  test("an empty sessions object is accepted", async () => {
+    writeFileSync(setup(), JSON.stringify({ sessions: {} }));
+    const cfg = await loadConfig({ configDir: "test-cli", baseDir });
+    expect(cfg.sessions).toEqual({});
+  });
+
+  test.each([
+    [
+      "sessions that is not an object",
+      { sessions: true },
+      '"sessions" must be an object',
+    ],
+    [
+      "sessions that is an array",
+      { sessions: [] },
+      '"sessions" must be an object',
+    ],
+    [
+      "a string enabled",
+      { sessions: { enabled: "no" } },
+      '"sessions.enabled" must be a boolean',
+    ],
+    [
+      "a numeric enabled",
+      { sessions: { enabled: 0 } },
+      '"sessions.enabled" must be a boolean',
+    ],
+  ])("%s is INVALID_CONFIG", async (_name, doc, why) => {
+    writeFileSync(setup(), JSON.stringify(doc));
+    let caught: unknown;
+    try {
+      await loadConfig({ configDir: "test-cli", baseDir });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ChatBridgeError);
+    expect((caught as ChatBridgeError).code).toBe("INVALID_CONFIG");
+    expect((caught as ChatBridgeError).message).toContain(why);
+  });
 });

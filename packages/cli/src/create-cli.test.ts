@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { type Provider, defineProvider } from "@chatbridge/core";
+import { type Provider, SessionStore, defineProvider } from "@chatbridge/core";
 import { createCli } from "./create-cli.js";
 
 const fixtures = resolve(import.meta.dir, "__fixtures__");
@@ -374,5 +374,41 @@ describe("opening knobs", () => {
     });
     expect(await cli.run(["bun", "cli", "-p", "hi"])).toBe(1);
     expect(stderrChunks.join("")).toContain("config.json");
+  });
+});
+
+describe("auth logout", () => {
+  test("deletes the provider's saved sessions", async () => {
+    const dir = setup();
+    const store = new SessionStore({
+      configDir: "test-cli",
+      providerName: "stub",
+      baseDir: dir,
+    });
+    await store.save({
+      version: 1,
+      id: "00000000-0000-4000-8000-000000000001",
+      provider: "stub",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      messages: [{ role: "user", text: "hi" }],
+    });
+    const cli = createCli({
+      name: "test-cli",
+      provider: stubProvider(),
+      baseDir: dir,
+    });
+    expect(await cli.run(["bun", "cli", "auth", "logout"])).toBe(0);
+    expect(await store.list()).toEqual([]);
+  });
+
+  test("succeeds when there is nothing to delete", async () => {
+    const dir = setup();
+    const cli = createCli({
+      name: "test-cli",
+      provider: stubProvider(),
+      baseDir: dir,
+    });
+    expect(await cli.run(["bun", "cli", "auth", "logout"])).toBe(0);
   });
 });

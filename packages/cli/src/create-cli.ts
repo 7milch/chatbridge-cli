@@ -4,6 +4,7 @@ import {
   type Provider,
   ProviderLoadError,
   createAuthStore,
+  createSessionStore,
   runLogin,
   runOneShot,
 } from "@chatbridge/core";
@@ -216,7 +217,15 @@ export function createCli(opts: CreateCliOptions) {
         }
         if (sub === "logout") {
           await authStore.clear();
-          progress("✓ Auth state deleted");
+          // The saved sessions carry conversation handles of the account
+          // that is being logged out of. Deleted whether or not saving is
+          // turned on: logging out is the one explicit way to remove them.
+          await createSessionStore({
+            configDir,
+            providerName: provider.name,
+            baseDir: opts.baseDir,
+          }).clear();
+          progress("✓ Auth state and saved sessions deleted");
           return 0;
         }
         console.log(
