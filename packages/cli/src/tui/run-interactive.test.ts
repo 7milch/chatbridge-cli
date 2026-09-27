@@ -1,8 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { AuthRequiredError, LoginAbortedError } from "@chatbridge/core";
+import {
+  AuthRequiredError,
+  LoginAbortedError,
+  SAVE_FAILED_MESSAGE,
+} from "@chatbridge/core";
 import type { Page, Provider } from "@chatbridge/provider";
 import type { AuthStore } from "@chatbridge/runtime";
 import { createTestRenderer } from "@opentui/core/testing";
+import { interactiveRecorder } from "../interactive-recorder.js";
 import { FileIndex } from "../mentions/file-index.js";
 import type { ShellResult } from "../shell/run-command.js";
 import { ChatView, LOGIN_STATUS } from "./chat-view.js";
@@ -451,6 +456,37 @@ describe("runInteractive", () => {
       frame = await waitFor(t, "Crunching\u2026");
       expect(frame).toContain("@@ Crunching\u2026");
       expect(frame).not.toContain("Thinking\u2026");
+    } finally {
+      t.renderer.destroy();
+    }
+    await run;
+  });
+
+  test("a failed save puts its notice on the status line", async () => {
+    const t = await createTestRenderer({ width: 80, height: 20 });
+    // The wiring create-cli.ts uses, over a store whose saves all fail.
+    const wiring = interactiveRecorder({
+      store: {
+        save: () => Promise.reject(new Error("disk full")),
+        load: async () => undefined,
+        list: async () => [],
+        prune: async () => {},
+        clear: async () => {},
+      },
+      provider: "fake",
+    });
+    const run = runInteractive({
+      ...sessionOpts().opts,
+      ...wiring,
+      createRenderer: async () => t.renderer,
+      index: FileIndex.fromPaths([]),
+    });
+    try {
+      await waitFor(t, "Type a message");
+      await t.mockInput.typeText("hi");
+      t.mockInput.pressEnter();
+      const frame = await waitFor(t, SAVE_FAILED_MESSAGE);
+      expect(frame).toContain(SAVE_FAILED_MESSAGE);
     } finally {
       t.renderer.destroy();
     }

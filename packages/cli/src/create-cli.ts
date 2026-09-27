@@ -3,8 +3,6 @@ import {
   ChatBridgeError,
   type Provider,
   ProviderLoadError,
-  SAVE_FAILED_MESSAGE,
-  SessionRecorder,
   createAuthStore,
   createSessionStore,
   runLogin,
@@ -13,6 +11,7 @@ import {
 import { type CliConfig, configPath, loadConfig } from "./config.js";
 import { describeError, exitCodeFor } from "./exit-codes.js";
 import { resolveIdleOptions } from "./idle-options.js";
+import { interactiveRecorder } from "./interactive-recorder.js";
 import { resolveOpenOptions } from "./open-options.js";
 import { resolveProvider } from "./resolve-provider.js";
 import { type ShellConfig, resolveShellConfig } from "./shell/shell-config.js";
@@ -278,8 +277,7 @@ export function createCli(opts: CreateCliOptions) {
         });
         // Built even when saving is off, so `/resume` can say so and
         // `/logout` can still delete what an earlier run saved.
-        let notifySaveFailed: () => void = () => {};
-        const recorder = new SessionRecorder({
+        const { recorder, onNotifier } = interactiveRecorder({
           store: createSessionStore({
             configDir,
             providerName: provider.name,
@@ -287,7 +285,6 @@ export function createCli(opts: CreateCliOptions) {
           }),
           provider: provider.name,
           enabled: () => config.sessions?.enabled !== false,
-          onSaveFailed: () => notifySaveFailed(),
         });
         // Loaded lazily so one-shot and auth never evaluate @opentui/core.
         const { runInteractive } = await import("./tui/run-interactive.js");
@@ -305,9 +302,7 @@ export function createCli(opts: CreateCliOptions) {
           idle,
           onProgress: progress,
           recorder,
-          onNotifier: (notify) => {
-            notifySaveFailed = () => notify(SAVE_FAILED_MESSAGE);
-          },
+          onNotifier,
         });
         return result.fatal === undefined ? 0 : reportError(result.fatal);
       }

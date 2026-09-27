@@ -3331,6 +3331,8 @@ describe("ChatModel resume", () => {
     await model.openResumePicker();
     expect(model.picker).toBeUndefined();
     expect(model.notice).toBe(RESUME_BUSY_MESSAGE);
+    // Cleared, or the assertion below would only see the picker's notice.
+    model.notice = undefined;
     await model.resume(OLD);
     expect(model.notice).toBe(RESUME_BUSY_MESSAGE);
   }
