@@ -6,17 +6,24 @@ import {
   type CommandInfo,
   InvalidStateError,
   LoginAbortedError,
+  NO_SESSIONS_MESSAGE,
   type ParsedSlash,
   type ProviderCommandResult,
+  RESUMED_SEPARATOR,
+  RESUME_BUSY_MESSAGE,
   ResponseTimeoutError,
   SESSIONS_NOT_DELETED_MESSAGE,
+  SESSIONS_OFF_MESSAGE,
+  SESSION_UNREADABLE_MESSAGE,
   type SendOptions,
   type SessionRecorder,
+  type SessionSummary,
   UrlHookError,
   closeOrKill,
   commandNamesOf,
   helpText,
   parseSlashCommand,
+  resumedSeparator,
   unknownCommandMessage,
   withRestoreNote,
 } from "@chatbridge/core";
@@ -40,7 +47,7 @@ import {
   DEFAULT_SHELL_CONFIG,
   type ShellConfig,
 } from "../shell/shell-config.js";
-import { toStored } from "./stored-messages.js";
+import { fromStored, toStored } from "./stored-messages.js";
 
 /** What the model needs from a ChatSession; lets tests inject a fake. */
 export interface ChatSessionLike {
@@ -195,6 +202,13 @@ export class ChatModel {
    * repaint of the one it is already showing — even when the text is the
    * same, which selecting twice makes routine. */
   noticeSeq = 0;
+  /** The saved sessions the view is asked to show as a picker; undefined
+   * when no picker is open. Set by openResumePicker, cleared by resume
+   * and cancelResume. */
+  picker: SessionSummary[] | undefined;
+  /** Bumped whenever `messages` was replaced rather than appended to, so
+   * the view knows its rendered rows are stale. */
+  historyEpoch = 0;
   /** Called after every state change. */
   onChange: () => void = () => {};
   /** Resolves when the initial open settled (idle or dead). Never rejects,
@@ -999,6 +1013,92 @@ export class ChatModel {
     this.loginAbort?.abort();
   }
 
+  /** Whether a `/resume` may replace the chat now. `idle` rules out a turn,
+   * a shell command, a login, a reset and the first open; `dead` is allowed
+   * because resuming is a way out of it, like `/new`. A queued entry would
+   * otherwise be sent into a conversation it was not written for. */
+  private get canResume(): boolean {
+    return (
+      (this.status === "idle" || this.status === "dead") &&
+      this.queue.length === 0
+    );
+  }
+
+  /** `/resume`: opens the picker, or puts on the status line why not. */
+  async openResumePicker(): Promise<void> {
+    const recorder = this.recorder;
+    if (recorder === undefined || !recorder.enabled) {
+      this.notify(SESSIONS_OFF_MESSAGE);
+      return;
+    }
+    if (!this.canResume) {
+      this.notify(RESUME_BUSY_MESSAGE);
+      return;
+    }
+    // A store that cannot be read has nothing to offer; the chat goes on.
+    const list = await recorder.list().catch(() => []);
+    // The listing waits for pending saves, and the model may have moved on
+    // meanwhile.
+    if (!this.canResume) {
+      this.notify(RESUME_BUSY_MESSAGE);
+      return;
+    }
+    if (list.length === 0) {
+      this.notify(NO_SESSIONS_MESSAGE);
+      return;
+    }
+    this.picker = list;
+    this.onChange();
+  }
+
+  /** Esc in the picker. */
+  cancelResume(): void {
+    this.picker = undefined;
+    this.onChange();
+  }
+
+  /** Enter in the picker: replaces the chat with the saved session `id`
+   * and reopens the browser on its conversation. */
+  async resume(id: string): Promise<void> {
+    this.picker = undefined;
+    this.onChange();
+    const recorder = this.recorder;
+    if (!this.canResume) {
+      this.notify(RESUME_BUSY_MESSAGE);
+      return;
+    }
+    // Only reachable through a picker, which needs a recorder; the guard
+    // keeps a direct call honest.
+    if (recorder === undefined) {
+      this.notify(SESSIONS_OFF_MESSAGE);
+      return;
+    }
+    const record = await recorder.load(id).catch(() => undefined);
+    if (record === undefined) {
+      // Nothing has been touched yet, so the current chat simply goes on.
+      this.notify(SESSION_UNREADABLE_MESSAGE);
+      return;
+    }
+    if (!this.canResume) {
+      this.notify(RESUME_BUSY_MESSAGE);
+      return;
+    }
+    // The session being left gets its final state before it stops being
+    // the current one.
+    this.persist();
+    // From here to the reset, synchronous: nothing may settle into the
+    // history between the swap and the adoption.
+    this.messages.length = 0;
+    this.messages.push(...fromStored(record.messages));
+    this.sessionStart = 0;
+    this.historyEpoch++;
+    // Results held for the chat that was just left belong to it.
+    this.heldResults.length = 0;
+    recorder.adopt(record);
+    this.conversationHandle = record.conversation;
+    await this.reset(RESUMED_SEPARATOR, { resumed: true });
+  }
+
   /** The in-flight reset, or undefined when none is running. Teardown awaits
    * it so the session it opens is not leaked. */
   get pendingReset(): Promise<void> | undefined {
@@ -1011,10 +1111,11 @@ export class ChatModel {
    * is neither sent nor held. Ignored while a reset is already running. On
    * failure the model is `dead` with the reopen error as `fatal`. The new
    * session returns to the remembered conversation unless `forget` is set,
-   * which drops it and starts a new chat. */
+   * which drops it and starts a new chat. `resumed` only words the
+   * separator for a `/resume`, which has already swapped the history. */
   reset(
     separator: string = SEPARATOR_TEXT,
-    opts: { forget?: boolean } = {},
+    opts: { forget?: boolean; resumed?: boolean } = {},
   ): Promise<void> {
     if (this.status === "resetting") return Promise.resolve();
     // A login holds a browser window the user is no longer waiting on; the
@@ -1022,7 +1123,11 @@ export class ChatModel {
     this.cancelLogin();
     // runReset sets the status synchronously, so the guard above rejects a
     // second Ctrl+R in the same tick.
-    const run = this.runReset(separator, opts.forget === true);
+    const run = this.runReset(
+      separator,
+      opts.forget === true,
+      opts.resumed === true,
+    );
     this.pending = run;
     return run.finally(() => {
       if (this.pending === run) this.pending = undefined;
@@ -1048,7 +1153,11 @@ export class ChatModel {
     clearTimeout(timer);
   }
 
-  private async runReset(separator: string, forget: boolean): Promise<void> {
+  private async runReset(
+    separator: string,
+    forget: boolean,
+    resumed: boolean,
+  ): Promise<void> {
     const shell = this.running;
     this.stopShell();
     // Whatever the reason for the reset, the idle close is behind us.
@@ -1092,7 +1201,9 @@ export class ChatModel {
       if (restored === false) this.conversationHandle = undefined;
       this.messages.push({
         role: "separator",
-        text: withRestoreNote(separator, restored),
+        text: resumed
+          ? resumedSeparator(restored)
+          : withRestoreNote(separator, restored),
       });
       // The `new chat` separator ends nothing that was saved and starts
       // nothing either: the new file begins with the first prompt.

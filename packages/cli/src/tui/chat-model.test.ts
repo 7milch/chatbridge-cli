@@ -5,10 +5,14 @@ import {
   BrowserUnavailableError,
   LoginAbortedError,
   NOT_RESTORED_NOTE,
+  NO_SESSIONS_MESSAGE,
   type ProviderCommandResult,
   RESTORED_NOTE,
+  RESUME_BUSY_MESSAGE,
   ResponseTimeoutError,
   SESSIONS_NOT_DELETED_MESSAGE,
+  SESSIONS_OFF_MESSAGE,
+  SESSION_UNREADABLE_MESSAGE,
   type SessionRecord,
   SessionRecorder,
   type SessionStoreLike,
@@ -3152,5 +3156,336 @@ describe("ChatModel session saving", () => {
     nth(a.replies, 0).resolve("1");
     await tick();
     expect(model.status).toBe("idle");
+  });
+});
+
+describe("ChatModel resume", () => {
+  const OLD = "11111111-1111-4111-8111-111111111111";
+
+  function saved(over: Partial<SessionRecord> = {}): SessionRecord {
+    return {
+      version: 1,
+      id: OLD,
+      provider: "dummy-chat",
+      createdAt: "2026-09-20T00:00:00.000Z",
+      updatedAt: "2026-09-20T00:10:00.000Z",
+      conversation: "H-old",
+      messages: [
+        { role: "user", text: "old question" },
+        { role: "assistant", text: "old answer", format: "markdown" },
+      ],
+      ...over,
+    };
+  }
+
+  /** A model on session `a`, whose reopens are served by `b` and record
+   * the handle they were given. */
+  async function setup(
+    opts: { enabled?: () => boolean; record?: SessionRecord | null } = {},
+  ) {
+    const a = fakeSession("a");
+    const b = fakeSession("b");
+    const r = memoryRecorder(
+      opts.enabled === undefined ? {} : { enabled: opts.enabled },
+    );
+    if (opts.record !== null) {
+      const record = opts.record ?? saved();
+      r.files.set(record.id, record);
+    }
+    const openedWith: Array<string | undefined> = [];
+    const model = await modelWith(a.session, {
+      openSession: async (_report, _onIdle, conversation) => {
+        openedWith.push(conversation);
+        return b.session;
+      },
+      recorder: r.recorder,
+      closeTimeoutMs: 20,
+    });
+    return { a, b, r, model, openedWith };
+  }
+
+  test("openResumePicker lists the saved sessions", async () => {
+    const t = await setup();
+    await t.model.openResumePicker();
+    expect(t.model.picker).toEqual([
+      {
+        id: OLD,
+        updatedAt: "2026-09-20T00:10:00.000Z",
+        title: "old question",
+        turns: 1,
+      },
+    ]);
+  });
+
+  test("the picker leaves the current session out", async () => {
+    const t = await setup();
+    void t.model.submit("now");
+    await tick();
+    nth(t.a.replies, 0).resolve("ok");
+    await tick();
+    await t.model.openResumePicker();
+    expect(t.model.picker?.map((s) => s.id)).toEqual([OLD]);
+  });
+
+  test("cancelResume closes the picker and changes nothing else", async () => {
+    const t = await setup();
+    await t.model.openResumePicker();
+    t.model.cancelResume();
+    expect(t.model.picker).toBeUndefined();
+    expect(t.model.messages).toEqual([]);
+    expect(t.a.state.closed).toBe(0);
+  });
+
+  test("without saved sessions it says so", async () => {
+    const t = await setup({ record: null });
+    await t.model.openResumePicker();
+    expect(t.model.picker).toBeUndefined();
+    expect(t.model.notice).toBe(NO_SESSIONS_MESSAGE);
+  });
+
+  test("with saving off it says so", async () => {
+    const t = await setup({ enabled: () => false });
+    await t.model.openResumePicker();
+    expect(t.model.picker).toBeUndefined();
+    expect(t.model.notice).toBe(SESSIONS_OFF_MESSAGE);
+  });
+
+  test("without a recorder it says saving is off", async () => {
+    const a = fakeSession();
+    const model = await modelWith(a.session, noReopen);
+    await model.openResumePicker();
+    expect(model.notice).toBe(SESSIONS_OFF_MESSAGE);
+  });
+
+  test("a store that cannot list reads as no saved sessions", async () => {
+    const t = await setup();
+    t.r.recorder.list = async () => {
+      throw new Error("EACCES");
+    };
+    await t.model.openResumePicker();
+    expect(t.model.notice).toBe(NO_SESSIONS_MESSAGE);
+  });
+
+  test.each([
+    [
+      "a turn is in flight",
+      async (t: Awaited<ReturnType<typeof setup>>) => {
+        void t.model.submit("busy");
+        await tick();
+      },
+    ],
+    [
+      "the queue is not empty",
+      async (t: Awaited<ReturnType<typeof setup>>) => {
+        void t.model.submit("busy");
+        await tick();
+        void t.model.submit("queued");
+        await tick();
+      },
+    ],
+  ])("refused while %s", async (_name, arrange) => {
+    const t = await setup();
+    await arrange(t);
+    await t.model.openResumePicker();
+    expect(t.model.picker).toBeUndefined();
+    expect(t.model.notice).toBe(RESUME_BUSY_MESSAGE);
+    await t.model.resume(OLD);
+    expect(t.model.notice).toBe(RESUME_BUSY_MESSAGE);
+    expect(t.openedWith).toEqual([]);
+  });
+
+  test("refused while the first open is in flight", async () => {
+    const gate = deferred<void>();
+    const a = fakeSession();
+    const r = memoryRecorder();
+    r.files.set(OLD, saved());
+    const model = await modelWith(
+      a.session,
+      { ...noReopen, recorder: r.recorder },
+      gate.promise,
+    );
+    await model.openResumePicker();
+    expect(model.notice).toBe(RESUME_BUSY_MESSAGE);
+    gate.resolve();
+    await model.ready;
+  });
+
+  test("resume swaps the history, reopens with the handle and notes the restore", async () => {
+    const t = await setup();
+    void t.model.submit("now");
+    await tick();
+    nth(t.a.replies, 0).resolve("ok");
+    await tick();
+    const epoch = t.model.historyEpoch;
+    t.b.state.restored = true;
+    await t.model.openResumePicker();
+    await t.model.resume(OLD);
+    expect(t.model.picker).toBeUndefined();
+    expect(t.openedWith).toEqual(["H-old"]);
+    expect(t.a.state.closed).toBe(1);
+    expect(t.model.historyEpoch).toBe(epoch + 1);
+    expect(t.model.messages).toEqual([
+      { role: "user", text: "old question" },
+      { role: "assistant", text: "old answer", format: "markdown" },
+      { role: "separator", text: "resumed · conversation restored" },
+    ]);
+    expect(t.model.status).toBe("idle");
+  });
+
+  test("the session that was left keeps its own file", async () => {
+    const t = await setup();
+    void t.model.submit("now");
+    await tick();
+    nth(t.a.replies, 0).resolve("ok");
+    await tick();
+    t.b.state.restored = true;
+    await t.model.resume(OLD);
+    await t.r.recorder.flush();
+    expect(t.r.files.get("id-1")?.messages).toEqual([
+      { role: "user", text: "now" },
+      { role: "assistant", text: "ok" },
+    ]);
+  });
+
+  test("turns after a resume are saved into the resumed file", async () => {
+    const t = await setup();
+    t.b.state.restored = true;
+    await t.model.resume(OLD);
+    void t.model.submit("next");
+    await tick();
+    t.b.state.conversation = "H-old";
+    nth(t.b.replies, 0).resolve("fine");
+    await tick();
+    await t.r.recorder.flush();
+    expect(t.r.files.size).toBe(1);
+    const file = t.r.files.get(OLD);
+    expect(file?.createdAt).toBe("2026-09-20T00:00:00.000Z");
+    expect(file?.messages.map((m) => m.text)).toEqual([
+      "old question",
+      "old answer",
+      "resumed · conversation restored",
+      "next",
+      "fine",
+    ]);
+  });
+
+  // Review Focus 5.
+  test("a handle that does not open is noted and removed from the file", async () => {
+    const t = await setup();
+    t.b.state.restored = false;
+    await t.model.resume(OLD);
+    expect(t.model.messages.at(-1)).toEqual({
+      role: "separator",
+      text: "resumed · conversation could not be restored",
+    });
+    await t.r.recorder.flush();
+    expect("conversation" in (t.r.files.get(OLD) ?? {})).toBe(false);
+    // The next reopen asks for a new chat, not for the dead handle.
+    await t.model.reset();
+    expect(t.openedWith).toEqual(["H-old", undefined]);
+  });
+
+  test("a record without a handle resumes the transcript only", async () => {
+    const { conversation: _dropped, ...rest } = saved();
+    const t = await setup({ record: rest });
+    // Whatever the session claims, nothing was asked for.
+    t.b.state.restored = true;
+    await t.model.resume(OLD);
+    expect(t.openedWith).toEqual([undefined]);
+    expect(t.model.messages.at(-1)).toEqual({
+      role: "separator",
+      text: "resumed · transcript only",
+    });
+  });
+
+  test("a provider that cannot name conversations resumes the transcript only", async () => {
+    const t = await setup();
+    // `restored` stays undefined: the provider has no `conversation`.
+    await t.model.resume(OLD);
+    expect(t.model.messages.at(-1)).toEqual({
+      role: "separator",
+      text: "resumed · transcript only",
+    });
+  });
+
+  test("a session that cannot be loaded leaves the chat alone", async () => {
+    const t = await setup();
+    void t.model.submit("now");
+    await tick();
+    nth(t.a.replies, 0).resolve("ok");
+    await tick();
+    await t.model.resume("22222222-2222-4222-8222-222222222222");
+    expect(t.model.notice).toBe(SESSION_UNREADABLE_MESSAGE);
+    expect(t.model.messages.map((m) => m.text)).toEqual(["now", "ok"]);
+    expect(t.openedWith).toEqual([]);
+    expect(t.a.state.closed).toBe(0);
+  });
+
+  test("when the browser does not open, the transcript stays and the handle is kept", async () => {
+    const a = fakeSession();
+    const b = fakeSession();
+    const r = memoryRecorder();
+    r.files.set(OLD, saved());
+    const openedWith: Array<string | undefined> = [];
+    let fail = true;
+    const model = await modelWith(a.session, {
+      openSession: async (_report, _onIdle, conversation) => {
+        openedWith.push(conversation);
+        if (fail) throw new AuthRequiredError("No saved auth state.");
+        return b.session;
+      },
+      recorder: r.recorder,
+      closeTimeoutMs: 20,
+    });
+    await model.resume(OLD);
+    expect(model.status).toBe("dead");
+    expect(model.messages.slice(0, 2).map((m) => m.text)).toEqual([
+      "old question",
+      "old answer",
+    ]);
+    expect(model.messages.at(-1)?.role).toBe("error");
+    fail = false;
+    b.state.restored = true;
+    await model.reset();
+    expect(openedWith).toEqual(["H-old", "H-old"]);
+    expect(model.messages.at(-1)).toEqual({
+      role: "separator",
+      text: "reopened · conversation restored",
+    });
+  });
+
+  test("resume works from a dead model", async () => {
+    const gateless = fakeSession();
+    const b = fakeSession();
+    const r = memoryRecorder();
+    r.files.set(OLD, saved());
+    const model = await modelWith(gateless.session, {
+      openSession: async () => b.session,
+      recorder: r.recorder,
+      closeTimeoutMs: 20,
+    });
+    void model.submit("boom");
+    await tick();
+    nth(gateless.replies, 0).reject(new Error("page crashed"));
+    await tick();
+    expect(model.status).toBe("dead");
+    b.state.restored = true;
+    await model.resume(OLD);
+    expect(model.status).toBe("idle");
+    expect(model.fatal).toBeUndefined();
+  });
+
+  test("held shell results of the chat that was left are dropped", async () => {
+    const t = await setup();
+    t.model.heldResults.push({
+      command: "ls",
+      output: "",
+      droppedBytes: 0,
+      exitCode: 0,
+      interrupted: false,
+      durationMs: 1,
+    });
+    await t.model.resume(OLD);
+    expect(t.model.heldResults).toEqual([]);
   });
 });
