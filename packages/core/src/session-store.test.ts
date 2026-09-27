@@ -250,6 +250,31 @@ describe("SessionStore", () => {
     expect(await store.list()).toEqual([]);
   });
 
+  test("list survives a file another process deleted after the listing", async () => {
+    const { baseDir } = setup();
+    // Deletes the file just before it is read: the window
+    // between readdir and the read.
+    class Vanishing extends SessionStore {
+      override async load(id: string): Promise<SessionRecord | undefined> {
+        if (id === idOf(2)) {
+          rmSync(join(this.dir(), `${id}.json`), { force: true });
+        }
+        return super.load(id);
+      }
+    }
+    const store = new Vanishing({
+      configDir: "test-cli",
+      providerName: "dummy-chat",
+      baseDir,
+      now: () => NOW,
+    });
+    await store.save(record(1, NOW - 2 * DAY));
+    await store.save(record(2, NOW - DAY));
+    await store.save(record(3, NOW));
+    const ids = (await store.list()).map((s) => s.id);
+    expect(ids).toEqual([idOf(3), idOf(1)]);
+  });
+
   test("clear deletes every session of the provider and nothing else", async () => {
     const { baseDir, store } = setup();
     await store.save(record(1, NOW));

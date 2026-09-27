@@ -195,14 +195,27 @@ function firstLine(text: string): string {
   return "";
 }
 
+/** C0, DEL and C1 controls, and the bidi marks, embeddings, overrides and
+ * isolates: a bidi control reorders the text drawn after it, so a title
+ * could show something other than what was typed. */
+function isControl(code: number): boolean {
+  return (
+    code < 0x20 ||
+    (code >= 0x7f && code <= 0x9f) ||
+    code === 0x200e ||
+    code === 0x200f ||
+    (code >= 0x202a && code <= 0x202e) ||
+    (code >= 0x2066 && code <= 0x2069)
+  );
+}
+
 /** A title is drawn in a terminal and in a QuickPick: a control character
  * in it (an escape sequence in a prompt, a hand-edited file) becomes a
  * space. By code point, so a surrogate pair is never split. */
 function clean(text: string): string[] {
-  return Array.from(text, (ch) => {
-    const code = ch.codePointAt(0) ?? 0;
-    return code < 0x20 || code === 0x7f ? " " : ch;
-  });
+  return Array.from(text, (ch) =>
+    isControl(ch.codePointAt(0) ?? 0) ? " " : ch,
+  );
 }
 
 function titleOf(text: string): string {

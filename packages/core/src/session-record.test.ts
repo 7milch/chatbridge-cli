@@ -191,6 +191,27 @@ describe("summarize", () => {
     );
     expect(s.title).toBe("a [31mb c d");
   });
+
+  test("replaces C1 and bidi controls in the title", () => {
+    const s = summarize(
+      record({
+        messages: [
+          {
+            role: "user",
+            text: "a\u0085b\u009bc\u200ed\u200fe\u202af\u202eg\u2066h\u2069i",
+          },
+        ],
+      }),
+    );
+    expect(s.title).toBe("a b c d e f g h i");
+    // Neighbours of the ranges stay: a no-break space and the joiners.
+    const kept = summarize(
+      record({
+        messages: [{ role: "user", text: "x\u00a0y\u200dz\u2070" }],
+      }),
+    );
+    expect(kept.title).toBe("x\u00a0y\u200dz\u2070");
+  });
 });
 
 describe("formatSessionTime", () => {
