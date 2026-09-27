@@ -38,6 +38,14 @@ export {
 export { launchRuntime } from "./launch-runtime.js";
 export { createAuthStore } from "./create-auth-store.js";
 export {
+  SESSION_MAX_AGE_MS,
+  SESSION_MAX_COUNT,
+  SessionStore,
+  type SessionStoreOptions,
+  TEMP_MAX_AGE_MS,
+} from "./session-store.js";
+export { createSessionStore } from "./create-session-store.js";
+export {
   AuthStore,
   type AuthStoreOptions,
   BrowserRuntime,
