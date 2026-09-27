@@ -21,6 +21,20 @@ export {
   restoreNote,
   withRestoreNote,
 } from "./conversation-note.js";
+export {
+  NO_PROMPT_TITLE,
+  SESSION_RECORD_VERSION,
+  type SessionRecord,
+  type SessionSummary,
+  type StoredMessage,
+  type StoredRole,
+  type StoredShell,
+  TITLE_MAX,
+  formatSessionTime,
+  isSessionId,
+  parseSessionRecord,
+  summarize,
+} from "./session-record.js";
 export { launchRuntime } from "./launch-runtime.js";
 export { createAuthStore } from "./create-auth-store.js";
 export {
