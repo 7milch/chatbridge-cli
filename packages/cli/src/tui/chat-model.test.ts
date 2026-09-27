@@ -3009,6 +3009,40 @@ describe("ChatModel session saving", () => {
     expect(r.files.size).toBe(0);
   });
 
+  test("/logout: a queued turn that runs while the sessions are deleted is not saved", async () => {
+    const a = fakeSession();
+    const b = fakeSession();
+    const r = memoryRecorder();
+    const gate = deferred<void>();
+    r.state.clearGate = gate.promise;
+    const model = await modelWith(a.session, {
+      openSession: async () => b.session,
+      recorder: r.recorder,
+      closeTimeoutMs: 20,
+    });
+    void model.submit("one");
+    await tick();
+    await model.submit("two");
+    const logout = model.submit("/logout");
+    await tick();
+    expect(r.state.cleared).toBe(1);
+    nth(a.replies, 0).resolve("1");
+    await tick();
+    // The queue drained onto the old session while the delete ran.
+    nth(a.replies, 1).resolve("2");
+    await tick();
+    gate.resolve();
+    await logout;
+    await r.recorder.flush();
+    expect(r.files.size).toBe(0);
+    // Only not written: the screen still shows both turns.
+    const texts = model.messages.map((m) => m.text);
+    expect(texts).toContain("one");
+    expect(texts).toContain("1");
+    expect(texts).toContain("two");
+    expect(texts).toContain("2");
+  });
+
   test("/logout: a reply that lands while the auth state is deleted is deleted too", async () => {
     const a = fakeSession();
     const b = fakeSession();

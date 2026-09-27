@@ -241,6 +241,9 @@ export class ChatModel {
    * UIs keep earlier history on screen after `/new`, so the screen can hold
    * several sessions; only what follows this index is saved. */
   private sessionStart = 0;
+  /** True while `/logout` deletes the saved sessions: nothing that settles
+   * meanwhile is saved. The turn still runs and the screen still shows it. */
+  private discarding = false;
   private readonly recorder: SessionRecorder | undefined;
   private readonly openSession: ChatModelOptions["openSession"];
   private readonly login: ChatModelOptions["login"];
@@ -445,6 +448,7 @@ export class ChatModel {
   /** Queues a save of the settled history of the current session. Cheap
    * and synchronous: the recorder copies the snapshot and writes later. */
   private persist(): void {
+    if (this.discarding) return;
     this.recorder?.record({
       conversation: this.conversationHandle,
       messages: toStored(this.messages.slice(this.sessionStart)),
@@ -811,10 +815,10 @@ export class ChatModel {
           this.onChange();
           return true;
         }
-        // Before the delete is awaited: a turn or a command that settles
-        // meanwhile would otherwise save the logged-out account's history
-        // as a new file, written after the delete.
-        this.beginSession();
+        // Whatever settles while the delete runs — a reply, a command, a
+        // queued turn draining onto the old session — belongs to the account
+        // being logged out, and a save of it would land after the delete.
+        this.discarding = true;
         try {
           await this.recorder?.clear();
         } catch {
@@ -825,10 +829,12 @@ export class ChatModel {
             text: SESSIONS_NOT_DELETED_MESSAGE,
           });
           this.onChange();
+        } finally {
+          // Before the reset below persists: what is on screen belongs to
+          // the account that was logged out, and must not be saved again.
+          this.beginSession();
+          this.discarding = false;
         }
-        // Again, before the reset below persists: an entry pushed while the
-        // delete ran belongs to the account that was logged out too.
-        this.beginSession();
         // The handle belongs to the account that was just logged out of; a
         // new login may not even be able to see that conversation.
         await this.reset(undefined, { forget: true });
