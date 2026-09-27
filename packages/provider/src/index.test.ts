@@ -106,6 +106,11 @@ describe("defineProvider: commands", () => {
       defineProvider({ ...baseProvider, commands: [cmd("copy")] }),
     ).toThrow('Provider command "/copy" collides with a built-in command.');
   });
+  test("rejects /resume, a built-in since the session milestone", () => {
+    expect(() =>
+      defineProvider({ ...baseProvider, commands: [cmd("resume")] }),
+    ).toThrow('Provider command "/resume" collides with a built-in command.');
+  });
   test("rejects a duplicate", () => {
     expect(() =>
       defineProvider({

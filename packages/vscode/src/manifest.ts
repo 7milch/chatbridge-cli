@@ -13,7 +13,7 @@ export type CommandName = (typeof COMMAND_NAMES)[number];
 /** Commands the framework registers but a manifest need not declare. An
  * undeclared command is still callable; it only misses the palette and the
  * title-bar menu, so a vendor manifest written for 0.9.0 keeps working. */
-export const OPTIONAL_COMMAND_NAMES = ["help"] as const;
+export const OPTIONAL_COMMAND_NAMES = ["help", "resume"] as const;
 export type OptionalCommandName = (typeof OPTIONAL_COMMAND_NAMES)[number];
 
 /** The title-bar actions, in the order they should appear. `navigation`
@@ -22,6 +22,7 @@ export type OptionalCommandName = (typeof OPTIONAL_COMMAND_NAMES)[number];
 const TITLE_MENU = [
   { name: "newChat", group: "navigation@1" },
   { name: "reopen", group: "navigation@2" },
+  { name: "resume", group: "0_session@1" },
   { name: "login", group: "1_auth@1" },
   { name: "logout", group: "1_auth@2" },
   { name: "installBrowser", group: "2_setup@1" },

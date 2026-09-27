@@ -24,8 +24,8 @@ time.
   diagnosis as a turn (see [contract.md](../contract.md#timeouts-and-errors)
   and [contract.md](../contract.md#2-a-turn)).
 - `/help` lists the provider's commands after the built-ins
-  (`login`, `logout`, `new`, `reopen`, `copy`, `help`), in the order they
-  are declared.
+  (`login`, `logout`, `new`, `reopen`, `resume`, `copy`, `help`), in the order
+  they are declared.
 
 ## Constraints
 

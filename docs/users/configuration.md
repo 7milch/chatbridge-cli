@@ -38,7 +38,8 @@ chatbridge: Invalid config <path>: "open.timeoutSec" must be a positive number
   "defaultProvider": "./providers/my-provider",
   "shell": { "leadIn": "Here is the output.", "autoSend": false },
   "open": { "timeoutSec": 180, "retries": 1 },
-  "idle": { "timeoutMin": 60 }
+  "idle": { "timeoutMin": 60 },
+  "sessions": { "enabled": true }
 }
 ```
 
@@ -52,6 +53,7 @@ chatbridge: Invalid config <path>: "open.timeoutSec" must be a positive number
 | `open.timeoutSec` | number > 0 | `120` | The opening phase, in seconds. Interactive and one-shot mode. |
 | `open.retries` | integer >= 0 | `0` | Extra attempts at the opening phase. Interactive and one-shot mode. |
 | `idle.timeoutMin` | number >= 0 | `1440` (24 h) | Interactive mode only. Minutes without a turn before the browser is closed. `0` disables the idle close. |
+| `sessions.enabled` | boolean | `true` | Save interactive sessions and offer them to `/resume`. `false` saves nothing and leaves existing files alone; logging out still deletes them. |
 
 The defaults for `open.*` and `idle.timeoutMin` are the built-in ones; the provider may ship its own (see [Precedence](#precedence)).
 
@@ -68,6 +70,7 @@ The defaults for `open.*` and `idle.timeoutMin` are the built-in ones; the provi
 | `open.retries` not an integer >= 0 | `"open.retries" must be a non-negative integer` |
 | `idle` not an object | `"idle" must be an object` |
 | `idle.timeoutMin` not a finite number >= 0 | `"idle.timeoutMin" must be a non-negative number` |
+| `sessions.enabled` not a boolean | `"sessions.enabled" must be a boolean` |
 | File exists but cannot be read | `could not read the file` |
 
 There is no config key for the per-turn timeout; use `--timeout` (see [cli.md](cli.md)).
@@ -165,8 +168,11 @@ The browser runs with reduced motion by default. Only the provider can change it
 |---|---|---|---|
 | `~/.config/<configDir>/config.json` | Your settings. | You. The CLI never writes it. | You. |
 | `~/.config/<configDir>/auth/<provider name>.json` | The saved browser session: cookies, localStorage and IndexedDB. | A login (`auth login`, `/login`, the VSCode login). Also refreshed when a session closes while still logged in, so rotated cookies are kept. | `auth logout`, `/logout` in interactive mode, and the VSCode Log out command. |
+| `~/.config/<configDir>/sessions/<provider name>/<id>.json` | One saved interactive session: its messages and the conversation handle. | The interactive TUI and the VSCode view, after every settled turn. | Automatically after 14 days without an update or beyond the 50 most recent; and by `auth logout`, `/logout` and the VSCode Log out command. |
 
 The auth directory is created with mode `0700` and the state file with mode `0600`. Logging out deletes only that provider's state file; `config.json` and other providers' files stay.
+
+The sessions directories are created with mode 0700 and each session file with mode 0600. A session file holds what you and the assistant wrote. It is not a credential, but treat it as private.
 
 The VSCode extension uses `<configDir>` too. It defaults to the extension's id, and a vendor that sets it to the CLI's `configDir` lets one `auth login` serve both.
 

@@ -17,6 +17,9 @@ export interface CliConfig {
   /** Idle-close override; minutes of inactivity before the interactive
    * session's browser is closed. 0 disables it. */
   idle?: { timeoutMin?: number };
+  /** Saved interactive sessions. `enabled: false` turns saving and
+   * `/resume` off. Default: on. */
+  sessions?: { enabled?: boolean };
 }
 
 export interface ConfigLocation {
@@ -71,7 +74,10 @@ export async function loadConfig(
   if (typeof doc !== "object" || doc === null || Array.isArray(doc)) {
     throw invalid(file, "top level must be a JSON object");
   }
-  const { defaultProvider, shell, open, idle } = doc as Record<string, unknown>;
+  const { defaultProvider, shell, open, idle, sessions } = doc as Record<
+    string,
+    unknown
+  >;
   const cfg: CliConfig = {};
   if (defaultProvider !== undefined && !opts.providerPinned) {
     if (typeof defaultProvider !== "string") {
@@ -146,6 +152,24 @@ export async function loadConfig(
       out.timeoutMin = timeoutMin;
     }
     cfg.idle = out;
+  }
+  if (sessions !== undefined) {
+    if (
+      typeof sessions !== "object" ||
+      sessions === null ||
+      Array.isArray(sessions)
+    ) {
+      throw invalid(file, '"sessions" must be an object');
+    }
+    const { enabled } = sessions as Record<string, unknown>;
+    const out: NonNullable<CliConfig["sessions"]> = {};
+    if (enabled !== undefined) {
+      if (typeof enabled !== "boolean") {
+        throw invalid(file, '"sessions.enabled" must be a boolean');
+      }
+      out.enabled = enabled;
+    }
+    cfg.sessions = out;
   }
   return cfg;
 }

@@ -6,7 +6,10 @@ import {
   AuthStore,
   BrowserRuntime,
   ChatSession,
+  SessionRecorder,
+  SessionStore,
   commandInfoOf,
+  createSessionStore,
 } from "@chatbridge/core";
 import { createDummyProvider } from "@chatbridge/example-dummy-chat/provider";
 import { startDummyChat } from "@chatbridge/example-dummy-chat/server";
@@ -100,9 +103,24 @@ describe("createCli", () => {
       providerName: provider.name,
       baseDir,
     });
+    const sessions = new SessionStore({
+      configDir: "test-cli",
+      providerName: provider.name,
+      baseDir,
+    });
+    await sessions.save({
+      version: 1,
+      id: "11111111-1111-4111-8111-111111111111",
+      provider: provider.name,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      messages: [{ role: "user", text: "hi" }],
+    });
+    expect(await sessions.list()).toHaveLength(1);
     expect(store.has()).toBe(true);
     expect(await cli.run(["bun", "cli", "auth", "logout"])).toBe(0);
     expect(store.has()).toBe(false);
+    expect(await sessions.list()).toEqual([]);
   }, 60_000);
 
   test("expired auth exits 3", async () => {
@@ -157,24 +175,40 @@ describe("createCli", () => {
 describe("interactive model against the dummy chat", () => {
   /** A ChatModel over a real ChatSession; no renderer — the model is the
    * unit under test and its history is what the view would show. */
-  async function openModel(baseDir: string, serverUrl: string) {
-    const provider = await prepareAuth(baseDir, serverUrl);
+  async function openModel(
+    baseDir: string,
+    serverUrl: string,
+    opts: { prepared?: boolean } = {},
+  ) {
+    const provider = opts.prepared
+      ? createDummyProvider(serverUrl)
+      : await prepareAuth(baseDir, serverUrl);
     const authStore = new AuthStore({
       configDir: "test-cli",
       providerName: provider.name,
       baseDir,
     });
+    const recorder = new SessionRecorder({
+      store: createSessionStore({
+        configDir: "test-cli",
+        providerName: provider.name,
+        baseDir,
+      }),
+      provider: provider.name,
+    });
     const timeoutMs = 30_000;
     const model = new ChatModel({
-      openSession: () =>
+      openSession: (_report, _onIdleExpired, conversation) =>
         ChatSession.open({
           provider,
           authStore,
           headless: true,
           timeoutMs,
+          conversation,
         }),
       login: async () => {},
-      clearAuth: async () => {},
+      clearAuth: () => authStore.clear(),
+      recorder,
       commands: commandInfoOf(provider),
       expand: (text) =>
         expandInput(text, {
@@ -186,7 +220,7 @@ describe("interactive model against the dummy chat", () => {
     cleanups.push(() => model.session?.close());
     await model.ready;
     expect(model.status).toBe("idle");
-    return { model, provider };
+    return { model, provider, recorder };
   }
 
   test("a provider `show` command reads the live page", async () => {
@@ -251,4 +285,129 @@ describe("interactive model against the dummy chat", () => {
     expect(model.messages.at(-1)?.role).toBe("error");
     expect(model.messages.at(-1)?.text).toMatch(/404 from dummy chat/);
   }, 60_000);
+
+  test("a session saved by one process is resumed by another", async () => {
+    const server = await startDummyChat(0);
+    cleanups.push(server.stop);
+    const baseDir = setup();
+
+    const first = await openModel(baseDir, server.url);
+    expect(await first.model.submit("hello")).toBe(true);
+    expect(await first.model.submit("again")).toBe(true);
+    await first.recorder.flush();
+    await first.model.session?.close();
+
+    const second = await openModel(baseDir, server.url, { prepared: true });
+    await second.model.openResumePicker();
+    expect(second.model.picker).toHaveLength(1);
+    expect(second.model.picker?.[0]?.title).toBe("hello");
+    expect(second.model.picker?.[0]?.turns).toBe(2);
+
+    await second.model.resume(second.model.picker?.[0]?.id ?? "");
+    expect(second.model.status).toBe("idle");
+    expect(second.model.messages.map((m) => m.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+      "assistant",
+      "separator",
+    ]);
+    expect(second.model.messages[0]?.text).toBe("hello");
+    expect(second.model.messages.at(-1)?.text).toBe(
+      "resumed · conversation restored",
+    );
+
+    // The service side came back too: its turn counter carries on.
+    expect(await second.model.submit("turns?")).toBe(true);
+    expect(second.model.messages.at(-1)?.text).toBe("Echo: turns? (turn 3)");
+
+    // And the resumed file, not a new one, received the turn.
+    await second.recorder.flush();
+    const store = new SessionStore({
+      configDir: "test-cli",
+      providerName: second.provider.name,
+      baseDir,
+    });
+    const list = await store.list();
+    expect(list).toHaveLength(1);
+    expect(list[0]?.turns).toBe(3);
+  }, 120_000);
+
+  // Review Focus 5.
+  test("a handle the service no longer knows falls back to a new chat", async () => {
+    const server = await startDummyChat(0);
+    cleanups.push(server.stop);
+    const baseDir = setup();
+    const { model, provider, recorder } = await openModel(baseDir, server.url);
+    const id = "11111111-1111-4111-8111-111111111111";
+    const store = new SessionStore({
+      configDir: "test-cli",
+      providerName: provider.name,
+      baseDir,
+    });
+    await store.save({
+      version: 1,
+      id,
+      provider: provider.name,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      // Well-formed, but the server never issued it.
+      conversation: `${server.url}/chat/c/zzzzzzzz`,
+      messages: [
+        { role: "user", text: "from another life" },
+        { role: "assistant", text: "Echo: from another life (turn 1)" },
+      ],
+    });
+
+    await model.resume(id);
+    expect(model.status).toBe("idle");
+    expect(model.messages.at(-1)).toEqual({
+      role: "separator",
+      text: "resumed · conversation could not be restored",
+    });
+    expect(await model.submit("turns?")).toBe(true);
+    expect(model.messages.at(-1)?.text).toBe("Echo: turns? (turn 1)");
+    // The saved transcript survives the fallback on screen.
+    expect(model.messages[0]?.text).toBe("from another life");
+
+    await recorder.flush();
+    const after = await store.load(id);
+    // The dead handle is gone; the new conversation's handle took its place.
+    expect(after?.conversation).not.toBe(`${server.url}/chat/c/zzzzzzzz`);
+    expect(after?.conversation).toMatch(/\/chat\/c\/[a-z0-9]{8}$/);
+    // And in the file.
+    expect(after?.messages[0]?.text).toBe("from another life");
+  }, 120_000);
+
+  test("/logout deletes the saved sessions", async () => {
+    const server = await startDummyChat(0);
+    cleanups.push(server.stop);
+    const baseDir = setup();
+    const { model, provider, recorder } = await openModel(baseDir, server.url);
+    expect(await model.submit("hello")).toBe(true);
+    await recorder.flush();
+    const store = new SessionStore({
+      configDir: "test-cli",
+      providerName: provider.name,
+      baseDir,
+    });
+    expect(await store.list()).toHaveLength(1);
+
+    await model.submit("/logout");
+    await recorder.flush();
+    expect(await store.list()).toEqual([]);
+    // The old model's status after the logout is not asserted here: the
+    // logout currently leaves the auth state on disk (#137), so its reopen
+    // succeeds. Whoever fixes #137 adds that assertion here. What is
+    // asserted is that nothing from before the logout comes back when a new
+    // process chats again.
+    await model.session?.close();
+    const fresh = await openModel(baseDir, server.url);
+    expect(await fresh.model.submit("after logout")).toBe(true);
+    await fresh.recorder.flush();
+    const after = await store.list();
+    expect(after).toHaveLength(1);
+    expect(after[0]?.turns).toBe(1);
+    expect(after[0]?.title).toBe("after logout");
+  }, 120_000);
 });

@@ -1,3 +1,4 @@
+import { type SessionSummary, formatSessionTime } from "@chatbridge/core";
 import type * as vscode from "vscode";
 import type { ActiveFile } from "./protocol.js";
 
@@ -40,6 +41,12 @@ export interface VscodeUi {
    * Optional: a vendor's own VscodeUi written against 0.9.0 has none, and
    * the `+` command is then a no-op. */
   pickFiles?(): Promise<string[]>;
+  /** Native picker over the saved sessions; resolves to the chosen id, or
+   * undefined when dismissed. Optional: a vendor's own VscodeUi written
+   * against an earlier release has none, and resume is then a no-op. */
+  pickSession?(
+    sessions: readonly SessionSummary[],
+  ): Promise<string | undefined>;
   /** Fires with the active editor's file, or `undefined` when there is no
    * editor or its document is not a `file:` URI; also called once with the
    * current value on subscribe. Optional: without it the composer shows no
@@ -123,6 +130,18 @@ export function createVscodeUi(api: typeof vscode, id: string): VscodeUi {
         openLabel: "Attach",
       });
       return (picked ?? []).map((uri) => uri.toString());
+    },
+    pickSession: async (sessions) => {
+      const picked = await api.window.showQuickPick(
+        sessions.map((s) => ({
+          label: s.title,
+          description: s.turns === 1 ? "1 turn" : `${s.turns} turns`,
+          detail: formatSessionTime(s.updatedAt),
+          id: s.id,
+        })),
+        { placeHolder: "Resume a saved session", matchOnDetail: true },
+      );
+      return picked?.id;
     },
     onDidChangeActiveEditor: (listener) => {
       listener(activeFileOf(api.window.activeTextEditor, relPath));

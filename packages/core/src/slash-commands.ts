@@ -9,6 +9,7 @@ export const SLASH_COMMANDS = [
   { name: "logout", description: "Delete the saved login and close the chat" },
   { name: "new", description: "Start a new chat" },
   { name: "reopen", description: "Reopen the browser (also Ctrl+R)" },
+  { name: "resume", description: "Go back to a saved session" },
   { name: "copy", description: "Copy the last reply to the clipboard" },
   { name: "help", description: "List these commands" },
 ] as const satisfies readonly {

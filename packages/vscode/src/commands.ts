@@ -1,5 +1,16 @@
-import type { CommandInfo, LoginOptions } from "@chatbridge/core";
-import { LoginAbortedError } from "@chatbridge/core";
+import type {
+  CommandInfo,
+  LoginOptions,
+  SessionRecorder,
+} from "@chatbridge/core";
+import {
+  LoginAbortedError,
+  NO_SESSIONS_MESSAGE,
+  RESUME_BUSY_MESSAGE,
+  SESSIONS_NOT_DELETED_MESSAGE,
+  SESSIONS_OFF_MESSAGE,
+  SESSION_UNREADABLE_MESSAGE,
+} from "@chatbridge/core";
 import { helpText } from "@chatbridge/core/slash-commands";
 import type { InstallBrowserOptions } from "./install-browser.js";
 import type { SendResult, SessionController } from "./session-controller.js";
@@ -21,6 +32,9 @@ export interface CommandDeps {
    * older wiring still type-checks; `/copy` then reports a failure rather
    * than silently doing nothing. */
   writeClipboard?: (text: string) => Thenable<void>;
+  /** The saved sessions. Optional, so a vendor's older wiring still
+   * type-checks; resume then reports that saving is off. */
+  sessions?: SessionRecorder;
 }
 
 export interface CommandHandlers {
@@ -38,6 +52,8 @@ export interface CommandHandlers {
   copyText(text: string): Promise<void>;
   /** From the webview's `/help`: the listing joins the history. */
   help(): void;
+  /** `/resume` and the `<id>.resume` command. */
+  resume(): Promise<void>;
   /** From the webview's `/name args`. */
   customCommand(name: string, args: string, text: string): Promise<void>;
   sendSelection(): Promise<void>;
@@ -195,23 +211,50 @@ export function createCommands(deps: CommandDeps): CommandHandlers {
     },
 
     async logout() {
-      if (isBusy()) {
+      // The controller deletes the auth state first: the queue drains after
+      // the logout, and a queued entry would otherwise reopen the browser —
+      // and send — under the credentials the user just asked to delete.
+      const outcome = await controller.logout(deps.clearAuth);
+      if (outcome === "busy") {
         ui.showWarningMessage(
           "Wait for the current reply to finish, then log out.",
         );
+      } else if (outcome === "sessions-not-deleted") {
+        // The auth state is gone, so the logout itself stands. No detail:
+        // the error may name a session file.
+        ui.showWarningMessage(SESSIONS_NOT_DELETED_MESSAGE);
+      }
+    },
+
+    async resume() {
+      const sessions = deps.sessions;
+      if (sessions === undefined || !sessions.enabled) {
+        ui.showInformationMessage(SESSIONS_OFF_MESSAGE);
         return;
       }
-      // The auth state goes first: `discard` drains the queue, and a queued
-      // entry would otherwise reopen the browser — and send — under the
-      // credentials the user just asked to delete.
-      await deps.clearAuth();
-      if (!(await controller.discard("Logged out"))) {
-        // A turn started while the auth state was being deleted. The file
-        // is gone either way; only the session is still open, so warn about
-        // that alone.
-        ui.showWarningMessage(
-          "Wait for the current reply to finish, then log out.",
-        );
+      if (!controller.canResume) {
+        ui.showWarningMessage(RESUME_BUSY_MESSAGE);
+        return;
+      }
+      const list = await sessions.list().catch(() => []);
+      if (list.length === 0) {
+        ui.showInformationMessage(NO_SESSIONS_MESSAGE);
+        return;
+      }
+      // No picker on this UI (a vendor's own, written against an earlier
+      // release): the command does nothing rather than throwing.
+      if (ui.pickSession === undefined) return;
+      const id = await ui.pickSession(list);
+      if (id === undefined) return;
+      const record = await sessions.load(id).catch(() => undefined);
+      if (record === undefined) {
+        ui.showWarningMessage(SESSION_UNREADABLE_MESSAGE);
+        return;
+      }
+      ui.focusView();
+      // A turn may have started while the picker was open.
+      if (!(await controller.resume(record))) {
+        ui.showWarningMessage(RESUME_BUSY_MESSAGE);
       }
     },
 

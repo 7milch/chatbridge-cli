@@ -1,3 +1,4 @@
+import { type SessionSummary, formatSessionTime } from "@chatbridge/core";
 import {
   type CommandInfo,
   commandWordAt,
@@ -26,6 +27,7 @@ import {
   type Message,
   type Role,
 } from "./chat-model.js";
+import { displayWidth, fitToWidth, padToWidth } from "./display-width.js";
 import { MAX_ROWS, MentionPopup, type PopupRow } from "./mention-popup.js";
 import type { ResolvedSpinner } from "./spinner.js";
 import { adoptTerminalCursor, markdown, text, textarea } from "./text.js";
@@ -139,6 +141,40 @@ function commandRows(commands: readonly CommandInfo[]): PopupRow[] {
   }));
 }
 
+const SESSION_GAP = "   ";
+
+/** One picker row per saved session: `MM-DD HH:mm   <title>   N turns`,
+ * titles padded to the widest by display cells so the turn counts line up.
+ * `width` is the cells a row can draw: a title that would push the turn
+ * count past it is shortened, since a Japanese title of the full 60 code
+ * points takes about 120 cells. */
+export function sessionRows(
+  sessions: readonly SessionSummary[],
+  width: number,
+): PopupRow[] {
+  if (sessions.length === 0) return [];
+  const rows = sessions.map((s) => ({
+    id: s.id,
+    time: formatSessionTime(s.updatedAt),
+    title: s.title,
+    turns: s.turns === 1 ? "1 turn" : `${s.turns} turns`,
+  }));
+  const fixed = Math.max(
+    ...rows.map(
+      (r) =>
+        displayWidth(r.time) + 2 * SESSION_GAP.length + displayWidth(r.turns),
+    ),
+  );
+  const budget = Math.max(1, width - fixed);
+  const titles = rows.map((r) => fitToWidth(r.title, budget));
+  const widest = Math.max(...titles.map(displayWidth));
+  return rows.map((r, i) => ({
+    value: r.id,
+    label: `${r.time}${SESSION_GAP}${padToWidth(titles[i] ?? "", widest)}${SESSION_GAP}${r.turns}`,
+    plain: true,
+  }));
+}
+
 export interface ChatViewOptions {
   title: string;
   providerName: string;
@@ -224,6 +260,17 @@ export class ChatView {
    * rather than reporting a failure the user cannot act on. */
   private readonly copy: ((text: string) => Promise<boolean>) | undefined;
   private rendered = 0;
+  /** Every box drawn for a message, in order, so a replaced history can
+   * take them all down again. */
+  private readonly messageBoxes: BoxRenderable[] = [];
+  /** The `model.historyEpoch` the drawn boxes belong to. */
+  private shownEpoch = 0;
+  /** True while the popup shows the session picker rather than mentions or
+   * commands. */
+  private picking = false;
+  /** The input's text when the picker opened; a paste under the picker is
+   * undone back to it. */
+  private pickerInput = "";
   /** Shell entries already drawn; their output and footer are refreshed
    * from the model on every update (live output, held → sent). */
   private readonly shellEntries: ShellEntry[] = [];
@@ -416,6 +463,13 @@ export class ChatView {
     this.onSelect = (selection) => this.onSelection(selection);
     (renderer as unknown as SelectionSource).on("selection", this.onSelect);
     this.input.onContentChange = () => {
+      // The picker is modal, but a bracketed paste is no keypress and
+      // reaches the textarea anyway; a pasted `!` would flip shell mode
+      // under the picker.
+      if (this.picking) {
+        this.restorePickerInput();
+        return;
+      }
       this.detectShellMode();
       this.fitInput();
       this.refreshPopup();
@@ -459,6 +513,7 @@ export class ChatView {
       this.body.remove(this.banner);
       this.body.add(this.history);
     }
+    if (this.model.historyEpoch !== this.shownEpoch) this.clearHistory();
     for (; this.rendered < this.model.messages.length; this.rendered++) {
       const message = this.model.messages[this.rendered];
       if (!message) continue;
@@ -474,7 +529,9 @@ export class ChatView {
       } else {
         // The row is always last; anything appended has to go above it.
         this.dropPending();
-        this.history.add(this.messageBox(message));
+        const box = this.messageBox(message);
+        this.messageBoxes.push(box);
+        this.history.add(box);
       }
       // A drained turn starts while the view is still busy, so the spinner
       // is never restarted; the user message drawn exactly once per turn is
@@ -482,6 +539,7 @@ export class ChatView {
       if (message.role === "user") this.beginTurn();
     }
     for (const entry of this.shellEntries) this.refreshShell(entry);
+    this.syncPicker();
     this.renderQueue();
     // After the status: startSpinner() picks the turn's label there, and the
     // pending row paints it.
@@ -494,6 +552,41 @@ export class ChatView {
     // model is in: the notice only borrows the line it painted.
     if (this.model.notice !== undefined) this.paintNotice(this.model.notice);
     this.syncPending();
+  }
+
+  /** Takes down every drawn message after the model replaced its history
+   * (a resume), so the render loop draws the new one from the start. The
+   * pending row goes too: it is always last, and a fresh view has none. */
+  private clearHistory(): void {
+    this.dropPending();
+    // A highlighted selection points into the boxes about to go; clearing
+    // it afterwards would reach destroyed renderables.
+    if (this.renderer.hasSelection) this.renderer.clearSelection();
+    for (const box of this.messageBoxes) {
+      this.history.remove(box);
+      // Recursive: a Markdown body holds native buffers of its own.
+      box.destroyRecursively();
+    }
+    this.messageBoxes.length = 0;
+    // Their renderables were just destroyed; a refresh would write to them.
+    this.shellEntries.length = 0;
+    this.rendered = 0;
+    this.shownEpoch = this.model.historyEpoch;
+  }
+
+  /** Opens the popup on the session list when the model asks for a picker,
+   * and closes it when the model dropped the picker — also when resume()
+   * cleared it on its own rather than through a key. */
+  private syncPicker(): void {
+    const sessions = this.model.picker;
+    if (sessions !== undefined && !this.picking) {
+      this.picking = true;
+      this.pickerInput = this.input.plainText;
+      this.popup.showAll(sessionRows(sessions, this.popup.labelWidth));
+    } else if (sessions === undefined && this.picking) {
+      this.picking = false;
+      this.popup.hide();
+    }
   }
 
   /** Copies what a finished drag selected. The event fires once per gesture,
@@ -699,6 +792,7 @@ export class ChatView {
     // The id is the handle on the row in flight; the settled box is an
     // ordinary message and must not answer to it.
     row.box.id = `reply-${this.rendered}`;
+    this.messageBoxes.push(row.box);
     row.box.remove(row.tail);
     row.tail.destroyRecursively();
     if (row.body !== undefined) {
@@ -865,6 +959,10 @@ export class ChatView {
    * re-run the search. */
   private handleKey(key: KeyEvent): void {
     if (this.torn) return;
+    if (this.picking) {
+      this.pickerKey(key);
+      return;
+    }
     if (key.ctrl && key.name === "r") {
       key.preventDefault();
       void this.model.reset();
@@ -930,6 +1028,40 @@ export class ChatView {
         return;
     }
     key.preventDefault();
+  }
+
+  /** The picker is modal: it takes every key but Ctrl+C, which is left
+   * alone so quitting always works. Nothing typed reaches the input, and
+   * Ctrl+R and the page keys do nothing under it. */
+  private pickerKey(key: KeyEvent): void {
+    if (key.ctrl && key.name === "c") return;
+    key.preventDefault();
+    switch (key.name) {
+      case "up":
+        this.popup.move(-1);
+        break;
+      case "down":
+        this.popup.move(1);
+        break;
+      case "return":
+      case "kpenter": {
+        const id = this.popup.selected;
+        if (id !== undefined) void this.model.resume(id);
+        break;
+      }
+      case "escape":
+        this.model.cancelResume();
+        break;
+    }
+  }
+
+  /** Undoes whatever arrived in the input while the picker is open. The
+   * clear/insert schedules further content changes; those see the restored
+   * text and stop here. */
+  private restorePickerInput(): void {
+    if (this.input.plainText === this.pickerInput) return;
+    this.input.clear();
+    if (this.pickerInput) this.input.insertText(this.pickerInput);
   }
 
   /** `!` typed or pasted into an empty input switches to shell mode; the
@@ -1014,7 +1146,9 @@ export class ChatView {
    * mention needs an `@` word under the cursor. No popup in shell mode: `@`
    * and `/` are ordinary characters there. */
   private refreshPopup(): void {
-    if (this.torn) return;
+    // The picker owns the popup until it closes: a cursor event must not
+    // swap the session list for a mention search.
+    if (this.torn || this.picking) return;
     if (this.shell) {
       this.popup.hide();
       return;

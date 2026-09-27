@@ -14,10 +14,26 @@ export interface ProviderConversation {
 }
 ```
 
-The handle is an opaque, provider-owned string. Core stores it in memory
-only, never on disk, and never logs it. It must never embed a credential.
-Cross-process resume (handing the handle to a different chatbridge
-process) is not implemented; see backlog #119.
+The handle is an opaque, provider-owned string.
+
+Core keeps the handle in memory and saves it with the interactive session
+(`~/.config/<configDir>/sessions/<provider name>/<id>.json`, mode `0600`), so
+`/resume` can hand it back to `open` in a later process. It is never logged.
+
+Because the handle reaches the disk, it must never embed a credential: no
+token, no signed URL, no session id of the login. A conversation URL or id is
+what it is for. `open` may be called with a handle from days ago, from before
+a logout and a new login, or for a conversation that was deleted since: throw,
+and the framework starts a new chat and says so.
+
+Treat the handle `open` receives as untrusted input. It is read back from a
+file the user can edit, so it may be anything. Before navigating, check that it
+names a conversation on the chat's own origin, and throw when it does not.
+`urlConversation` does this through `match`: it refuses a handle `match`
+rejects before calling `page.goto`, so write `match` to accept only your chat's
+origin (anchor it on `^https://chat\.example\.com/`). The framework's own
+origin check runs after `open` returns and only decides whether the outcome
+counts as restored; by then the navigation has happened.
 
 ## What the framework does with it
 
@@ -33,11 +49,11 @@ process) is not implemented; see backlog #119.
 
 ### Outcomes
 
-| Outcome | When | What happens next |
-|---|---|---|
-| restored | `open` returned and the page's origin equals `chatUrl`'s origin | The conversation is shown as restored. |
-| failed | `open` threw, or it returned but left the page on another origin | `goto(chatUrl)`, then `startNewChat`. |
-| timeout | The restore budget expired with `open` still running | The page is abandoned (closed or killed), a new browser is launched, `startNewChat` runs there. |
+| Outcome | When | What happens next | Separator |
+|---|---|---|---|
+| restored | `open` returned and the page's origin equals `chatUrl`'s origin | The conversation is shown as restored. | `reopened · conversation restored`, or `resumed · conversation restored` after `/resume`. |
+| failed | `open` threw, or it returned but left the page on another origin | `goto(chatUrl)`, then `startNewChat`. | `reopened · conversation could not be restored`, or `resumed · conversation could not be restored` after `/resume`. |
+| timeout | The restore budget expired with `open` still running | The page is abandoned (closed or killed), a new browser is launched, `startNewChat` runs there. | Same as `failed`. |
 
 A restore never fails the whole open: at worst the user gets a fresh chat
 instead of the old one. The UI shows one of two notes next to the
@@ -45,6 +61,12 @@ separator, from `@chatbridge/core`'s `conversation-note.ts`:
 
 - `RESTORED_NOTE` = `"conversation restored"`
 - `NOT_RESTORED_NOTE` = `"conversation could not be restored"`
+
+A reopen with no handle to try shows a bare `reopened` separator, no note.
+`/resume` never leaves the separator bare: when there was no handle, or the
+provider has no `conversation` at all, it reads `resumed · transcript only`
+(`TRANSCRIPT_ONLY_NOTE`) instead — a transcript on screen with no word on
+whether the service still knows it would mislead.
 
 See [contract.md](../contract.md#4-closing-a-session) for how a close and
 a restore attempt can overlap.
@@ -71,6 +93,9 @@ export function urlConversation(options: {
   conversation did not open."` when the navigation lands somewhere `match`
   rejects (a service redirecting an unknown id back to the plain chat page
   must read as a failure, not as a restore).
+- `open` tests the handle against `match` before it navigates, so `match` is
+  the only check a handle from disk goes through. Include the chat's origin in
+  it.
 - `match` is tested against the whole URL, including any query string or
   fragment. Do not anchor it with `$` when a real conversation URL can
   carry one; prefer a form such as `/\/c\/[0-9a-f-]+(?:[/?#]|$)/`.
@@ -83,7 +108,7 @@ export function urlConversation(options: {
 
 ```ts
 conversation: urlConversation({
-  match: /\/c\/[0-9a-f-]+(?:[/?#]|$)/,
+  match: /^https:\/\/chat\.example\.com\/c\/[0-9a-f-]+(?:[/?#]|$)/,
 }),
 ```
 
@@ -97,6 +122,8 @@ conversation: {
     return id ?? undefined;
   },
   async open(page, handle) {
+    // From a file the user can edit: never put it in a selector unchecked.
+    if (!/^[0-9a-f-]+$/.test(handle)) throw new Error("Not a conversation id.");
     await page.goto(chatUrl);
     await page.locator(`[data-conversation-id="${handle}"]`).click();
     await page.locator(`[data-active-conversation="${handle}"]`).waitFor();

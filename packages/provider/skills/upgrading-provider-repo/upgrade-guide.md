@@ -158,6 +158,74 @@ Verify: `<VENDOR>_E2E=1 bun test src/provider.e2e.test.ts` — "a guest is not
 logged in" passes: a fresh browser context on the chat URL reads as logged
 out, while the two-turn test still reads the saved state as logged in.
 
+## 0.13.0
+
+Interactive sessions are now saved on the user's machine by default: every
+terminal and VSCode chat is written to disk as it proceeds. Logging out deletes
+them, and the user can turn saving off.
+
+**Required:**
+
+1. If your provider defines a command named `resume`, rename it. `resume` is
+   now a built-in, and `defineProvider` throws
+   `Provider command "/resume" collides with a built-in command.`
+   Check: `grep -n '"resume"' src/`.
+2. Interactive sessions are now saved on the user's machine by default, under
+   `~/.config/<configDir>/sessions/<provider name>/`. If your banner, footer or
+   documentation says that conversations are not stored, that sentence is no
+   longer true. Change it. The templates now say
+   `Conversations are saved on this machine only. Log out to delete them.`
+   Check: `grep -rn "not stored" src/ vscode/ README.md`.
+
+**Optional:**
+
+### Resume in the VSCode title bar and palette
+
+Needs DOM observation: no.
+
+Change: in the extension's `package.json`, add to `contributes.commands`
+
+    { "command": "<vendor>.resume", "title": "Resume", "category": "<Vendor>" }
+
+to `contributes.menus["view/title"]`
+
+    { "command": "<vendor>.resume", "when": "view == <vendor>.chat", "group": "0_session@1" }
+
+and to `contributes.configuration.properties`
+
+    "<vendor>.saveSessions": {
+      "type": "boolean",
+      "default": true,
+      "description": "Save chat sessions on this machine so that Resume can go back to them."
+    }
+
+Without these, `/resume` typed in the composer still works and saving is on;
+only the menu entry, the palette entry and the Settings UI row are missing.
+
+Verify: reload the extension, send a message, run New chat, open the view's
+`...` menu, choose Resume and pick the session. The history comes back and
+ends with a `resumed · …` separator.
+
+### Conversation handles are now saved to disk
+
+Needs DOM observation: no.
+
+Change: none, if your `conversation.handle` returns a conversation URL or id.
+If it returns anything that carries a credential, change it: the handle is
+written to the session file.
+
+The handle `open` receives is now read back from a file the user can edit.
+With `urlConversation`, `match` is the only check before `page.goto`: if your
+`match` does not include the chat's origin, anchor it there, e.g.
+`/^https:\/\/chat\.example\.com\/c\/[0-9a-f-]+(?:[/?#]|$)/`. A hand-written
+`open` checks the handle the same way before navigating or putting it in a
+selector.
+
+Verify: send a message, quit, start again, `/resume`, pick the session. The
+separator reads `resumed · conversation restored`.
+
+**VSCode manifest:** optional additions above; nothing required.
+
 ## 0.12.1
 
 **Required:** none.

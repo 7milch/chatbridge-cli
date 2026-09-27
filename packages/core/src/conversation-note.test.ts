@@ -1,8 +1,11 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
   NOT_RESTORED_NOTE,
   RESTORED_NOTE,
+  RESUMED_SEPARATOR,
+  TRANSCRIPT_ONLY_NOTE,
   restoreNote,
+  resumedSeparator,
   withRestoreNote,
 } from "./conversation-note.js";
 
@@ -20,4 +23,26 @@ test("withRestoreNote joins with a middle dot, or leaves the separator alone", (
     "reopened · conversation could not be restored",
   );
   expect(withRestoreNote("reopened", undefined)).toBe("reopened");
+});
+
+describe("resumedSeparator", () => {
+  test("restored", () => {
+    expect(resumedSeparator(true)).toBe("resumed · conversation restored");
+  });
+
+  test("could not be restored", () => {
+    expect(resumedSeparator(false)).toBe(
+      "resumed · conversation could not be restored",
+    );
+  });
+
+  test("nothing to restore", () => {
+    expect(resumedSeparator(undefined)).toBe("resumed · transcript only");
+  });
+
+  test("is built from the exported parts", () => {
+    expect(resumedSeparator(undefined)).toBe(
+      `${RESUMED_SEPARATOR} · ${TRANSCRIPT_ONLY_NOTE}`,
+    );
+  });
 });

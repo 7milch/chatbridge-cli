@@ -72,10 +72,10 @@ chatbridge auth status
 
 `auth login` opens a headful browser for you to sign in manually. Progress is written to stderr. Pressing Ctrl-C cancels the login and exits 130.
 
-`auth logout` deletes the saved auth state. When stderr is a TTY it prints:
+`auth logout` deletes the saved auth state and the provider's saved interactive sessions. When stderr is a TTY it prints:
 
 ```
-✓ Auth state deleted
+✓ Auth state and saved sessions deleted
 ```
 
 `auth status` prints one of these to stdout and always exits 0:

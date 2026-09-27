@@ -18,11 +18,50 @@ export {
 export {
   NOT_RESTORED_NOTE,
   RESTORED_NOTE,
+  RESUMED_SEPARATOR,
+  TRANSCRIPT_ONLY_NOTE,
   restoreNote,
+  resumedSeparator,
   withRestoreNote,
 } from "./conversation-note.js";
+export {
+  NO_PROMPT_TITLE,
+  SESSION_RECORD_VERSION,
+  type SessionRecord,
+  type SessionSummary,
+  type StoredMessage,
+  type StoredRole,
+  type StoredShell,
+  TITLE_MAX,
+  formatSessionTime,
+  isSessionId,
+  parseSessionRecord,
+  summarize,
+} from "./session-record.js";
 export { launchRuntime } from "./launch-runtime.js";
 export { createAuthStore } from "./create-auth-store.js";
+export {
+  SESSION_MAX_AGE_MS,
+  SESSION_MAX_COUNT,
+  SessionStore,
+  type SessionStoreOptions,
+  TEMP_MAX_AGE_MS,
+} from "./session-store.js";
+export { createSessionStore } from "./create-session-store.js";
+export {
+  SessionRecorder,
+  type SessionRecorderOptions,
+  type SessionSnapshot,
+  type SessionStoreLike,
+} from "./session-recorder.js";
+export {
+  NO_SESSIONS_MESSAGE,
+  RESUME_BUSY_MESSAGE,
+  SAVE_FAILED_MESSAGE,
+  SESSIONS_NOT_DELETED_MESSAGE,
+  SESSIONS_OFF_MESSAGE,
+  SESSION_UNREADABLE_MESSAGE,
+} from "./resume-messages.js";
 export {
   AuthStore,
   type AuthStoreOptions,

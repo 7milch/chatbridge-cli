@@ -4,12 +4,14 @@ import {
   type Provider,
   ProviderLoadError,
   createAuthStore,
+  createSessionStore,
   runLogin,
   runOneShot,
 } from "@chatbridge/core";
 import { type CliConfig, configPath, loadConfig } from "./config.js";
 import { describeError, exitCodeFor } from "./exit-codes.js";
 import { resolveIdleOptions } from "./idle-options.js";
+import { interactiveRecorder } from "./interactive-recorder.js";
 import { resolveOpenOptions } from "./open-options.js";
 import { resolveProvider } from "./resolve-provider.js";
 import { type ShellConfig, resolveShellConfig } from "./shell/shell-config.js";
@@ -216,7 +218,15 @@ export function createCli(opts: CreateCliOptions) {
         }
         if (sub === "logout") {
           await authStore.clear();
-          progress("✓ Auth state deleted");
+          // The saved sessions carry conversation handles of the account
+          // that is being logged out of. Deleted whether or not saving is
+          // turned on: logging out is the one explicit way to remove them.
+          await createSessionStore({
+            configDir,
+            providerName: provider.name,
+            baseDir: opts.baseDir,
+          }).clear();
+          progress("✓ Auth state and saved sessions deleted");
           return 0;
         }
         console.log(
@@ -265,6 +275,17 @@ export function createCli(opts: CreateCliOptions) {
           providerName: provider.name,
           baseDir: opts.baseDir,
         });
+        // Built even when saving is off, so `/resume` can say so and
+        // `/logout` can still delete what an earlier run saved.
+        const { recorder, onNotifier } = interactiveRecorder({
+          store: createSessionStore({
+            configDir,
+            providerName: provider.name,
+            baseDir: opts.baseDir,
+          }),
+          provider: provider.name,
+          enabled: () => config.sessions?.enabled !== false,
+        });
         // Loaded lazily so one-shot and auth never evaluate @opentui/core.
         const { runInteractive } = await import("./tui/run-interactive.js");
         const result = await runInteractive({
@@ -280,6 +301,8 @@ export function createCli(opts: CreateCliOptions) {
           open,
           idle,
           onProgress: progress,
+          recorder,
+          onNotifier,
         });
         return result.fatal === undefined ? 0 : reportError(result.fatal);
       }

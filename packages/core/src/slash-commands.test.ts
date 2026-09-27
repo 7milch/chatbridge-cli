@@ -62,6 +62,12 @@ describe("parseSlashCommand", () => {
       error: "/copy takes no arguments.",
     });
   });
+  test("resume is a built-in that takes no arguments", () => {
+    expect(parseSlashCommand("/resume")).toEqual({ command: "resume" });
+    expect(parseSlashCommand("/resume now")).toEqual({
+      error: "/resume takes no arguments.",
+    });
+  });
   test("a built-in still wins over a same-named custom entry", () => {
     expect(parseSlashCommand("/help", new Set(["help"]))).toEqual({
       command: "help",
@@ -82,6 +88,15 @@ describe("helpText", () => {
       expect(text).toContain(`/${c.name}`);
       expect(text).toContain(c.description);
     }
+  });
+  test("help lists resume between reopen and copy", () => {
+    const lines = helpText().split("\n");
+    const at = (name: string) =>
+      lines.findIndex((l) => l.startsWith(`/${name} `));
+    expect(at("reopen")).toBeGreaterThanOrEqual(0);
+    expect(at("reopen")).toBeLessThan(at("resume"));
+    expect(at("resume")).toBeLessThan(at("copy"));
+    expect(lines[at("resume")]).toContain("Go back to a saved session");
   });
   test("appends custom commands after the built-ins, aligned to the longest", () => {
     const text = helpText([
@@ -183,6 +198,12 @@ describe("matchCommands", () => {
       "login",
       "logout",
       "logs",
+    ]);
+  });
+  test("the first match of /re is still reopen", () => {
+    expect(matchCommands("re", []).map((c) => c.name)).toEqual([
+      "reopen",
+      "resume",
     ]);
   });
   test("no match is an empty list", () => {

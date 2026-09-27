@@ -59,6 +59,8 @@ export type WebviewCommand =
   | "reopen"
   /** The host copies the last reply to the clipboard. */
   | "copy"
+  /** The host shows the saved sessions in a native picker. */
+  | "resume"
   /** The host answers with a `help` history entry. Sent by the webview and
    * by the `<id>.help` VS Code command. */
   | "help"

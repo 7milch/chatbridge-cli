@@ -4,8 +4,11 @@ import {
   ChatSession,
   DEFAULT_IDLE_TIMEOUT_MS,
   type Provider,
+  SAVE_FAILED_MESSAGE,
+  SessionRecorder,
   commandInfoOf,
   createAuthStore,
+  createSessionStore,
   resolveUrlHooks,
   runLogin,
 } from "@chatbridge/core";
@@ -19,6 +22,7 @@ import {
   missingContributions,
   recommendedContributions,
 } from "./manifest.js";
+import { parseSaveSessions } from "./save-sessions-setting.js";
 import { onSendResult } from "./send-result.js";
 import {
   SessionController,
@@ -63,12 +67,15 @@ export interface ExtensionApi {
   handlers: CommandHandlers;
   /** The E2E reads the last active file the host pushed to the view. */
   bridge: ChatViewBridge;
+  /** The E2E reads and seeds saved sessions through it. */
+  sessions: SessionRecorder;
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 
 export function createExtension(opts: CreateExtensionOptions) {
   let controller: SessionController | undefined;
+  let sessions: SessionRecorder | undefined;
 
   async function activate(
     context: vscode.ExtensionContext,
@@ -192,7 +199,35 @@ export function createExtension(opts: CreateExtensionOptions) {
       bridge.pushProgress(message);
     }
 
+    let warnedSaveSessions = false;
+    sessions = new SessionRecorder({
+      store: createSessionStore({
+        configDir: opts.configDir ?? opts.id,
+        providerName: opts.provider.name,
+        baseDir: opts.baseDir,
+      }),
+      provider: opts.provider.name,
+      enabled: () => {
+        const cfg = vscode.workspace.getConfiguration(opts.id);
+        const { enabled, invalid } = parseSaveSessions(
+          userSetting(cfg.inspect<unknown>("saveSessions")),
+        );
+        if (invalid && !warnedSaveSessions) {
+          warnedSaveSessions = true;
+          void vscode.window.showWarningMessage(
+            `${opts.displayName}: "${opts.id}.saveSessions" must be true or false; sessions are saved.`,
+          );
+        }
+        return enabled;
+      },
+      onSaveFailed: () =>
+        void vscode.window.showWarningMessage(
+          `${opts.displayName}: ${SAVE_FAILED_MESSAGE}`,
+        ),
+    });
+
     controller = new SessionController({
+      recorder: sessions,
       // `conversation` is the handle the controller remembers, so a reopen
       // lands back in the same chat; undefined starts a new one.
       openSession: (onIdleExpired, conversation) =>
@@ -247,6 +282,7 @@ export function createExtension(opts: CreateExtensionOptions) {
       clearAuth: () => authStore.clear(),
       writeClipboard: (text) => vscode.env.clipboard.writeText(text),
       commands,
+      sessions,
     });
 
     context.subscriptions.push(
@@ -283,12 +319,16 @@ export function createExtension(opts: CreateExtensionOptions) {
       vscode.commands.registerCommand(`${opts.id}.help`, () =>
         handlers.helpInView(),
       ),
+      vscode.commands.registerCommand(`${opts.id}.resume`, () =>
+        handlers.resume(),
+      ),
     );
-    return { controller, handlers, bridge };
+    return { controller, handlers, bridge, sessions };
   }
 
   async function deactivate(): Promise<void> {
     await controller?.close();
+    await sessions?.flush();
   }
 
   return { activate, deactivate };

@@ -34,6 +34,7 @@ export const COMMAND_LIST = [
   "newChat",
   "installBrowser",
   "reopen",
+  "resume",
   "copy",
   "help",
   "pickFiles",

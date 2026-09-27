@@ -6,7 +6,12 @@ import {
   TextRenderable,
 } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
-import { MAX_ROWS, MentionPopup, POPUP_HINT } from "./mention-popup.js";
+import {
+  MAX_ROWS,
+  MentionPopup,
+  PICKER_HINT,
+  POPUP_HINT,
+} from "./mention-popup.js";
 
 /** Mention rows: the path is both the value and the label. */
 const paths = (...list: string[]) =>
@@ -19,8 +24,8 @@ afterEach(() => {
 });
 
 /** Root: history (grows) / input / popup / status — the ChatView order. */
-async function setup() {
-  const t = await createTestRenderer({ width: 40, height: 14 });
+async function setup(width = 40) {
+  const t = await createTestRenderer({ width, height: 14 });
   const root = new BoxRenderable(t.renderer, {
     id: "root",
     flexDirection: "column",
@@ -190,5 +195,143 @@ describe("MentionPopup", () => {
       { text: "src/a b/", dim: true },
       { text: "c.ts", dim: false },
     ]);
+  });
+});
+
+describe("MentionPopup.showAll", () => {
+  const many = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      value: `v${i}`,
+      label: `row ${String(i).padStart(2, "0")}`,
+      plain: true as const,
+    }));
+
+  test("keeps every row and shows the first MAX_ROWS", async () => {
+    const t = await setup();
+    t.popup.showAll(many(12));
+    await t.renderOnce();
+    const frame = t.captureCharFrame();
+    expect(frame).toContain("row 00");
+    expect(frame).toContain(`row ${String(MAX_ROWS - 1).padStart(2, "0")}`);
+    expect(frame).not.toContain(`row ${String(MAX_ROWS).padStart(2, "0")}`);
+    expect(t.popup.selected).toBe("v0");
+  });
+
+  test("moving past the last visible row scrolls", async () => {
+    const t = await setup();
+    t.popup.showAll(many(12));
+    for (let i = 0; i < MAX_ROWS; i++) t.popup.move(1);
+    await t.renderOnce();
+    const frame = t.captureCharFrame();
+    expect(t.popup.selected).toBe(`v${MAX_ROWS}`);
+    expect(frame).toContain(`row ${String(MAX_ROWS).padStart(2, "0")}`);
+    expect(frame).not.toContain("row 00");
+  });
+
+  test("moving up from the first row wraps to the last and scrolls there", async () => {
+    const t = await setup();
+    t.popup.showAll(many(12));
+    t.popup.move(-1);
+    await t.renderOnce();
+    expect(t.popup.selected).toBe("v11");
+    expect(t.captureCharFrame()).toContain("row 11");
+  });
+
+  test("moving down from the last row wraps to the first", async () => {
+    const t = await setup();
+    t.popup.showAll(many(12));
+    t.popup.move(-1);
+    t.popup.move(1);
+    await t.renderOnce();
+    expect(t.popup.selected).toBe("v0");
+    expect(t.captureCharFrame()).toContain("row 00");
+  });
+
+  test("show() after showAll() starts at the top again", async () => {
+    const t = await setup();
+    t.popup.showAll(many(12));
+    t.popup.move(-1);
+    t.popup.show(paths("src/a.ts"));
+    await t.renderOnce();
+    expect(t.popup.selected).toBe("src/a.ts");
+    expect(t.captureCharFrame()).toContain("src/a.ts");
+  });
+
+  test("a plain row is not dimmed before its last slash", async () => {
+    const t = await setup();
+    t.popup.showAll([
+      { value: "a", label: "first", plain: true },
+      { value: "b", label: "compare a/b testing", plain: true },
+    ]);
+    await t.renderOnce();
+    // Row 1 is not the selected one, so it takes the unselected branch.
+    expect(t.chunks(1).some((c) => c.dim)).toBe(false);
+  });
+
+  test("an empty list hides", async () => {
+    const t = await setup();
+    t.popup.showAll([]);
+    expect(t.popup.visible).toBe(false);
+  });
+
+  /** The hint row: the last row the popup draws, trimmed. */
+  const hintOf = (t: Awaited<ReturnType<typeof setup>>) =>
+    t
+      .rows()
+      .find((r) => r.includes("↕"))
+      ?.trim();
+
+  test("has a hint of its own: Tab does nothing in the picker", async () => {
+    const t = await setup();
+    t.popup.showAll(many(3));
+    await t.renderOnce();
+    expect(hintOf(t)).toBe(PICKER_HINT);
+    expect(t.captureCharFrame()).not.toContain("Tab");
+  });
+
+  test("a list longer than the rows says where the selection is", async () => {
+    // Wide enough for the counter: 40 columns clip it.
+    const t = await setup(60);
+    t.popup.showAll(many(12));
+    await t.renderOnce();
+    expect(hintOf(t)).toBe(`${PICKER_HINT} · 1/12`);
+    t.popup.move(1);
+    t.popup.move(1);
+    await t.renderOnce();
+    expect(hintOf(t)).toBe(`${PICKER_HINT} · 3/12`);
+    t.popup.move(-1);
+    t.popup.move(-1);
+    t.popup.move(-1);
+    await t.renderOnce();
+    expect(hintOf(t)).toBe(`${PICKER_HINT} · 12/12`);
+  });
+
+  test("a list that fits has no counter", async () => {
+    const t = await setup();
+    t.popup.showAll(many(MAX_ROWS));
+    await t.renderOnce();
+    expect(hintOf(t)).toBe(PICKER_HINT);
+  });
+
+  test("show() after showAll() has the mention hint again", async () => {
+    const t = await setup();
+    t.popup.showAll(many(12));
+    t.popup.show(paths("src/a.ts"));
+    await t.renderOnce();
+    expect(hintOf(t)).toBe(POPUP_HINT);
+  });
+
+  test("labelWidth is what a row can draw after the indent", async () => {
+    const t = await setup();
+    expect(t.popup.labelWidth).toBe(38);
+  });
+
+  test("a wide label is clipped by cells, not code units", async () => {
+    const t = await setup();
+    t.popup.showAll([{ value: "a", label: "日".repeat(30), plain: true }]);
+    await t.renderOnce();
+    const row = t.rows().find((r) => r.includes("日"));
+    expect(row).toContain("日".repeat(19));
+    expect(row).not.toContain("日".repeat(20));
   });
 });

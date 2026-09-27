@@ -3,19 +3,23 @@ import {
   type CliRenderer,
   type TextRenderable,
 } from "@opentui/core";
+import { clipToWidth } from "./display-width.js";
 import { text } from "./text.js";
 import { styled, theme } from "./theme.js";
 
 /** Rows shown at once; the search already caps candidates to this. */
 export const MAX_ROWS = 8;
 export const POPUP_HINT = "↕ select · Tab/Enter accept · Esc close";
+/** The session picker's hint: Tab does nothing there, and Enter resumes. A
+ * list longer than MAX_ROWS adds ` · <selected>/<total>`. */
+export const PICKER_HINT = "↕ select · Enter resume · Esc cancel";
 const INDENT = "  ";
 /** The hint is 39 cells wide, so a 2-cell indent would clip its last
  * character on an 80/40-column terminal; one cell keeps it whole. */
 const HINT_INDENT = " ";
 
-/** Candidate list for an `@` mention or a `/` command, drawn inline below
- * the input (the
+/** Candidate list for an `@` mention, a `/` command or a saved session (the
+ * `/resume` picker, which scrolls), drawn inline below the input (the
  * parent's next child after the input, before the status row). Hidden it
  * takes no rows. Purely presentational: the view decides what the keys do.
  * Rows are created once and re-labelled, so show/hide never churns
@@ -25,13 +29,22 @@ const HINT_INDENT = " ";
 export interface PopupRow {
   value: string;
   label: string;
+  /** Draw the label as it is: no dimming of what precedes the last `/`.
+   * For rows that are not paths. */
+  plain?: true;
 }
 
 export class MentionPopup {
   private readonly box: BoxRenderable;
   private readonly rows: TextRenderable[] = [];
+  private readonly hint: TextRenderable;
+  /** True for a showAll() list: the picker's hint and position counter. */
+  private all = false;
   private candidates: PopupRow[] = [];
   private index = 0;
+  /** The candidate drawn in the first row. Stays 0 unless a showAll()
+   * list is longer than MAX_ROWS. */
+  private top = 0;
 
   constructor(
     private readonly renderer: CliRenderer,
@@ -52,17 +65,21 @@ export class MentionPopup {
       this.rows.push(row);
       this.box.add(row);
     }
-    this.box.add(
-      text(renderer, {
-        content: styled(theme.muted(`${HINT_INDENT}${POPUP_HINT}`)),
-        wrapMode: "none",
-      }),
-    );
+    this.hint = text(renderer, {
+      content: styled(theme.muted(`${HINT_INDENT}${POPUP_HINT}`)),
+      wrapMode: "none",
+    });
+    this.box.add(this.hint);
     parent.add(this.box);
   }
 
   get visible(): boolean {
     return this.box.visible;
+  }
+
+  /** Cells a row's label can take: the terminal width minus the indent. */
+  get labelWidth(): number {
+    return Math.max(1, this.renderer.terminalWidth - INDENT.length);
   }
 
   get selected(): string | undefined {
@@ -71,19 +88,21 @@ export class MentionPopup {
 
   /** Replaces the list and selects the first row. Empty list hides. */
   show(candidates: PopupRow[]): void {
-    this.candidates = candidates.slice(0, MAX_ROWS);
-    this.index = 0;
-    if (this.candidates.length === 0) {
-      this.hide();
-      return;
-    }
-    this.box.visible = true;
-    this.paint();
+    this.all = false;
+    this.open(candidates.slice(0, MAX_ROWS));
+  }
+
+  /** Like show(), but keeps every row and scrolls: the visible window of
+   * MAX_ROWS follows the selection. */
+  showAll(rows: PopupRow[]): void {
+    this.all = true;
+    this.open([...rows]);
   }
 
   hide(): void {
     this.candidates = [];
     this.index = 0;
+    this.top = 0;
     this.box.visible = false;
   }
 
@@ -92,6 +111,20 @@ export class MentionPopup {
     const n = this.candidates.length;
     if (n === 0) return;
     this.index = (this.index + delta + n) % n;
+    if (this.index < this.top) this.top = this.index;
+    if (this.index >= this.top + MAX_ROWS) this.top = this.index - MAX_ROWS + 1;
+    this.paint();
+  }
+
+  private open(candidates: PopupRow[]): void {
+    this.candidates = candidates;
+    this.index = 0;
+    this.top = 0;
+    if (candidates.length === 0) {
+      this.hide();
+      return;
+    }
+    this.box.visible = true;
     this.paint();
   }
 
@@ -99,17 +132,27 @@ export class MentionPopup {
     this.box.visible = false;
   }
 
+  private hintText(): string {
+    if (!this.all) return POPUP_HINT;
+    const n = this.candidates.length;
+    // Scrolling is otherwise silent: nothing says more rows exist.
+    return n > MAX_ROWS
+      ? `${PICKER_HINT} · ${this.index + 1}/${n}`
+      : PICKER_HINT;
+  }
+
   private paint(): void {
-    const width = Math.max(1, this.renderer.terminalWidth - INDENT.length);
+    const width = this.labelWidth;
+    this.hint.content = styled(theme.muted(`${HINT_INDENT}${this.hintText()}`));
     this.rows.forEach((row, i) => {
-      const item = this.candidates[i];
+      const item = this.candidates[this.top + i];
       if (item === undefined) {
         row.visible = false;
         return;
       }
       row.visible = true;
-      const text = item.label.slice(0, width);
-      if (i === this.index) {
+      const text = clipToWidth(item.label, width);
+      if (this.top + i === this.index) {
         row.content = styled(theme.selected(`${INDENT}${text}`));
         return;
       }
@@ -117,7 +160,9 @@ export class MentionPopup {
       // with the slash of `/name` and is drawn plain: dimming there would
       // grey the command itself. Mention paths are relative, so they never
       // start with "/" and keep exactly this dimming.
-      const slash = text.startsWith("/") ? -1 : text.lastIndexOf("/");
+      // A plain row (a session title) may contain a slash that is no path.
+      const slash =
+        item.plain || text.startsWith("/") ? -1 : text.lastIndexOf("/");
       row.content =
         slash === -1
           ? styled(`${INDENT}${text}`)
