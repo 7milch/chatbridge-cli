@@ -160,6 +160,10 @@ out, while the two-turn test still reads the saved state as logged in.
 
 ## 0.13.0
 
+Interactive sessions are now saved on the user's machine by default: every
+terminal and VSCode chat is written to disk as it proceeds. Logging out deletes
+them, and the user can turn saving off.
+
 **Required:**
 
 1. If your provider defines a command named `resume`, rename it. `resume` is
@@ -209,6 +213,13 @@ Needs DOM observation: no.
 Change: none, if your `conversation.handle` returns a conversation URL or id.
 If it returns anything that carries a credential, change it: the handle is
 written to the session file.
+
+The handle `open` receives is now read back from a file the user can edit.
+With `urlConversation`, `match` is the only check before `page.goto`: if your
+`match` does not include the chat's origin, anchor it there, e.g.
+`/^https:\/\/chat\.example\.com\/c\/[0-9a-f-]+(?:[/?#]|$)/`. A hand-written
+`open` checks the handle the same way before navigating or putting it in a
+selector.
 
 Verify: send a message, quit, start again, `/resume`, pick the session. The
 separator reads `resumed · conversation restored`.

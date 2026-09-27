@@ -183,12 +183,35 @@ says what came back:
 in flight, or while messages are queued, it answers
 `Wait for the current step to finish before /resume.` and does nothing.
 
-While the picker is open it is modal: typing does not reach the input box and
-Ctrl+R does not reopen the browser.
+While the picker is open it is modal: typing and pasting do not reach the input
+box, Ctrl+R does not reopen the browser, and PgUp / PgDn do not scroll the
+history. Ctrl+C still quits. The row under the picker reads
+`↕ select · Enter resume · Esc cancel`; when there are more sessions than the
+eight rows it shows, it ends with your position, for example ` · 3/30`. A title
+too wide for the terminal is shortened with `…` so the turn count stays visible.
+
+What `/resume` and saving can tell you, on the status line or in the history:
+
+| Message | When |
+|---|---|
+| `Wait for the current step to finish before /resume.` | `/resume` while a reply, a shell command, a login or a reopen is in flight, or while messages are queued. Nothing changes. |
+| `Session saving is turned off.` | `/resume` with `sessions.enabled` set to `false`. |
+| `No saved sessions.` | `/resume` when the provider has no saved session other than the one you are in. |
+| `That session could not be loaded.` | The session you picked was deleted or damaged in the meantime. The current chat goes on. |
+| `Could not save this session.` | A save failed, for example on a full disk. Shown once per session; the chat continues and the next turn tries again. |
+| `Could not delete the saved sessions.` | After a logout, when the saved sessions could not be deleted. The logout itself stands. |
 
 Saved sessions need no housekeeping. Sessions not updated for 14 days are
 deleted, and only the 50 most recent are kept. `/logout` and `auth logout`
 delete every saved session of the provider. An expired login deletes nothing.
+
+Several sessions at once: logging out deletes what is on disk at that moment.
+Another session of the same provider that is still running, in a second
+terminal or a VSCode window, keeps saving and writes its own conversation again
+at its next turn (tracked in
+[#138](https://github.com/7milch/chatbridge-cli/issues/138)). Quit the other
+sessions before logging out. Two sessions that resume the same saved session
+each rewrite the whole file, and the one that saves last wins.
 
 What is saved: the messages as the history shows them, the output of `!`
 commands, the paths and sizes of attached files, and the conversation handle.

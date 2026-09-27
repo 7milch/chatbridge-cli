@@ -51,6 +51,7 @@ Agreed with the maintainer during brainstorming:
   auth state on disk (#137). Both delete the saved sessions as this milestone
   intends; the auth-state deletion they already claim to do is a pre-existing
   defect, tracked separately.
+- Stopping another running process from saving after a logout (#138).
 
 ## Design
 
@@ -260,6 +261,16 @@ VSCode. They are not history entries, so they are never saved.
 - Up / Down move, Enter selects, Esc cancels.
 - More rows than the popup shows scroll; nothing is truncated silently.
 - Times are local.
+- The picker has its own hint, `↕ select · Enter resume · Esc cancel`; the
+  mention and command popup keeps its `Tab/Enter accept` hint.
+- When there are more sessions than the popup's eight rows, the hint ends with
+  the position, ` · <selected>/<total>`, updated on every move.
+- Widths are display cells, not code units: a Japanese character or an emoji
+  takes two. Titles are padded to the widest by cells, and a title that would
+  push the row past the terminal width is shortened by whole characters,
+  ending with `…`, so the time and the turn count always show.
+- The picker is modal: keys, including Ctrl+R and PgUp / PgDn, and pastes do
+  not reach the input or the history. Ctrl+C still quits.
 
 ### 6. VSCode
 
@@ -297,6 +308,11 @@ VSCode. They are not history entries, so they are never saved.
   already falls back to a new chat.
 - The provider contract already says a handle must never embed credentials; the
   provider documentation repeats it now that handles reach the disk.
+- Several processes: a logout deletes what is on disk at that moment. Another
+  process of the same provider that is still running keeps its recorder and
+  writes its conversation again at its next turn (#138). The user documentation
+  says to quit the other sessions before logging out. Two processes that resume
+  the same saved session each rewrite the whole file; the last save wins.
 
 ### 8. What a vendor sees
 

@@ -26,6 +26,15 @@ what it is for. `open` may be called with a handle from days ago, from before
 a logout and a new login, or for a conversation that was deleted since: throw,
 and the framework starts a new chat and says so.
 
+Treat the handle `open` receives as untrusted input. It is read back from a
+file the user can edit, so it may be anything. Before navigating, check that it
+names a conversation on the chat's own origin, and throw when it does not.
+`urlConversation` does this through `match`: it refuses a handle `match`
+rejects before calling `page.goto`, so write `match` to accept only your chat's
+origin (anchor it on `^https://chat\.example\.com/`). The framework's own
+origin check runs after `open` returns and only decides whether the outcome
+counts as restored; by then the navigation has happened.
+
 ## What the framework does with it
 
 - `handle(page)` runs after every turn, under a 5 s budget
@@ -84,6 +93,9 @@ export function urlConversation(options: {
   conversation did not open."` when the navigation lands somewhere `match`
   rejects (a service redirecting an unknown id back to the plain chat page
   must read as a failure, not as a restore).
+- `open` tests the handle against `match` before it navigates, so `match` is
+  the only check a handle from disk goes through. Include the chat's origin in
+  it.
 - `match` is tested against the whole URL, including any query string or
   fragment. Do not anchor it with `$` when a real conversation URL can
   carry one; prefer a form such as `/\/c\/[0-9a-f-]+(?:[/?#]|$)/`.
@@ -96,7 +108,7 @@ export function urlConversation(options: {
 
 ```ts
 conversation: urlConversation({
-  match: /\/c\/[0-9a-f-]+(?:[/?#]|$)/,
+  match: /^https:\/\/chat\.example\.com\/c\/[0-9a-f-]+(?:[/?#]|$)/,
 }),
 ```
 
@@ -110,6 +122,8 @@ conversation: {
     return id ?? undefined;
   },
   async open(page, handle) {
+    // From a file the user can edit: never put it in a selector unchecked.
+    if (!/^[0-9a-f-]+$/.test(handle)) throw new Error("Not a conversation id.");
     await page.goto(chatUrl);
     await page.locator(`[data-conversation-id="${handle}"]`).click();
     await page.locator(`[data-active-conversation="${handle}"]`).waitFor();

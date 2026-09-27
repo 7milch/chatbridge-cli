@@ -23,7 +23,7 @@ button that runs the same install and retries the turn.
 | Command | Does |
 |---|---|
 | Log in | Shows a cancellable notification `Log in to <Vendor>`. Refused while a turn is in flight: `Wait for the current reply to finish, then log in.` On success, a `Logged in` separator is added to the history. |
-| Log out | Deletes the saved auth state, closes the browser, adds a `Logged out` separator, and forgets the current conversation. A message sent while it runs is queued until it finishes. |
+| Log out | Deletes the saved auth state and the provider's saved sessions, closes the browser, adds a `Logged out` separator, and forgets the current conversation. A message sent while it runs is queued until it finishes. |
 | New Chat | Closes the browser and adds a `New chat` separator; the browser reopens lazily on the next send. Refused mid-turn: `Wait for the current reply to finish, or press Ctrl+R to reopen.` |
 | Reopen Browser (Ctrl+R / Cmd+R while the view is focused) | Replaces the browser regardless of its current state and adds a `reopened` separator, including a restore note about the conversation. |
 | Resume (`<id>.resume`) | Pick a saved session and go back to it. In the view's `...` menu and the palette when the extension's manifest declares it. |
@@ -144,4 +144,7 @@ See [Saved sessions and /resume](interactive-mode.md#saved-sessions-and-resume)
 for what is saved, the separators and the retention rule; it applies here too.
 Two differences from the terminal UI: the picker is VSCode's own QuickPick
 (type to filter), and a `!` command saved by the TUI is shown as plain text
-(`$ command` and its output).
+(`$ command` and its output). The messages that the terminal shows on its
+status line appear here as VSCode notifications; see
+[the table of messages](interactive-mode.md#saved-sessions-and-resume) for what
+each one means.
