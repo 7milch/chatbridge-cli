@@ -1861,6 +1861,8 @@ describe("SessionController: saved sessions", () => {
       openError: undefined as Error | undefined,
       /** When set, an open waits for it before returning the session. */
       openGate: undefined as Promise<void> | undefined,
+      /** When set, a close waits for it. */
+      closeGate: undefined as Promise<void> | undefined,
     };
     let closed = 0;
     const controller = new SessionController({
@@ -1883,6 +1885,7 @@ describe("SessionController: saved sessions", () => {
           },
           async close() {
             closed++;
+            await next.closeGate;
           },
           async kill() {},
         };
@@ -1979,20 +1982,26 @@ describe("SessionController: saved sessions", () => {
     ]);
   });
 
-  test("clearSessions deletes and what is on screen is not saved again", async () => {
+  test("logout deletes and what is on screen is not saved again", async () => {
     const t = setup();
     await t.turn("one", "1");
-    await t.controller.clearSessions();
-    expect(await t.controller.discard("Logged out")).toBe(true);
+    expect(await t.controller.logout(async () => {})).toBe("done");
     await t.r.recorder.flush();
     expect(t.r.state.cleared).toBe(1);
     expect(t.r.files.size).toBe(0);
+    expect(t.controller.getState().messages.at(-1)).toEqual({
+      role: "separator",
+      text: "Logged out",
+    });
   });
 
-  test("clearSessions rejects when the delete failed", async () => {
+  test("logout reports a failed delete and still logs out", async () => {
     const t = setup();
     t.r.state.failClear = true;
-    await expect(t.controller.clearSessions()).rejects.toThrow();
+    expect(await t.controller.logout(async () => {})).toBe(
+      "sessions-not-deleted",
+    );
+    expect(t.controller.getState().messages.at(-1)?.text).toBe("Logged out");
   });
 
   test("a save that fails does not disturb the turn", async () => {
@@ -2146,79 +2155,140 @@ describe("SessionController: saved sessions", () => {
     await t.r.recorder.flush();
     expect(t.r.files.get(OLD)?.messages[0]).toEqual(shell);
   });
-  describe("while a logout deletes the sessions", () => {
-    /** Starts clearSessions with the delete held until `open()`. */
-    function gatedClear(t: ReturnType<typeof setup>) {
-      const gate = deferred<void>();
-      t.r.state.clearGate = gate.promise;
-      const clearing = t.controller.clearSessions();
+  describe("logout claims the controller", () => {
+    /** A logout whose auth delete and sessions delete are each held until
+     * released, so the test can act inside either await. */
+    function gatedLogout(t: ReturnType<typeof setup>) {
+      const auth = deferred<void>();
+      const clear = deferred<void>();
+      t.r.state.clearGate = clear.promise;
+      const order: string[] = [];
+      const done = t.controller.logout(async () => {
+        order.push("clearAuth");
+        await auth.promise;
+      });
       return {
-        clearing,
-        async open() {
-          gate.resolve();
-          await clearing;
-        },
+        done,
+        order,
+        releaseAuth: () => auth.resolve(),
+        releaseClear: () => clear.resolve(),
       };
     }
 
-    test("a turn that settles meanwhile is not saved", async () => {
+    test("the auth state goes first, then the sessions, then the separator", async () => {
       const t = setup();
       await t.turn("one", "1");
-      const p = t.controller.send("two");
-      await waitFor(() => t.replies.length > 1);
-      const c = gatedClear(t);
-      t.replies[1]?.resolve("2");
-      await p;
-      await c.open();
-      await t.r.recorder.flush();
-      expect(t.r.files.size).toBe(0);
-      // The view still shows it.
-      expect(t.controller.getState().messages.at(-1)?.text).toBe("2");
+      const l = gatedLogout(t);
+      expect(l.order).toEqual(["clearAuth"]);
+      expect(t.r.state.cleared).toBe(0);
+      l.releaseAuth();
+      await waitFor(() => t.r.state.cleared === 1);
+      expect(t.controller.getState().messages.at(-1)?.text).toBe("1");
+      l.releaseClear();
+      expect(await l.done).toBe("done");
+      expect(t.controller.getState().messages.at(-1)?.text).toBe("Logged out");
     });
 
-    test("a queued turn drained, sent and answered meanwhile is not saved", async () => {
+    test("refused while a turn is in flight: nothing is deleted", async () => {
+      const t = setup();
+      const p = t.controller.send("busy");
+      await waitFor(() => t.replies.length > 0);
+      let authCleared = false;
+      expect(
+        await t.controller.logout(async () => {
+          authCleared = true;
+        }),
+      ).toBe("busy");
+      expect(authCleared).toBe(false);
+      expect(t.r.state.cleared).toBe(0);
+      t.replies[0]?.resolve("done");
+      await p;
+    });
+
+    // Window 1: a send while the auth state is deleted.
+    test("a send during the auth delete queues and runs after the separator", async () => {
       const t = setup();
       await t.turn("one", "1");
-      const p = t.controller.send("two");
+      const l = gatedLogout(t);
+      expect(await t.controller.send("two")).toEqual({
+        ok: true,
+        queued: true,
+      });
+      expect(t.replies).toHaveLength(1);
+      l.releaseAuth();
+      l.releaseClear();
+      expect(await l.done).toBe("done");
       await waitFor(() => t.replies.length > 1);
-      await t.controller.send("three");
-      const c = gatedClear(t);
       t.replies[1]?.resolve("2");
-      await p;
-      await waitFor(() => t.replies.length > 2);
-      t.replies[2]?.resolve("3");
       await waitFor(() => t.controller.getState().status === "idle");
-      await c.open();
+      expect(t.controller.getState().messages.map((m) => m.text)).toEqual([
+        "one",
+        "1",
+        "Logged out",
+        "two",
+        "2",
+      ]);
+      // The queued turn opened a fresh browser with no handle.
+      expect(t.openedWith).toEqual([undefined, undefined]);
       await t.r.recorder.flush();
-      expect(t.r.files.size).toBe(0);
-      expect(t.controller.getState().messages.at(-1)?.text).toBe("3");
+      expect([...t.r.files.values()].map((f) => f.messages)).toEqual([
+        [
+          { role: "user", text: "two" },
+          { role: "assistant", text: "2" },
+        ],
+      ]);
     });
 
-    test("a turn sent meanwhile is not saved, even when its open lands after", async () => {
+    test("a send during the sessions delete queues too", async () => {
       const t = setup();
-      t.next.conversation = "H1";
       await t.turn("one", "1");
-      // No browser: the next send opens one lazily, and its restore note is
-      // spliced in front of the user entry after the delete has finished.
-      await t.controller.close();
-      t.next.restored = false;
-      const opening = deferred<void>();
-      t.next.openGate = opening.promise;
-      const c = gatedClear(t);
-      const p = t.controller.send("two");
-      await c.open();
-      opening.resolve();
+      const l = gatedLogout(t);
+      l.releaseAuth();
+      await waitFor(() => t.r.state.cleared === 1);
+      await t.controller.send("two");
+      expect(t.replies).toHaveLength(1);
+      l.releaseClear();
+      await l.done;
       await waitFor(() => t.replies.length > 1);
       t.replies[1]?.resolve("2");
-      await p;
+      await waitFor(() => t.controller.getState().status === "idle");
       await t.r.recorder.flush();
-      expect(t.r.files.size).toBe(0);
+      expect([...t.r.files.values()].map((f) => f.messages)).toEqual([
+        [
+          { role: "user", text: "two" },
+          { role: "assistant", text: "2" },
+        ],
+      ]);
     });
 
-    test("a rejecting delete leaves saving on", async () => {
+    test("a failed auth delete rejects, deletes nothing else and releases the claim", async () => {
+      const t = setup();
+      await t.turn("one", "1");
+      const auth = deferred<void>();
+      const done = t.controller.logout(() => auth.promise);
+      await t.controller.send("two");
+      auth.reject(new Error("EACCES"));
+      await expect(done).rejects.toThrow("EACCES");
+      expect(t.r.state.cleared).toBe(0);
+      // Nothing was logged out: the queued turn runs on the same browser.
+      await waitFor(() => t.replies.length > 1);
+      t.replies[1]?.resolve("2");
+      await waitFor(() => t.controller.getState().status === "idle");
+      expect(t.controller.getState().messages.map((m) => m.text)).toEqual([
+        "one",
+        "1",
+        "two",
+        "2",
+      ]);
+      expect(t.openedWith).toEqual([undefined]);
+    });
+
+    test("a rejecting sessions delete leaves saving on for the new session", async () => {
       const t = setup();
       t.r.state.failClear = true;
-      await expect(t.controller.clearSessions()).rejects.toThrow();
+      expect(await t.controller.logout(async () => {})).toBe(
+        "sessions-not-deleted",
+      );
       await t.turn("two", "2");
       await t.r.recorder.flush();
       expect([...t.r.files.values()].map((f) => f.messages)).toEqual([
@@ -2231,12 +2301,131 @@ describe("SessionController: saved sessions", () => {
 
     test("a resume is refused", async () => {
       const t = setup();
-      const c = gatedClear(t);
+      const l = gatedLogout(t);
       expect(t.controller.canResume).toBe(false);
       expect(await t.controller.resume(saved())).toBe(false);
       expect(t.openedWith).toEqual([]);
-      await c.open();
+      l.releaseAuth();
+      l.releaseClear();
+      await l.done;
       expect(t.controller.canResume).toBe(true);
     });
+
+    test("New chat is refused", async () => {
+      const t = setup();
+      const l = gatedLogout(t);
+      expect(await t.controller.newChat()).toBe(false);
+      l.releaseAuth();
+      l.releaseClear();
+      await l.done;
+    });
+
+    test("a reopen waits for the logout and does not return to the old conversation", async () => {
+      const t = setup();
+      t.next.conversation = "H1";
+      await t.turn("one", "1");
+      const l = gatedLogout(t);
+      const reopened = t.controller.reopen();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(t.openedWith).toEqual([undefined]);
+      l.releaseAuth();
+      l.releaseClear();
+      await l.done;
+      await reopened;
+      expect(t.openedWith).toEqual([undefined, undefined]);
+      expect(t.controller.getState().messages.map((m) => m.text)).toEqual([
+        "one",
+        "1",
+        "Logged out",
+        REOPENED_SEPARATOR,
+      ]);
+      await t.r.recorder.flush();
+      expect([...t.r.files.values()].some((f) => f.conversation === "H1")).toBe(
+        false,
+      );
+    });
+
+    // Window 2: a send while the old browser closes.
+    test("a send while the logout closes the browser waits for the separator", async () => {
+      const t = setup();
+      await t.turn("one", "1");
+      const closing = deferred<void>();
+      t.next.closeGate = closing.promise;
+      const done = t.controller.logout(async () => {});
+      await waitFor(() => t.closed() === 1);
+      await t.controller.send("two");
+      expect(t.replies).toHaveLength(1);
+      t.next.closeGate = undefined;
+      closing.resolve();
+      await done;
+      await waitFor(() => t.replies.length > 1);
+      t.replies[1]?.resolve("2");
+      await waitFor(() => t.controller.getState().status === "idle");
+      await t.r.recorder.flush();
+      expect([...t.r.files.values()].map((f) => f.messages)).toEqual([
+        [
+          { role: "user", text: "two" },
+          { role: "assistant", text: "2" },
+        ],
+      ]);
+    });
+
+    test("a send while New chat closes the browser starts in the new chat", async () => {
+      const t = setup();
+      await t.turn("one", "1");
+      const closing = deferred<void>();
+      t.next.closeGate = closing.promise;
+      const done = t.controller.newChat();
+      await waitFor(() => t.closed() === 1);
+      await t.controller.send("two");
+      // No turn on the session being closed.
+      expect(t.replies).toHaveLength(1);
+      t.next.closeGate = undefined;
+      closing.resolve();
+      expect(await done).toBe(true);
+      await waitFor(() => t.replies.length > 1);
+      t.replies[1]?.resolve("2");
+      await waitFor(() => t.controller.getState().status === "idle");
+      expect(t.controller.getState().messages.map((m) => m.text)).toEqual([
+        "one",
+        "1",
+        "New chat",
+        "two",
+        "2",
+      ]);
+      await t.r.recorder.flush();
+      expect([...t.r.files.values()].map((f) => f.messages)).toEqual([
+        [
+          { role: "user", text: "one" },
+          { role: "assistant", text: "1" },
+        ],
+        [
+          { role: "user", text: "two" },
+          { role: "assistant", text: "2" },
+        ],
+      ]);
+    });
+  });
+
+  // Window 3.
+  test("a reply retried after a logout is saved", async () => {
+    const t = setup();
+    await t.turn("one", "1");
+    await t.controller.logout(async () => {});
+    t.next.openError = new BrowserUnavailableError("gone");
+    await t.controller.send("two");
+    expect(t.controller.getState().status).toBe("dead");
+    t.next.openError = undefined;
+    const retried = t.controller.retryLast();
+    await waitFor(() => t.replies.length > 1);
+    t.replies[1]?.resolve("2");
+    await retried;
+    await t.r.recorder.flush();
+    expect([...t.r.files.values()].map((f) => f.messages)).toEqual([
+      [
+        { role: "user", text: "two" },
+        { role: "assistant", text: "2" },
+      ],
+    ]);
   });
 });

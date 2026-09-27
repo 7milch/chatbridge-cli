@@ -170,9 +170,12 @@ export class SessionController {
   private sessionStart = 0;
   /** The stored form of resumed entries this view cannot express. */
   private readonly origins: Origins = new WeakMap();
-  /** True while a logout deletes the saved sessions: nothing that settles
-   * meanwhile is saved. The turn still runs and the view still shows it. */
-  private discarding = false;
+  /** Held by a logout from its first await until its separator, and by
+   * `discard` while it closes the browser. No turn starts and nothing is
+   * saved while it is held: sends queue and drain once it is released, and a
+   * reopen waits for it. A turn started meanwhile would run on the browser
+   * being closed, under the account being logged out. */
+  private claim: Promise<void> | undefined;
   private readonly closeTimeoutMs: number;
 
   constructor(private readonly opts: SessionControllerOptions) {
@@ -235,7 +238,7 @@ export class SessionController {
    * Every caller runs it before the `drain()` that may claim the next
    * turn, so a save never holds that turn's user entry without its end. */
   private persist(): void {
-    if (this.discarding) return;
+    if (this.claim !== undefined) return;
     this.opts.recorder?.record({
       conversation: this.conversationHandle,
       messages: toStored(this.messages.slice(this.sessionStart), this.origins),
@@ -268,7 +271,7 @@ export class SessionController {
    * send is the user retrying, and only automatic draining must stop
    * while the controller is dead. */
   private get canStartTurn(): boolean {
-    if (this.expanding) return false;
+    if (this.expanding || this.claim !== undefined) return false;
     return (
       this.status === "idle" ||
       this.status === "closed" ||
@@ -489,9 +492,6 @@ export class SessionController {
       const before =
         this.messages[last]?.role === "user" ? last : this.messages.length;
       this.messages.splice(before, 0, { role: "separator", text: note });
-      // A turn sent while a logout deleted the sessions sits before
-      // `sessionStart`; the note must not push it into the saved session.
-      if (before < this.sessionStart) this.sessionStart++;
     }
     return session;
   }
@@ -579,7 +579,12 @@ export class SessionController {
         message: "A send is already in progress.",
       };
     }
-    if (this.messages.at(-1)?.role === "error") this.messages.pop();
+    if (this.messages.at(-1)?.role === "error") {
+      this.messages.pop();
+      // A saved session never starts past the end of the history: a reply
+      // retried from there would never be saved.
+      this.sessionStart = Math.min(this.sessionStart, this.messages.length);
+    }
     this.lastError = undefined;
     if (this.status === "dead") this.status = "closed";
     this.emit();
@@ -766,6 +771,9 @@ export class SessionController {
    * call while one is running joins the first. */
   reopen(): Promise<void> {
     if (this.reopening) return this.reopening;
+    // A reopen during a logout would open the old conversation under the
+    // auth state being deleted; after it, the reopen starts a fresh chat.
+    if (this.claim !== undefined) return this.claim.then(() => this.reopen());
     return this.startReopen((restored) =>
       withRestoreNote(REOPENED_SEPARATOR, restored),
     );
@@ -785,15 +793,15 @@ export class SessionController {
   }
 
   /** True when a resume may start: no turn, no open, no reopen in flight,
-   * nothing queued, and no logout deleting the sessions — a resume then
-   * would adopt a record of the account being logged out. */
+   * nothing queued, and no logout or New chat under way (`canStartTurn`) —
+   * a resume during a logout would adopt a record of the account being
+   * logged out. */
   get canResume(): boolean {
     return (
       this.canStartTurn &&
       this.queue.length === 0 &&
       this.reopening === undefined &&
-      this.opening === undefined &&
-      !this.discarding
+      this.opening === undefined
     );
   }
 
@@ -816,21 +824,45 @@ export class SessionController {
     return true;
   }
 
-  /** Logout: deletes every saved session. What is on screen is not saved
-   * again. Rejects when the delete failed. */
-  async clearSessions(): Promise<void> {
-    // Whatever settles while the delete runs — a reply, a command, a queued
-    // turn drained, sent and answered meanwhile — belongs to the account
-    // being logged out, and a save of it would land after the delete.
-    this.discarding = true;
+  /** Logout: deletes the auth state through `clearAuth`, then every saved
+   * session, then closes the browser behind a "Logged out" separator. The
+   * controller is claimed throughout, so nothing of the account being
+   * logged out starts or is saved; sends queue and run after the separator.
+   * "busy", with nothing deleted, when a turn is in flight. A `clearAuth`
+   * rejection is rethrown and nothing else happens. A failed sessions
+   * delete is "sessions-not-deleted", and the logout still completes: the
+   * auth state is gone. */
+  async logout(
+    clearAuth: () => Promise<void>,
+  ): Promise<"done" | "busy" | "sessions-not-deleted"> {
+    if (!this.canStartTurn) return "busy";
+    return this.claimed(async () => {
+      await clearAuth();
+      let outcome: "done" | "sessions-not-deleted" = "done";
+      try {
+        await this.opts.recorder?.clear();
+      } catch {
+        outcome = "sessions-not-deleted";
+      }
+      await this.closeForBreak("Logged out");
+      return outcome;
+    });
+  }
+
+  /** Runs `work` holding the claim, then releases it and drains what
+   * queued meanwhile, whether `work` settled or threw. */
+  private async claimed<T>(work: () => Promise<T>): Promise<T> {
+    let release!: () => void;
+    this.claim = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     try {
-      await this.opts.recorder?.clear();
+      return await work();
     } finally {
-      // Before saving resumes: what is on screen, including a turn that
-      // started during the delete, must not be written back by the next
-      // persist().
-      this.sessionStart = this.messages.length;
-      this.discarding = false;
+      this.claim = undefined;
+      release();
+      this.drain();
+      this.emit();
     }
   }
 
@@ -877,6 +909,14 @@ export class SessionController {
     // The session being closed gets its final state, with the handle it
     // is about to lose.
     this.persist();
+    await this.claimed(() => this.closeForBreak(separator));
+    return true;
+  }
+
+  /** The break shared by `discard` and `logout`, run under the claim:
+   * closes the browser, starts a new saved session and pushes `separator`.
+   * The caller's release drains the queue into the new chat. */
+  private async closeForBreak(separator: string): Promise<void> {
     // Before the drop, so it is forgotten even if the close throws: new
     // chat and logout both mean the next open starts a fresh conversation.
     this.conversationHandle = undefined;
@@ -885,15 +925,10 @@ export class SessionController {
     // A fresh chat must not re-send a prompt from before the break.
     this.lastPrompt = undefined;
     this.status = "closed";
-    // After the drop, not before: a turn that settles during it still
-    // belongs to the session being closed. The separator is in neither file.
+    // The separator is in neither file.
     this.opts.recorder?.startNew();
     this.messages.push({ role: "separator", text: separator });
     this.sessionStart = this.messages.length;
-    // The queue outlives the break: drain it into the new chat.
-    this.drain();
-    this.emit();
-    return true;
   }
 
   /** After a successful login command: a dead controller may try again. */

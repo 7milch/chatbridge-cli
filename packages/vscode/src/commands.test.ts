@@ -1,5 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { BrowserUnavailableError, LoginAbortedError } from "@chatbridge/core";
+import {
+  BrowserUnavailableError,
+  LoginAbortedError,
+  NO_SESSIONS_MESSAGE,
+  RESUME_BUSY_MESSAGE,
+  SESSIONS_NOT_DELETED_MESSAGE,
+  SESSIONS_OFF_MESSAGE,
+  SESSION_UNREADABLE_MESSAGE,
+  type SessionRecord,
+  SessionRecorder,
+  type SessionStoreLike,
+} from "@chatbridge/core";
 import { SLASH_COMMANDS } from "@chatbridge/core/slash-commands";
 import { type CommandDeps, createCommands } from "./commands.js";
 import {
@@ -22,7 +33,9 @@ interface Fake {
     | "retryLast"
     | "newChat"
     | "reopen"
-    | "discard"
+    | "logout"
+    | "canResume"
+    | "resume"
     | "markLoggedIn"
     | "pushHelp"
     | "lastReply"
@@ -31,8 +44,14 @@ interface Fake {
     | "getState"
   >;
   sendResults: Array<Awaited<ReturnType<SessionController["send"]>>>;
-  /** Drives both `getState().status` and what `discard` returns. */
+  /** Drives both `getState().status` and whether `logout` refuses. */
   busy: boolean;
+  /** What the fake session picker returns; undefined is a dismissed picker. */
+  pickedSession: string | undefined;
+  /** Drives `controller.canResume` and what `controller.resume` returns. */
+  canResume: boolean;
+  /** Makes the sessions delete of `controller.logout` fail. */
+  clearSessionsFails: boolean;
   /** What `lastReply()` answers; undefined means nothing to copy. */
   reply: string | undefined;
   /** Text handed to `writeClipboard`, in order. */
@@ -49,6 +68,9 @@ function fake(): Fake {
     cleared: 0,
     busy: false,
     picked: [],
+    pickedSession: undefined,
+    canResume: true,
+    clearSessionsFails: false,
     clipboard: [],
   } as unknown as Fake;
   f.ui = {
@@ -80,6 +102,10 @@ function fake(): Fake {
       f.log.push("pickFiles");
       return f.picked;
     },
+    pickSession: async (sessions) => {
+      f.log.push(`pickSession:${sessions.map((s) => s.title).join(",")}`);
+      return f.pickedSession;
+    },
   };
   f.controller = {
     send: async (t) => {
@@ -101,9 +127,20 @@ function fake(): Fake {
     reopen: async () => {
       f.log.push("reopen");
     },
-    discard: async (s) => {
-      f.log.push(`discard:${s}`);
-      return !f.busy;
+    // Mirrors the real controller's order: auth state, sessions, separator.
+    logout: async (clearAuth) => {
+      if (f.busy) return "busy";
+      await clearAuth();
+      f.log.push("clearSessions");
+      f.log.push("discard:Logged out");
+      return f.clearSessionsFails ? "sessions-not-deleted" : "done";
+    },
+    get canResume() {
+      return f.canResume;
+    },
+    resume: async (record) => {
+      f.log.push(`resume:${record.id}`);
+      return f.canResume;
     },
     markLoggedIn: () => f.log.push("markLoggedIn"),
     lastReply: () => f.reply,
@@ -278,7 +315,7 @@ describe("commands", () => {
   test("logout clears the auth state before discarding the session", async () => {
     const f = fake();
     await commands(f).logout();
-    expect(f.log).toEqual(["clearAuth", "discard:Logged out"]);
+    expect(f.log).toEqual(["clearAuth", "clearSessions", "discard:Logged out"]);
     expect(f.cleared).toBe(1);
   });
 
@@ -292,28 +329,54 @@ describe("commands", () => {
     expect(f.cleared).toBe(0);
   });
 
-  test("logout warns when a turn starts while the auth state is deleted", async () => {
+  test("a send during the auth-state delete waits for the logout", async () => {
     const f = fake();
-    // The turn starts during the clearAuth await: discard then refuses.
+    const order: string[] = [];
+    const replies: Array<(text: string) => void> = [];
+    const controller = new SessionController({
+      openSession: async () => {
+        order.push("openSession");
+        return {
+          send: (prompt) =>
+            new Promise<string>((resolve) => {
+              order.push(`send:${prompt}`);
+              replies.push(resolve);
+            }),
+          close: async () => {},
+          kill: async () => {},
+        };
+      },
+      closeTimeoutMs: 20,
+    });
+    let sent: Promise<unknown> | undefined;
     const handlers = createCommands({
       displayName: "Acme AI",
-      controller: f.controller as SessionController,
+      controller,
       ui: f.ui,
       runLogin: f.login,
       installBrowser: f.install,
       loginOptions: () => ({}) as never,
       installOptions: () => ({ cliPath: "/x/cli.js" }),
       clearAuth: async () => {
-        f.log.push("clearAuth");
-        f.busy = true;
+        order.push("clearAuth");
+        sent = controller.send("meanwhile");
+        await new Promise((r) => setTimeout(r, 0));
+        order.push("clearAuth done");
       },
     });
     await handlers.logout();
-    expect(f.log).toEqual([
+    expect(await sent).toEqual({ ok: true, queued: true });
+    await new Promise((r) => setTimeout(r, 0));
+    // No turn started on the browser the logout was closing; the queued one
+    // runs after the separator, in a chat of its own.
+    expect(order).toEqual([
       "clearAuth",
-      "discard:Logged out",
-      "warn:Wait for the current reply to finish, then log out.",
+      "clearAuth done",
+      "openSession",
+      "send:meanwhile",
     ]);
+    expect(f.log).toEqual([]);
+    replies[0]?.("hi");
   });
 
   test("a queued entry is not sent under the auth state logout deletes", async () => {
@@ -638,5 +701,148 @@ describe("commands", () => {
     expect(f.log).toHaveLength(2);
     expect(f.log[0]).toBe("focus");
     expect(f.log[1] ?? "").toStartWith("help:");
+  });
+});
+
+describe("commands: resume", () => {
+  const OLD = "11111111-1111-4111-8111-111111111111";
+  const record: SessionRecord = {
+    version: 1,
+    id: OLD,
+    provider: "dummy-chat",
+    createdAt: "2026-09-20T00:00:00.000Z",
+    updatedAt: "2026-09-20T00:10:00.000Z",
+    messages: [{ role: "user", text: "old question" }],
+  };
+
+  function sessions(
+    opts: {
+      records?: SessionRecord[];
+      enabled?: boolean;
+      broken?: boolean;
+    } = {},
+  ) {
+    const files = new Map((opts.records ?? [record]).map((r) => [r.id, r]));
+    const store: SessionStoreLike = {
+      async save() {},
+      load: async (id) => (opts.broken ? undefined : files.get(id)),
+      list: async () =>
+        [...files.values()].map((r) => ({
+          id: r.id,
+          updatedAt: r.updatedAt,
+          title: r.messages[0]?.text ?? "",
+          turns: 1,
+        })),
+      async prune() {},
+      async clear() {},
+    };
+    return new SessionRecorder({
+      store,
+      provider: "dummy-chat",
+      enabled: () => opts.enabled ?? true,
+    });
+  }
+
+  test("picks a session, focuses the view and resumes it", async () => {
+    const f = fake();
+    f.pickedSession = OLD;
+    await commands(f, { sessions: sessions() }).resume();
+    expect(f.log).toEqual([
+      "pickSession:old question",
+      "focus",
+      `resume:${OLD}`,
+    ]);
+  });
+
+  test("a dismissed picker changes nothing", async () => {
+    const f = fake();
+    await commands(f, { sessions: sessions() }).resume();
+    expect(f.log).toEqual(["pickSession:old question"]);
+  });
+
+  test("without saved sessions it says so", async () => {
+    const f = fake();
+    await commands(f, { sessions: sessions({ records: [] }) }).resume();
+    expect(f.log).toEqual([`info:${NO_SESSIONS_MESSAGE}`]);
+  });
+
+  test("with saving off it says so", async () => {
+    const f = fake();
+    await commands(f, { sessions: sessions({ enabled: false }) }).resume();
+    expect(f.log).toEqual([`info:${SESSIONS_OFF_MESSAGE}`]);
+  });
+
+  test("without a recorder it says saving is off", async () => {
+    const f = fake();
+    await commands(f).resume();
+    expect(f.log).toEqual([`info:${SESSIONS_OFF_MESSAGE}`]);
+  });
+
+  test("refused while the controller cannot resume, before any picker", async () => {
+    const f = fake();
+    f.canResume = false;
+    await commands(f, { sessions: sessions() }).resume();
+    expect(f.log).toEqual([`warn:${RESUME_BUSY_MESSAGE}`]);
+  });
+
+  test("a session that cannot be loaded is reported and nothing is resumed", async () => {
+    const f = fake();
+    f.pickedSession = OLD;
+    await commands(f, { sessions: sessions({ broken: true }) }).resume();
+    expect(f.log).toEqual([
+      "pickSession:old question",
+      `warn:${SESSION_UNREADABLE_MESSAGE}`,
+    ]);
+  });
+
+  test("a turn that started while the picker was open refuses the resume", async () => {
+    const f = fake();
+    f.pickedSession = OLD;
+    f.ui.pickSession = async () => {
+      f.canResume = false;
+      return OLD;
+    };
+    await commands(f, { sessions: sessions() }).resume();
+    expect(f.log).toEqual([
+      "focus",
+      `resume:${OLD}`,
+      `warn:${RESUME_BUSY_MESSAGE}`,
+    ]);
+  });
+
+  test("a UI without a session picker does nothing", async () => {
+    const f = fake();
+    f.ui.pickSession = undefined;
+    await commands(f, { sessions: sessions() }).resume();
+    expect(f.log).toEqual([]);
+  });
+});
+
+describe("commands: logout and saved sessions", () => {
+  test("deletes the auth state, then the sessions, then discards", async () => {
+    const f = fake();
+    await commands(f).logout();
+    expect(f.log).toEqual(["clearAuth", "clearSessions", "discard:Logged out"]);
+  });
+
+  test("a busy controller deletes nothing", async () => {
+    const f = fake();
+    f.busy = true;
+    await commands(f).logout();
+    expect(f.log).not.toContain("clearSessions");
+    expect(f.cleared).toBe(0);
+  });
+
+  test("sessions that cannot be deleted are reported and the logout stands", async () => {
+    const f = fake();
+    f.clearSessionsFails = true;
+    await commands(f).logout();
+    expect(f.log).toEqual([
+      "clearAuth",
+      "clearSessions",
+      "discard:Logged out",
+      `warn:${SESSIONS_NOT_DELETED_MESSAGE}`,
+    ]);
+    expect(f.log.join("\n")).not.toContain("permission denied");
   });
 });

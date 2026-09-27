@@ -62,6 +62,7 @@ const upgraded = {
           : {}),
       })),
       { command: "acme.help", title: "Help" },
+      { command: "acme.resume", title: "Resume" },
     ],
     menus: {
       "view/title": [
@@ -71,6 +72,7 @@ const upgraded = {
         "logout",
         "installBrowser",
         "help",
+        "resume",
       ].map((name) => ({
         command: `acme.${name}`,
         when: "view == acme.chat",
@@ -85,10 +87,12 @@ describe("recommendedContributions", () => {
     expect(missingContributions(full, "acme")).toEqual([]);
     expect(recommendedContributions(full, "acme")).toEqual([
       "commands: acme.help",
+      "commands: acme.resume",
       "commands.icon: acme.newChat",
       "commands.icon: acme.reopen",
       "menus.view/title: acme.newChat (navigation@1)",
       "menus.view/title: acme.reopen (navigation@2)",
+      "menus.view/title: acme.resume (0_session@1)",
       "menus.view/title: acme.login (1_auth@1)",
       "menus.view/title: acme.logout (1_auth@2)",
       "menus.view/title: acme.installBrowser (2_setup@1)",
@@ -116,6 +120,7 @@ describe("recommendedContributions", () => {
     expect(recommendedContributions(wrongView, "acme")).toEqual([
       "menus.view/title: acme.newChat (navigation@1)",
       "menus.view/title: acme.reopen (navigation@2)",
+      "menus.view/title: acme.resume (0_session@1)",
       "menus.view/title: acme.login (1_auth@1)",
       "menus.view/title: acme.logout (1_auth@2)",
       "menus.view/title: acme.installBrowser (2_setup@1)",
@@ -124,7 +129,13 @@ describe("recommendedContributions", () => {
   });
 
   test("a manifest without contributes recommends everything", () => {
-    expect(recommendedContributions({}, "x")).toHaveLength(9);
+    expect(recommendedContributions({}, "x")).toHaveLength(11);
+  });
+
+  test("resume is optional: a manifest without it is not missing anything", () => {
+    expect(missingContributions(full, "acme")).toEqual([]);
+    expect(COMMAND_NAMES).not.toContain("resume");
+    expect(OPTIONAL_COMMAND_NAMES).toContain("resume");
   });
 
   test("OPTIONAL_COMMAND_NAMES is not part of COMMAND_NAMES", () => {

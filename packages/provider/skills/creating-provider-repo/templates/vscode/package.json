@@ -56,6 +56,11 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "<vendor>.resume",
+        "title": "Resume",
+        "category": "<Vendor>"
+      },
+      {
         "command": "<vendor>.installBrowser",
         "title": "Install Browser",
         "category": "<Vendor>"
@@ -100,6 +105,11 @@
           "command": "<vendor>.reopen",
           "when": "view == <vendor>.chat",
           "group": "navigation@2"
+        },
+        {
+          "command": "<vendor>.resume",
+          "when": "view == <vendor>.chat",
+          "group": "0_session@1"
         },
         {
           "command": "<vendor>.login",

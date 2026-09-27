@@ -61,6 +61,11 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "chatbridge-dummy.resume",
+        "title": "Resume",
+        "category": "Dummy Chat"
+      },
+      {
         "command": "chatbridge-dummy.installBrowser",
         "title": "Install Browser",
         "category": "Dummy Chat"
@@ -105,6 +110,11 @@
           "command": "chatbridge-dummy.reopen",
           "when": "view == chatbridge-dummy.chat",
           "group": "navigation@2"
+        },
+        {
+          "command": "chatbridge-dummy.resume",
+          "when": "view == chatbridge-dummy.chat",
+          "group": "0_session@1"
         },
         {
           "command": "chatbridge-dummy.login",
