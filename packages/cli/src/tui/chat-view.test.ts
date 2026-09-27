@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { ResponseTimeoutError } from "@chatbridge/core";
+import {
+  ResponseTimeoutError,
+  type SessionRecord,
+  SessionRecorder,
+  type SessionStoreLike,
+  formatSessionTime,
+} from "@chatbridge/core";
 import type { CommandInfo } from "@chatbridge/core/slash-commands";
 import type { StyledText } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
@@ -35,6 +41,7 @@ import {
   SHELL_GUIDE,
   SHELL_PLACEHOLDER,
   idleGuide,
+  sessionRows,
 } from "./chat-view.js";
 import { POPUP_HINT } from "./mention-popup.js";
 import { RENDERER_OPTIONS } from "./run-interactive.js";
@@ -174,6 +181,7 @@ async function setup(
     copy?: (text: string) => Promise<boolean>;
     /** Shortened so a test can watch the notice come and go. */
     noticeMs?: number;
+    recorder?: SessionRecorder;
   } = {},
 ) {
   const t = await createTestRenderer({
@@ -196,6 +204,7 @@ async function setup(
       shell: opts.shell,
       ...(opts.copy ? { copy: opts.copy } : {}),
       ...(opts.login ? { login: opts.login } : {}),
+      ...(opts.recorder ? { recorder: opts.recorder } : {}),
     },
     opts.openGate,
   );
@@ -2486,4 +2495,161 @@ describe("ChatView: light terminals", () => {
       expect(await selectedText(t, needle)).toContain(needle);
     },
   );
+});
+
+describe("sessionRows", () => {
+  test("aligns the titles and pluralises the turns", () => {
+    const rows = sessionRows([
+      {
+        id: "a",
+        updatedAt: "2026-09-26T05:32:00.000Z",
+        title: "short",
+        turns: 1,
+      },
+      {
+        id: "b",
+        updatedAt: "2026-09-25T00:10:00.000Z",
+        title: "a longer title",
+        turns: 12,
+      },
+    ]);
+    expect(rows).toEqual([
+      {
+        value: "a",
+        label: `${formatSessionTime("2026-09-26T05:32:00.000Z")}   ${"short".padEnd(14)}   1 turn`,
+        plain: true,
+      },
+      {
+        value: "b",
+        label: `${formatSessionTime("2026-09-25T00:10:00.000Z")}   a longer title   12 turns`,
+        plain: true,
+      },
+    ]);
+  });
+
+  test("no sessions, no rows", () => {
+    expect(sessionRows([])).toEqual([]);
+  });
+});
+
+describe("ChatView session picker", () => {
+  const idOf = (n: number) =>
+    `00000000-0000-4000-8000-${n.toString(16).padStart(12, "0")}`;
+
+  /** A recorder over `count` saved sessions, newest first by index. */
+  function recorderWith(count: number) {
+    const files = new Map<string, SessionRecord>();
+    for (let n = 1; n <= count; n++) {
+      files.set(idOf(n), {
+        version: 1,
+        id: idOf(n),
+        provider: "dummy-chat",
+        createdAt: "2026-09-20T00:00:00.000Z",
+        updatedAt: new Date(Date.UTC(2026, 8, 26, 0, 60 - n)).toISOString(),
+        messages: [
+          { role: "user", text: `saved prompt ${n}` },
+          { role: "assistant", text: `saved reply ${n}` },
+        ],
+      });
+    }
+    const store: SessionStoreLike = {
+      async save(record) {
+        files.set(record.id, structuredClone(record));
+      },
+      load: async (id) => files.get(id),
+      list: async () =>
+        [...files.values()].map((r) => ({
+          id: r.id,
+          updatedAt: r.updatedAt,
+          title: r.messages[0]?.text ?? "",
+          turns: 1,
+        })),
+      async prune() {},
+      async clear() {
+        files.clear();
+      },
+    };
+    return new SessionRecorder({ store, provider: "dummy-chat" });
+  }
+
+  test("the picker lists the saved sessions between the input and the status row", async () => {
+    const t = await setup({ recorder: recorderWith(2) });
+    await t.model.openResumePicker();
+    const frame = await t.frameWith("saved prompt 1");
+    expect(frame).toContain("saved prompt 2");
+    expect(frame).toContain(POPUP_HINT);
+  });
+
+  test("enter resumes the selected session and redraws the history", async () => {
+    const t = await setup({ recorder: recorderWith(2) });
+    await t.mockInput.typeText("before");
+    t.mockInput.pressEnter();
+    await t.frameWith("Echo: before");
+    await t.model.openResumePicker();
+    await t.frameWith("saved prompt 1");
+    t.mockInput.pressArrow("down");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("resumed · transcript only");
+    expect(frame).toContain("saved prompt 2");
+    expect(frame).toContain("saved reply 2");
+    // The history was replaced, not appended to.
+    expect(frame).not.toContain("Echo: before");
+    expect(frame).not.toContain(POPUP_HINT);
+  });
+
+  test("escape closes the picker and keeps the chat", async () => {
+    const t = await setup({ recorder: recorderWith(1) });
+    await t.mockInput.typeText("before");
+    t.mockInput.pressEnter();
+    await t.frameWith("Echo: before");
+    await t.model.openResumePicker();
+    await t.frameWith("saved prompt 1");
+    const frame = await t.escapePopup("saved prompt 1");
+    expect(frame).toContain("Echo: before");
+    expect(t.model.picker).toBeUndefined();
+  });
+
+  test("the picker is modal: typing reaches neither the input nor the model", async () => {
+    const t = await setup({ recorder: recorderWith(1) });
+    await t.model.openResumePicker();
+    await t.frameWith("saved prompt 1");
+    await t.mockInput.typeText("x@");
+    await t.renderOnce();
+    expect(t.view.inputText).toBe("");
+    expect(t.captureCharFrame()).toContain("saved prompt 1");
+  });
+
+  test("more sessions than rows scroll", async () => {
+    const t = await setup({ recorder: recorderWith(12) });
+    await t.model.openResumePicker();
+    const first = await t.frameWith("saved prompt 1 ");
+    expect(first).not.toContain("saved prompt 12");
+    for (let i = 0; i < 11; i++) t.mockInput.pressArrow("down");
+    const last = await t.frameWith("saved prompt 12");
+    expect(last).not.toContain("saved prompt 1 ");
+  });
+
+  test("a resume the model refuses closes the picker too", async () => {
+    const t = await setup({ recorder: recorderWith(1) });
+    await t.model.openResumePicker();
+    await t.frameWith("saved prompt 1");
+    // Not through a key: the model clears the picker on its own.
+    await t.model.resume(idOf(99));
+    await t.renderOnce();
+    const frame = t.captureCharFrame();
+    expect(frame).not.toContain(POPUP_HINT);
+    expect(frame).not.toContain("saved prompt 1");
+  });
+
+  test("the input works again after a resume", async () => {
+    const t = await setup({ recorder: recorderWith(1) });
+    await t.model.openResumePicker();
+    await t.frameWith("saved prompt 1");
+    t.mockInput.pressEnter();
+    await t.frameWith("resumed · transcript only");
+    await t.mockInput.typeText("after");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("Echo: after");
+    expect(frame).toContain("saved reply 1");
+  });
 });

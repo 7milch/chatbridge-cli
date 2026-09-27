@@ -192,3 +192,80 @@ describe("MentionPopup", () => {
     ]);
   });
 });
+
+describe("MentionPopup.showAll", () => {
+  const many = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      value: `v${i}`,
+      label: `row ${String(i).padStart(2, "0")}`,
+      plain: true as const,
+    }));
+
+  test("keeps every row and shows the first MAX_ROWS", async () => {
+    const t = await setup();
+    t.popup.showAll(many(12));
+    await t.renderOnce();
+    const frame = t.captureCharFrame();
+    expect(frame).toContain("row 00");
+    expect(frame).toContain(`row ${String(MAX_ROWS - 1).padStart(2, "0")}`);
+    expect(frame).not.toContain(`row ${String(MAX_ROWS).padStart(2, "0")}`);
+    expect(t.popup.selected).toBe("v0");
+  });
+
+  test("moving past the last visible row scrolls", async () => {
+    const t = await setup();
+    t.popup.showAll(many(12));
+    for (let i = 0; i < MAX_ROWS; i++) t.popup.move(1);
+    await t.renderOnce();
+    const frame = t.captureCharFrame();
+    expect(t.popup.selected).toBe(`v${MAX_ROWS}`);
+    expect(frame).toContain(`row ${String(MAX_ROWS).padStart(2, "0")}`);
+    expect(frame).not.toContain("row 00");
+  });
+
+  test("moving up from the first row wraps to the last and scrolls there", async () => {
+    const t = await setup();
+    t.popup.showAll(many(12));
+    t.popup.move(-1);
+    await t.renderOnce();
+    expect(t.popup.selected).toBe("v11");
+    expect(t.captureCharFrame()).toContain("row 11");
+  });
+
+  test("moving down from the last row wraps to the first", async () => {
+    const t = await setup();
+    t.popup.showAll(many(12));
+    t.popup.move(-1);
+    t.popup.move(1);
+    await t.renderOnce();
+    expect(t.popup.selected).toBe("v0");
+    expect(t.captureCharFrame()).toContain("row 00");
+  });
+
+  test("show() after showAll() starts at the top again", async () => {
+    const t = await setup();
+    t.popup.showAll(many(12));
+    t.popup.move(-1);
+    t.popup.show(paths("src/a.ts"));
+    await t.renderOnce();
+    expect(t.popup.selected).toBe("src/a.ts");
+    expect(t.captureCharFrame()).toContain("src/a.ts");
+  });
+
+  test("a plain row is not dimmed before its last slash", async () => {
+    const t = await setup();
+    t.popup.showAll([
+      { value: "a", label: "first", plain: true },
+      { value: "b", label: "compare a/b testing", plain: true },
+    ]);
+    await t.renderOnce();
+    // Row 1 is not the selected one, so it takes the unselected branch.
+    expect(t.chunks(1).some((c) => c.dim)).toBe(false);
+  });
+
+  test("an empty list hides", async () => {
+    const t = await setup();
+    t.popup.showAll([]);
+    expect(t.popup.visible).toBe(false);
+  });
+});
