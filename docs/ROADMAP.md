@@ -333,3 +333,13 @@ release.
 values the user set, so a manifest `default` no longer shadows the vendor's
 options. The vendor template's `package` script produces a `.vsix` that ships
 Playwright, with the old flag-only command kept as `package:smoke`.
+
+### 26. Session resume and transcript persistence — done (issue #119, PR #140, 2026-09-27)
+
+Interactive sessions are saved as they proceed, one JSON file per session under
+`<configDir>/sessions/<provider>/`, pruned after 14 days and beyond 50 sessions,
+and deleted by an explicit logout. `/resume` lists them in a picker (the TUI's
+own, VSCode's QuickPick) and goes back to one: the transcript, and the
+service-side conversation through the handle of milestone 19. `resume` becomes a
+reserved command name; `sessions.enabled` and `<id>.saveSessions` turn saving
+off. Bundles #74. Follow-ups #137, #138, #139. Ships as v0.13.0.
