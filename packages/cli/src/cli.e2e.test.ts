@@ -367,12 +367,16 @@ describe("interactive model against the dummy chat", () => {
     });
     expect(await model.submit("turns?")).toBe(true);
     expect(model.messages.at(-1)?.text).toBe("Echo: turns? (turn 1)");
+    // The saved transcript survives the fallback on screen.
+    expect(model.messages[0]?.text).toBe("from another life");
 
     await recorder.flush();
     const after = await store.load(id);
     // The dead handle is gone; the new conversation's handle took its place.
     expect(after?.conversation).not.toBe(`${server.url}/chat/c/zzzzzzzz`);
     expect(after?.conversation).toMatch(/\/chat\/c\/[a-z0-9]{8}$/);
+    // And in the file.
+    expect(after?.messages[0]?.text).toBe("from another life");
   }, 120_000);
 
   test("/logout deletes the saved sessions", async () => {
@@ -392,15 +396,15 @@ describe("interactive model against the dummy chat", () => {
     await model.submit("/logout");
     await recorder.flush();
     expect(await store.list()).toEqual([]);
-    // The status after an interactive logout is not asserted here: the
-    // logout currently leaves the auth state on disk (the close before the
-    // reopen saves it back), so the reopen succeeds. Whoever fixes #137
-    // adds the assertion here.
-
-    // What was saved before the logout stays deleted: the next turn starts
-    // a new session file that holds only that turn.
-    expect(await model.submit("after logout")).toBe(true);
-    await recorder.flush();
+    // The old model's status after the logout is not asserted here: the
+    // logout currently leaves the auth state on disk (#137), so its reopen
+    // succeeds. Whoever fixes #137 adds that assertion here. What is
+    // asserted is that nothing from before the logout comes back when a new
+    // process chats again.
+    await model.session?.close();
+    const fresh = await openModel(baseDir, server.url);
+    expect(await fresh.model.submit("after logout")).toBe(true);
+    await fresh.recorder.flush();
     const after = await store.list();
     expect(after).toHaveLength(1);
     expect(after[0]?.turns).toBe(1);

@@ -204,9 +204,10 @@ export async function run(): Promise<void> {
 
   // Saved sessions: every settled turn above is on disk under the base dir
   // the runner passed. "New chat" split the run into two saved sessions.
-  await sessions.flush();
   await waitForIdle(controller);
   assert.equal(await controller.newChat(), true);
+  // After newChat(), so the write it queues has landed before the list.
+  await sessions.flush();
   const saved = await sessions.list();
   assert.ok(
     saved.length >= 2,
