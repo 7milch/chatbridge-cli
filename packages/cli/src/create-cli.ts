@@ -3,6 +3,8 @@ import {
   ChatBridgeError,
   type Provider,
   ProviderLoadError,
+  SAVE_FAILED_MESSAGE,
+  SessionRecorder,
   createAuthStore,
   createSessionStore,
   runLogin,
@@ -274,6 +276,19 @@ export function createCli(opts: CreateCliOptions) {
           providerName: provider.name,
           baseDir: opts.baseDir,
         });
+        // Built even when saving is off, so `/resume` can say so and
+        // `/logout` can still delete what an earlier run saved.
+        let notifySaveFailed: () => void = () => {};
+        const recorder = new SessionRecorder({
+          store: createSessionStore({
+            configDir,
+            providerName: provider.name,
+            baseDir: opts.baseDir,
+          }),
+          provider: provider.name,
+          enabled: () => config.sessions?.enabled !== false,
+          onSaveFailed: () => notifySaveFailed(),
+        });
         // Loaded lazily so one-shot and auth never evaluate @opentui/core.
         const { runInteractive } = await import("./tui/run-interactive.js");
         const result = await runInteractive({
@@ -289,6 +304,10 @@ export function createCli(opts: CreateCliOptions) {
           open,
           idle,
           onProgress: progress,
+          recorder,
+          onNotifier: (notify) => {
+            notifySaveFailed = () => notify(SAVE_FAILED_MESSAGE);
+          },
         });
         return result.fatal === undefined ? 0 : reportError(result.fatal);
       }

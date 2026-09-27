@@ -8,6 +8,10 @@ import {
   type ProviderCommandResult,
   RESTORED_NOTE,
   ResponseTimeoutError,
+  SESSIONS_NOT_DELETED_MESSAGE,
+  type SessionRecord,
+  SessionRecorder,
+  type SessionStoreLike,
   UrlHookError,
 } from "@chatbridge/core";
 import { MentionError } from "../mentions/expand-mentions.js";
@@ -2637,5 +2641,332 @@ describe("ChatModel conversation handle", () => {
 
     await h.model.reset();
     expect(h.openedWith).toEqual([undefined, undefined, undefined]);
+  });
+});
+
+/** A SessionRecorder over an in-memory store. `files` is what is on disk;
+ * `at(i)` is the i-th file in creation order. */
+function memoryRecorder(opts: { enabled?: () => boolean } = {}) {
+  const files = new Map<string, SessionRecord>();
+  const state = { failSave: false, failClear: false, cleared: 0 };
+  let failures = 0;
+  let next = 1;
+  const store: SessionStoreLike = {
+    async save(record) {
+      if (state.failSave) throw new Error("disk full");
+      files.set(record.id, structuredClone(record));
+    },
+    async load(id) {
+      return files.get(id);
+    },
+    async list() {
+      return [...files.values()].map((r) => ({
+        id: r.id,
+        updatedAt: r.updatedAt,
+        title: r.messages.find((m) => m.role === "user")?.text ?? "",
+        turns: r.messages.filter((m) => m.role === "user").length,
+      }));
+    },
+    async prune() {},
+    async clear() {
+      state.cleared++;
+      if (state.failClear) throw new Error("permission denied");
+      files.clear();
+    },
+  };
+  const recorder = new SessionRecorder({
+    store,
+    provider: "dummy-chat",
+    newId: () => `id-${next++}`,
+    onSaveFailed: () => {
+      failures++;
+    },
+    ...opts,
+  });
+  return {
+    recorder,
+    files,
+    state,
+    failures: () => failures,
+    at: (i: number) => [...files.values()][i],
+  };
+}
+
+describe("ChatModel session saving", () => {
+  test("nothing is saved before the first turn settles", async () => {
+    const a = fakeSession();
+    const r = memoryRecorder();
+    const model = await modelWith(a.session, {
+      ...noReopen,
+      recorder: r.recorder,
+    });
+    void model.submit("hello");
+    await tick();
+    await r.recorder.flush();
+    expect(r.files.size).toBe(0);
+    nth(a.replies, 0).resolve("hi");
+    await tick();
+    await r.recorder.flush();
+    expect(r.at(0)?.messages).toEqual([
+      { role: "user", text: "hello" },
+      { role: "assistant", text: "hi" },
+    ]);
+  });
+
+  test("the file follows the handle of the last successful turn", async () => {
+    const a = fakeSession();
+    const r = memoryRecorder();
+    const model = await modelWith(a.session, {
+      ...noReopen,
+      recorder: r.recorder,
+    });
+    void model.submit("one");
+    await tick();
+    a.state.conversation = "H1";
+    nth(a.replies, 0).resolve("1");
+    await tick();
+    await r.recorder.flush();
+    expect(r.at(0)?.conversation).toBe("H1");
+  });
+
+  test("a failed turn is saved with its error and its partial", async () => {
+    let onPartial: ((text: string) => void) | undefined;
+    const pending = deferred<string>();
+    const session: ChatSessionLike = {
+      send(_prompt, opts) {
+        onPartial = opts?.onPartial;
+        return pending.promise;
+      },
+      async close() {},
+      async kill() {},
+    };
+    const r = memoryRecorder();
+    const model = await modelWith(session, {
+      ...noReopen,
+      recorder: r.recorder,
+    });
+    void model.submit("slow");
+    await tick();
+    onPartial?.("half a rep");
+    pending.reject(new ResponseTimeoutError("Timed out"));
+    await tick();
+    await r.recorder.flush();
+    expect(r.at(0)?.messages).toEqual([
+      { role: "user", text: "slow" },
+      { role: "assistant", text: "half a rep", incomplete: true },
+      { role: "error", text: "Timed out" },
+    ]);
+  });
+
+  test("help output is not saved", async () => {
+    const a = fakeSession();
+    const r = memoryRecorder();
+    const model = await modelWith(a.session, {
+      ...noReopen,
+      recorder: r.recorder,
+    });
+    await model.submit("/help");
+    void model.submit("hello");
+    await tick();
+    nth(a.replies, 0).resolve("hi");
+    await tick();
+    await r.recorder.flush();
+    expect(r.at(0)?.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+  });
+
+  test("a finished shell command is saved", async () => {
+    const a = fakeSession();
+    const r = memoryRecorder();
+    const result: ShellResult = {
+      command: "ls",
+      output: "a\n",
+      droppedBytes: 0,
+      exitCode: 0,
+      interrupted: false,
+      durationMs: 3,
+    };
+    const model = await modelWith(a.session, {
+      ...noReopen,
+      recorder: r.recorder,
+      shell: { leadIn: "Output:", autoSend: false },
+      runCommand: (): RunningCommand => ({
+        done: Promise.resolve(result),
+        stop() {},
+      }),
+    });
+    await model.runShell("ls");
+    await r.recorder.flush();
+    expect(r.at(0)?.messages).toEqual([
+      {
+        role: "shell",
+        text: "ls",
+        shell: { ...result, exitCode: 0 },
+      },
+    ]);
+  });
+
+  test("/reopen keeps the session and saves the separator", async () => {
+    const a = fakeSession();
+    const b = fakeSession();
+    const r = memoryRecorder();
+    const model = await modelWith(a.session, {
+      openSession: async () => b.session,
+      recorder: r.recorder,
+      closeTimeoutMs: 20,
+    });
+    void model.submit("one");
+    await tick();
+    nth(a.replies, 0).resolve("1");
+    await tick();
+    await model.submit("/reopen");
+    await r.recorder.flush();
+    expect(r.files.size).toBe(1);
+    expect(r.at(0)?.messages.at(-1)).toEqual({
+      role: "separator",
+      text: "reopened",
+    });
+  });
+
+  test("/new starts a second file and leaves the first as it was", async () => {
+    const a = fakeSession();
+    const b = fakeSession();
+    const r = memoryRecorder();
+    const model = await modelWith(a.session, {
+      openSession: async () => b.session,
+      recorder: r.recorder,
+      closeTimeoutMs: 20,
+    });
+    void model.submit("one");
+    await tick();
+    nth(a.replies, 0).resolve("1");
+    await tick();
+    await model.submit("/new");
+    void model.submit("two");
+    await tick();
+    nth(b.replies, 0).resolve("2");
+    await tick();
+    await r.recorder.flush();
+    expect(r.files.size).toBe(2);
+    expect(r.at(0)?.messages).toEqual([
+      { role: "user", text: "one" },
+      { role: "assistant", text: "1" },
+    ]);
+    // The `new chat` separator belongs to neither file.
+    expect(r.at(1)?.messages).toEqual([
+      { role: "user", text: "two" },
+      { role: "assistant", text: "2" },
+    ]);
+    // The screen still shows both.
+    expect(model.messages.map((m) => m.text)).toEqual([
+      "one",
+      "1",
+      NEW_CHAT_SEPARATOR,
+      "two",
+      "2",
+    ]);
+  });
+
+  test("/logout deletes every saved session and does not save the screen again", async () => {
+    const a = fakeSession();
+    const b = fakeSession();
+    const r = memoryRecorder();
+    const model = await modelWith(a.session, {
+      openSession: async () => b.session,
+      recorder: r.recorder,
+      closeTimeoutMs: 20,
+    });
+    void model.submit("one");
+    await tick();
+    nth(a.replies, 0).resolve("1");
+    await tick();
+    await model.submit("/logout");
+    await r.recorder.flush();
+    expect(r.state.cleared).toBe(1);
+    expect(r.files.size).toBe(0);
+  });
+
+  test("/logout with a clearAuth that fails deletes no session", async () => {
+    const a = fakeSession();
+    const r = memoryRecorder();
+    const model = await modelWith(a.session, {
+      ...noReopen,
+      recorder: r.recorder,
+      clearAuth: async () => {
+        throw new Error("EACCES");
+      },
+    });
+    await model.submit("/logout");
+    expect(r.state.cleared).toBe(0);
+  });
+
+  test("/logout says so when the sessions could not be deleted, and still logs out", async () => {
+    const a = fakeSession();
+    const b = fakeSession();
+    const r = memoryRecorder();
+    r.state.failClear = true;
+    const model = await modelWith(a.session, {
+      openSession: async () => b.session,
+      recorder: r.recorder,
+      closeTimeoutMs: 20,
+    });
+    await model.submit("/logout");
+    const texts = model.messages.map((m) => m.text);
+    expect(texts).toContain(SESSIONS_NOT_DELETED_MESSAGE);
+    // No detail from the error reaches the history.
+    expect(texts.join("\n")).not.toContain("permission denied");
+    expect(model.status).toBe("idle");
+  });
+
+  // Review Focus 4.
+  test("a save that fails does not disturb the turn", async () => {
+    const a = fakeSession();
+    const r = memoryRecorder();
+    r.state.failSave = true;
+    const model = await modelWith(a.session, {
+      ...noReopen,
+      recorder: r.recorder,
+    });
+    void model.submit("one");
+    await tick();
+    nth(a.replies, 0).resolve("1");
+    await tick();
+    void model.submit("two");
+    await tick();
+    nth(a.replies, 1).resolve("2");
+    await tick();
+    await r.recorder.flush();
+    expect(model.status).toBe("idle");
+    expect(model.messages.map((m) => m.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+      "assistant",
+    ]);
+    expect(r.failures()).toBe(1);
+  });
+
+  test("with saving off nothing is written", async () => {
+    const a = fakeSession();
+    const r = memoryRecorder({ enabled: () => false });
+    const model = await modelWith(a.session, {
+      ...noReopen,
+      recorder: r.recorder,
+    });
+    void model.submit("one");
+    await tick();
+    nth(a.replies, 0).resolve("1");
+    await tick();
+    await r.recorder.flush();
+    expect(r.files.size).toBe(0);
+  });
+
+  test("a model without a recorder works as before", async () => {
+    const a = fakeSession();
+    const model = await modelWith(a.session, noReopen);
+    void model.submit("one");
+    await tick();
+    nth(a.replies, 0).resolve("1");
+    await tick();
+    expect(model.status).toBe("idle");
   });
 });

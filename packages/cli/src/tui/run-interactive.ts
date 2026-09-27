@@ -1,6 +1,7 @@
 import {
   ChatSession,
   type ChatSessionOptions,
+  type SessionRecorder,
   closeWithTimeout,
   commandInfoOf,
   runLogin,
@@ -46,6 +47,12 @@ export interface InteractiveOptions extends ChatSessionOptions {
   login?: ChatModelOptions["login"];
   /** Test-only: replaces the system clipboard `/copy` writes to. */
   copy?: ChatModelOptions["copy"];
+  /** Absent: a recorder that is never enabled is not needed; nothing is saved. */
+  recorder?: SessionRecorder;
+  /** Called once the model exists, with the function that puts a notice
+   * on the status line; lets the caller route the recorder's save failure
+   * there. */
+  onNotifier?: (notify: (text: string) => void) => void;
 }
 
 /**
@@ -232,7 +239,9 @@ export async function runInteractive(
           hooks: opts.provider.urlHooks ?? [],
           timeoutMs: opts.timeoutMs,
         }),
+      recorder: opts.recorder,
     });
+    opts.onNotifier?.((text) => model?.notify(text));
     view = new ChatView(renderer, model, {
       title: opts.title,
       providerName: opts.provider.name,
@@ -286,6 +295,9 @@ export async function runInteractive(
       settled &&
       (open === undefined || (await closeWithTimeout(open, CLOSE_TIMEOUT_MS)));
     const closed = sessionClosed && idleSettled;
+    // Its result is ignored: an unfinished save must not turn a clean quit
+    // into the hard exit below.
+    await settleReset(opts.recorder?.flush());
     view?.destroy();
     renderer.destroy();
     // The terminal is ours again: anything the teardown reported can be

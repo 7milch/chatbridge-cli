@@ -9,7 +9,9 @@ import {
   type ParsedSlash,
   type ProviderCommandResult,
   ResponseTimeoutError,
+  SESSIONS_NOT_DELETED_MESSAGE,
   type SendOptions,
+  type SessionRecorder,
   UrlHookError,
   closeOrKill,
   commandNamesOf,
@@ -38,6 +40,7 @@ import {
   DEFAULT_SHELL_CONFIG,
   type ShellConfig,
 } from "../shell/shell-config.js";
+import { toStored } from "./stored-messages.js";
 
 /** What the model needs from a ChatSession; lets tests inject a fake. */
 export interface ChatSessionLike {
@@ -161,6 +164,10 @@ export interface ChatModelOptions {
    * it got there. Default: a function that always fails — a model built
    * without a clipboard says "copy failed" rather than lying. */
   copy?: (text: string) => Promise<boolean>;
+  /** Saves the session as it proceeds and lists saved ones for `/resume`.
+   * Absent: nothing is saved (tests, and a CLI that turned saving off
+   * still passes one whose `enabled` is false). */
+  recorder?: SessionRecorder;
 }
 
 /** Conversation state for the interactive UI. No OpenTUI dependency. */
@@ -230,6 +237,11 @@ export class ChatModel {
    * a restart starts a new chat. `/new` and `/logout` forget it, and so
    * does an open that could not restore it. */
   private conversationHandle: string | undefined;
+  /** The index in `messages` where the current saved session begins. Both
+   * UIs keep earlier history on screen after `/new`, so the screen can hold
+   * several sessions; only what follows this index is saved. */
+  private sessionStart = 0;
+  private readonly recorder: SessionRecorder | undefined;
   private readonly openSession: ChatModelOptions["openSession"];
   private readonly login: ChatModelOptions["login"];
   private readonly clearAuth: () => Promise<void>;
@@ -258,6 +270,7 @@ export class ChatModel {
     this.commands = opts.commands ?? [];
     this.commandNames = commandNamesOf({ commands: this.commands });
     this.copy = opts.copy ?? (async () => false);
+    this.recorder = opts.recorder;
     // Last: openInitial may settle synchronously enough to touch the
     // fields above.
     this.ready = this.openInitial();
@@ -418,12 +431,30 @@ export class ChatModel {
    * one end that deliberately does not continue: a MentionError put the
    * entry back at the front of the queue. */
   private settle(status: "idle" | "dead", drains = true): void {
+    // Every turn end passes through here, before drain() claims the next
+    // turn and pushes its entry.
+    this.persist();
     if (this.isLoggingIn) {
       this.settledDuringLogin = status;
       return;
     }
     this.status = status;
     if (status === "idle" && drains) this.drain();
+  }
+
+  /** Queues a save of the settled history of the current session. Cheap
+   * and synchronous: the recorder copies the snapshot and writes later. */
+  private persist(): void {
+    this.recorder?.record({
+      conversation: this.conversationHandle,
+      messages: toStored(this.messages.slice(this.sessionStart)),
+    });
+  }
+
+  /** What follows belongs to a new saved session. */
+  private beginSession(): void {
+    this.recorder?.startNew();
+    this.sessionStart = this.messages.length;
   }
 
   /** Sends the oldest queued entry as the next turn, if any. Called at every
@@ -568,6 +599,7 @@ export class ChatModel {
       // stale and no error entry is pushed.
       entry.failed = true;
       if (generation !== this.generation) {
+        this.persist();
         this.onChange();
         return true; // stale: reset ran
       }
@@ -587,6 +619,7 @@ export class ChatModel {
     // always gets the final result (an interrupted one after a reset).
     entry.result = result;
     if (generation !== this.generation) {
+      this.persist();
       this.onChange();
       return true; // stale: reset ran; nothing is sent or held
     }
@@ -778,6 +811,20 @@ export class ChatModel {
           this.onChange();
           return true;
         }
+        try {
+          await this.recorder?.clear();
+        } catch {
+          // The auth state is gone, so the logout itself stands; say what
+          // is left on disk. No detail: the error may name a session file.
+          this.messages.push({
+            role: "error",
+            text: SESSIONS_NOT_DELETED_MESSAGE,
+          });
+          this.onChange();
+        }
+        // Before the reset below persists: what is on screen belongs to
+        // the account that was logged out, and must not be saved again.
+        this.beginSession();
         // The handle belongs to the account that was just logged out of; a
         // new login may not even be able to see that conversation.
         await this.reset(undefined, { forget: true });
@@ -912,6 +959,7 @@ export class ChatModel {
                 text: err instanceof Error ? err.message : String(err),
               },
         );
+        this.persist();
         // Only when nothing else has claimed the model since: a reset that
         // cancelled this login owns the status now. A turn that ended
         // during the login left its outcome in `settledDuringLogin`; that
@@ -975,9 +1023,15 @@ export class ChatModel {
     this.stopShell();
     // Whatever the reason for the reset, the idle close is behind us.
     this.idleClosed = false;
-    // Before the open below reads it, so the new session is asked for a new
-    // chat rather than the conversation the user just walked away from.
-    if (forget) this.conversationHandle = undefined;
+    if (forget) {
+      // The session being left gets its last save under its own handle;
+      // what follows is saved to a new file.
+      this.persist();
+      this.beginSession();
+      // Before the open below reads it, so the new session is asked for a
+      // new chat rather than the conversation the user just walked away from.
+      this.conversationHandle = undefined;
+    }
     this.status = "resetting";
     this.generation++;
     // The interrupted turn's partial belongs to a conversation that is about
@@ -1006,14 +1060,20 @@ export class ChatModel {
         role: "separator",
         text: withRestoreNote(separator, restored),
       });
+      // The `new chat` separator ends nothing that was saved and starts
+      // nothing either: the new file begins with the first prompt.
+      if (forget) this.sessionStart = this.messages.length;
       this.fatal = undefined;
       this.status = "idle";
+      // Before drain(): the entry it claims is not settled yet.
+      this.persist();
       this.drain();
     } catch (err) {
       this.openProgress = undefined;
       this.messages.push({ role: "error", text: this.describe(err) });
       this.fatal = err;
       this.status = "dead";
+      this.persist();
     }
     this.onChange();
   }
