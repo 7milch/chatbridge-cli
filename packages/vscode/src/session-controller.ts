@@ -6,14 +6,18 @@ import {
   type ProviderCommandResult,
   type ResolvedUrl,
   type SendOptions,
+  type SessionRecord,
+  type SessionRecorder,
   UrlHookError,
   closeOrKill,
   formatAttachment,
   restoreNote,
+  resumedSeparator,
   totalSizeProblem,
   withRestoreNote,
 } from "@chatbridge/core";
 import type { Message, QueueEntry, State, Status } from "./protocol.js";
+import { type Origins, fromStored, toStored } from "./stored-messages.js";
 
 /** What the controller needs from a ChatSession; lets tests inject a fake. */
 export interface ChatSessionLike {
@@ -102,6 +106,8 @@ export interface SessionControllerOptions {
   /** URL hook expansion for the text of a turn; the extension builds it from
    * the provider's hooks and the timeout setting. Default: none. */
   expandUrls?: (text: string) => Promise<ResolvedUrl[]>;
+  /** Saves the session as it proceeds. Absent: nothing is saved. */
+  recorder?: SessionRecorder;
 }
 
 export const CLOSE_TIMEOUT_MS = 5_000;
@@ -158,6 +164,15 @@ export class SessionController {
    * host, so a restart starts a new chat. New chat and logout forget it,
    * and so does an open that could not restore it. */
   private conversationHandle: string | undefined;
+  /** The index in `messages` where the current saved session begins. The
+   * history keeps earlier sessions on screen after New chat, so only what
+   * follows this index is saved. */
+  private sessionStart = 0;
+  /** The stored form of resumed entries this view cannot express. */
+  private readonly origins: Origins = new WeakMap();
+  /** True while a logout deletes the saved sessions: nothing that settles
+   * meanwhile is saved. The turn still runs and the view still shows it. */
+  private discarding = false;
   private readonly closeTimeoutMs: number;
 
   constructor(private readonly opts: SessionControllerOptions) {
@@ -213,6 +228,18 @@ export class SessionController {
 
   private emit(): void {
     this.opts.onChange?.(this.getState());
+  }
+
+  /** Queues a save of the settled history of the current session. Cheap
+   * and synchronous: the recorder copies the snapshot and writes later.
+   * Every caller runs it before the `drain()` that may claim the next
+   * turn, so a save never holds that turn's user entry without its end. */
+  private persist(): void {
+    if (this.discarding) return;
+    this.opts.recorder?.record({
+      conversation: this.conversationHandle,
+      messages: toStored(this.messages.slice(this.sessionStart), this.origins),
+    });
   }
 
   addAttachment(a: PendingAttachment): AddResult {
@@ -307,6 +334,7 @@ export class SessionController {
             role: "error",
             text: `${head}${note}`,
           });
+          this.persist();
           // Nothing else will run the entries queued behind this one. Only
           // from `idle`: a stale turn from `close()` must not open a browser
           // after deactivate.
@@ -339,6 +367,7 @@ export class SessionController {
               ? message
               : `${message}\n${droppedAttachmentsLine(dropped)}`,
         });
+        this.persist();
         // Nothing else will run the entries that queued behind this one.
         this.drain();
         return { ok: false, code: "URL_HOOK", message };
@@ -408,6 +437,8 @@ export class SessionController {
       if (generation !== this.generation) return { ok: true }; // stale
       if (result.kind === "show") {
         this.messages.push({ role: "help", text: result.text });
+        // The help entry itself is not saved; the typed `/command` line is.
+        this.persist();
         // Claim the next turn before emitting, so no idle frame is shown.
         this.status = "idle";
         this.drain();
@@ -458,6 +489,9 @@ export class SessionController {
       const before =
         this.messages[last]?.role === "user" ? last : this.messages.length;
       this.messages.splice(before, 0, { role: "separator", text: note });
+      // A turn sent while a logout deleted the sessions sits before
+      // `sessionStart`; the note must not push it into the saved session.
+      if (before < this.sessionStart) this.sessionStart++;
     }
     return session;
   }
@@ -592,6 +626,7 @@ export class SessionController {
         text: reply,
         ...(format === "markdown" ? { format } : {}),
       });
+      this.persist();
       // Claim the next turn before emitting, so no idle frame is shown.
       this.status = "idle";
       this.drain();
@@ -627,6 +662,7 @@ export class SessionController {
 
   private async fail(err: unknown): Promise<SendResult> {
     const { code, message } = this.pushError(err);
+    this.persist();
     // Show the error before `dropSession` (up to `closeTimeoutMs`) runs.
     this.emit();
     if (NON_FATAL_CODES.has(code)) {
@@ -682,6 +718,7 @@ export class SessionController {
     // A fresh chat must not re-send a prompt from before the break.
     this.lastPrompt = undefined;
     this.messages.push({ role: "separator", text: IDLE_CLOSED_SEPARATOR });
+    this.persist();
     this.setStatus("closed");
   }
 
@@ -729,14 +766,77 @@ export class SessionController {
    * call while one is running joins the first. */
   reopen(): Promise<void> {
     if (this.reopening) return this.reopening;
-    const run = this.runReopen().finally(() => {
+    return this.startReopen((restored) =>
+      withRestoreNote(REOPENED_SEPARATOR, restored),
+    );
+  }
+
+  /** Runs a reopen and tracks it, so a Ctrl+R during a resume joins it.
+   * `separatorOf` words the separator from how the open treated the
+   * handle. */
+  private startReopen(
+    separatorOf: (restored: boolean | undefined) => string,
+  ): Promise<void> {
+    const run = this.runReopen(separatorOf).finally(() => {
       this.reopening = undefined;
     });
     this.reopening = run;
     return run;
   }
 
-  private async runReopen(): Promise<void> {
+  /** True when a resume may start: no turn, no open, no reopen in flight,
+   * nothing queued, and no logout deleting the sessions — a resume then
+   * would adopt a record of the account being logged out. */
+  get canResume(): boolean {
+    return (
+      this.canStartTurn &&
+      this.queue.length === 0 &&
+      this.reopening === undefined &&
+      this.opening === undefined &&
+      !this.discarding
+    );
+  }
+
+  /** Replaces the history with `record`'s and reopens the browser on its
+   * conversation. False, with nothing changed, when `canResume` is false.
+   * Pending attachments stay: they are what the user is about to send, not
+   * part of any chat. */
+  async resume(record: SessionRecord): Promise<boolean> {
+    if (!this.canResume) return false;
+    // The session being left gets its final state.
+    this.persist();
+    this.messages = fromStored(record.messages, this.origins);
+    this.sessionStart = 0;
+    this.opts.recorder?.adopt(record);
+    this.conversationHandle = record.conversation;
+    // Neither belongs to the chat that is coming back.
+    this.lastPrompt = undefined;
+    this.lastError = undefined;
+    await this.startReopen(resumedSeparator);
+    return true;
+  }
+
+  /** Logout: deletes every saved session. What is on screen is not saved
+   * again. Rejects when the delete failed. */
+  async clearSessions(): Promise<void> {
+    // Whatever settles while the delete runs — a reply, a command, a queued
+    // turn drained, sent and answered meanwhile — belongs to the account
+    // being logged out, and a save of it would land after the delete.
+    this.discarding = true;
+    try {
+      await this.opts.recorder?.clear();
+    } finally {
+      // Before saving resumes: what is on screen, including a turn that
+      // started during the delete, must not be written back by the next
+      // persist().
+      this.sessionStart = this.messages.length;
+      this.discarding = false;
+    }
+  }
+
+  private async runReopen(
+    separatorOf: (restored: boolean | undefined) => string,
+  ): Promise<void> {
     const generation = ++this.generation;
     this.setStatus("reopening");
     await this.dropSession();
@@ -757,15 +857,14 @@ export class SessionController {
       const restored = requested === undefined ? undefined : session.restored;
       // A handle the service would not open again is a dead one.
       if (restored === false) this.conversationHandle = undefined;
-      this.messages.push({
-        role: "separator",
-        text: withRestoreNote(REOPENED_SEPARATOR, restored),
-      });
+      this.messages.push({ role: "separator", text: separatorOf(restored) });
+      this.persist();
       this.status = "idle";
       this.drain();
       this.emit();
     } catch (err) {
       const { code } = this.pushError(err);
+      this.persist();
       this.lastError = code;
       this.setStatus("dead");
     }
@@ -775,6 +874,9 @@ export class SessionController {
    * false) while a turn is in flight. Clears a dead state. */
   async discard(separator: string): Promise<boolean> {
     if (!this.canStartTurn) return false;
+    // The session being closed gets its final state, with the handle it
+    // is about to lose.
+    this.persist();
     // Before the drop, so it is forgotten even if the close throws: new
     // chat and logout both mean the next open starts a fresh conversation.
     this.conversationHandle = undefined;
@@ -783,7 +885,11 @@ export class SessionController {
     // A fresh chat must not re-send a prompt from before the break.
     this.lastPrompt = undefined;
     this.status = "closed";
+    // After the drop, not before: a turn that settles during it still
+    // belongs to the session being closed. The separator is in neither file.
+    this.opts.recorder?.startNew();
     this.messages.push({ role: "separator", text: separator });
+    this.sessionStart = this.messages.length;
     // The queue outlives the break: drain it into the new chat.
     this.drain();
     this.emit();
@@ -797,6 +903,7 @@ export class SessionController {
       this.status = "closed";
     }
     this.messages.push({ role: "separator", text: "Logged in" });
+    this.persist();
     this.drain();
     this.emit();
   }

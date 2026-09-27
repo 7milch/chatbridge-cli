@@ -8,6 +8,9 @@ import {
   MAX_TOTAL_BYTES,
   type ProviderCommandResult,
   ResponseTimeoutError,
+  type SessionRecord,
+  SessionRecorder,
+  type SessionStoreLike,
   UrlHookError,
   restoreNote,
 } from "@chatbridge/core";
@@ -1786,5 +1789,454 @@ describe("SessionController: streaming and the conversation handle", () => {
 
     await h.controller.reopen();
     expect(h.openedWith).toEqual([undefined, undefined, undefined]);
+  });
+});
+
+describe("SessionController: saved sessions", () => {
+  const OLD = "11111111-1111-4111-8111-111111111111";
+
+  function saved(over: Partial<SessionRecord> = {}): SessionRecord {
+    return {
+      version: 1,
+      id: OLD,
+      provider: "dummy-chat",
+      createdAt: "2026-09-20T00:00:00.000Z",
+      updatedAt: "2026-09-20T00:10:00.000Z",
+      conversation: "H-old",
+      messages: [
+        { role: "user", text: "old question" },
+        { role: "assistant", text: "old answer", format: "markdown" },
+      ],
+      ...over,
+    };
+  }
+
+  function memoryRecorder() {
+    const files = new Map<string, SessionRecord>();
+    const state = {
+      failSave: false,
+      failClear: false,
+      cleared: 0,
+      /** When set, a clear waits for it before deleting. */
+      clearGate: undefined as Promise<void> | undefined,
+    };
+    let next = 1;
+    let failures = 0;
+    const store: SessionStoreLike = {
+      async save(record) {
+        if (state.failSave) throw new Error("disk full");
+        files.set(record.id, structuredClone(record));
+      },
+      load: async (id) => files.get(id),
+      list: async () => [],
+      async prune() {},
+      async clear() {
+        state.cleared++;
+        await state.clearGate;
+        if (state.failClear) throw new Error("permission denied");
+        files.clear();
+      },
+    };
+    const recorder = new SessionRecorder({
+      store,
+      provider: "dummy-chat",
+      newId: () => `id-${next++}`,
+      onSaveFailed: () => {
+        failures++;
+      },
+    });
+    return { recorder, files, state, failures: () => failures };
+  }
+
+  /** A controller whose every open yields a fresh fake session and records
+   * the handle it was given. `next` configures the session the next open
+   * returns. */
+  function setup() {
+    const r = memoryRecorder();
+    const openedWith: Array<string | undefined> = [];
+    const replies: Array<ReturnType<typeof deferred<string>>> = [];
+    const next = {
+      restored: undefined as boolean | undefined,
+      conversation: undefined as string | undefined,
+      openError: undefined as Error | undefined,
+      /** When set, an open waits for it before returning the session. */
+      openGate: undefined as Promise<void> | undefined,
+    };
+    let closed = 0;
+    const controller = new SessionController({
+      recorder: r.recorder,
+      closeTimeoutMs: 20,
+      openSession: async (_onIdle, conversation) => {
+        openedWith.push(conversation);
+        if (next.openError) throw next.openError;
+        await next.openGate;
+        const restored = next.restored;
+        return {
+          restored,
+          get conversation() {
+            return next.conversation;
+          },
+          async send() {
+            const d = deferred<string>();
+            replies.push(d);
+            return d.promise;
+          },
+          async close() {
+            closed++;
+          },
+          async kill() {},
+        };
+      },
+    });
+    /** One settled turn. */
+    async function turn(text: string, reply: string) {
+      const before = replies.length;
+      const p = controller.send(text);
+      // The reply of this turn, not the settled one of an earlier turn.
+      await waitFor(() => replies.length > before);
+      replies.at(-1)?.resolve(reply);
+      await p;
+    }
+    return {
+      r,
+      controller,
+      openedWith,
+      replies,
+      next,
+      turn,
+      closed: () => closed,
+    };
+  }
+
+  test("a settled turn is saved with the handle", async () => {
+    const t = setup();
+    t.next.conversation = "H1";
+    await t.turn("hello", "hi");
+    await t.r.recorder.flush();
+    expect([...t.r.files.values()]).toEqual([
+      expect.objectContaining({
+        id: "id-1",
+        conversation: "H1",
+        messages: [
+          { role: "user", text: "hello" },
+          { role: "assistant", text: "hi" },
+        ],
+      }),
+    ]);
+  });
+
+  test("New chat starts a second file; the separator is in neither", async () => {
+    const t = setup();
+    await t.turn("one", "1");
+    expect(await t.controller.newChat()).toBe(true);
+    await t.turn("two", "2");
+    await t.r.recorder.flush();
+    expect([...t.r.files.values()].map((f) => f.messages)).toEqual([
+      [
+        { role: "user", text: "one" },
+        { role: "assistant", text: "1" },
+      ],
+      [
+        { role: "user", text: "two" },
+        { role: "assistant", text: "2" },
+      ],
+    ]);
+  });
+
+  test("a reopen keeps the file and saves its separator", async () => {
+    const t = setup();
+    await t.turn("one", "1");
+    await t.controller.reopen();
+    await t.r.recorder.flush();
+    expect(t.r.files.size).toBe(1);
+    expect(t.r.files.get("id-1")?.messages.at(-1)).toEqual({
+      role: "separator",
+      text: REOPENED_SEPARATOR,
+    });
+  });
+
+  test("a failed turn is saved with its error", async () => {
+    const t = setup();
+    const p = t.controller.send("slow");
+    await waitFor(() => t.replies.length > 0);
+    t.replies[0]?.reject(new ResponseTimeoutError("Timed out"));
+    await p;
+    await t.r.recorder.flush();
+    expect(t.r.files.get("id-1")?.messages.map((m) => m.role)).toEqual([
+      "user",
+      "error",
+    ]);
+  });
+
+  test("help output is not saved", async () => {
+    const t = setup();
+    t.controller.pushHelp("/help …");
+    await t.turn("one", "1");
+    await t.r.recorder.flush();
+    expect(t.r.files.get("id-1")?.messages.map((m) => m.role)).toEqual([
+      "user",
+      "assistant",
+    ]);
+  });
+
+  test("clearSessions deletes and what is on screen is not saved again", async () => {
+    const t = setup();
+    await t.turn("one", "1");
+    await t.controller.clearSessions();
+    expect(await t.controller.discard("Logged out")).toBe(true);
+    await t.r.recorder.flush();
+    expect(t.r.state.cleared).toBe(1);
+    expect(t.r.files.size).toBe(0);
+  });
+
+  test("clearSessions rejects when the delete failed", async () => {
+    const t = setup();
+    t.r.state.failClear = true;
+    await expect(t.controller.clearSessions()).rejects.toThrow();
+  });
+
+  test("a save that fails does not disturb the turn", async () => {
+    const t = setup();
+    t.r.state.failSave = true;
+    await t.turn("one", "1");
+    await t.turn("two", "2");
+    await t.r.recorder.flush();
+    expect(t.controller.getState().status).toBe("idle");
+    expect(t.r.failures()).toBe(1);
+  });
+
+  test("resume swaps the history, reopens with the handle and notes the restore", async () => {
+    const t = setup();
+    await t.turn("now", "ok");
+    t.next.restored = true;
+    expect(t.controller.canResume).toBe(true);
+    expect(await t.controller.resume(saved())).toBe(true);
+    const s = t.controller.getState();
+    expect(s.status).toBe("idle");
+    expect(s.messages).toEqual([
+      { role: "user", text: "old question", attachments: [] },
+      { role: "assistant", text: "old answer", format: "markdown" },
+      { role: "separator", text: "resumed · conversation restored" },
+    ]);
+    expect(t.openedWith).toEqual([undefined, "H-old"]);
+    expect(t.closed()).toBe(1);
+  });
+
+  test("the session that was left keeps its own file, and later turns go to the resumed one", async () => {
+    const t = setup();
+    t.r.files.set(OLD, saved());
+    await t.turn("now", "ok");
+    t.next.restored = true;
+    t.next.conversation = "H-old";
+    await t.controller.resume(saved());
+    await t.turn("next", "fine");
+    await t.r.recorder.flush();
+    expect(t.r.files.get("id-1")?.messages).toEqual([
+      { role: "user", text: "now" },
+      { role: "assistant", text: "ok" },
+    ]);
+    expect(t.r.files.get(OLD)?.createdAt).toBe("2026-09-20T00:00:00.000Z");
+    expect(t.r.files.get(OLD)?.messages.map((m) => m.text)).toEqual([
+      "old question",
+      "old answer",
+      "resumed · conversation restored",
+      "next",
+      "fine",
+    ]);
+  });
+
+  // Review Focus 5.
+  test("a handle that does not open is noted and removed from the file", async () => {
+    const t = setup();
+    t.next.restored = false;
+    await t.controller.resume(saved());
+    expect(t.controller.getState().messages.at(-1)).toEqual({
+      role: "separator",
+      text: "resumed · conversation could not be restored",
+    });
+    await t.r.recorder.flush();
+    expect("conversation" in (t.r.files.get(OLD) ?? {})).toBe(false);
+    await t.controller.reopen();
+    expect(t.openedWith).toEqual(["H-old", undefined]);
+  });
+
+  test("a record without a handle resumes the transcript only", async () => {
+    const { conversation: _dropped, ...rest } = saved();
+    const t = setup();
+    t.next.restored = true;
+    await t.controller.resume(rest);
+    expect(t.openedWith).toEqual([undefined]);
+    expect(t.controller.getState().messages.at(-1)).toEqual({
+      role: "separator",
+      text: "resumed · transcript only",
+    });
+  });
+
+  test("when the browser does not open, the transcript stays and the handle is kept", async () => {
+    const t = setup();
+    t.next.openError = new AuthRequiredError("No saved auth state.");
+    expect(await t.controller.resume(saved())).toBe(true);
+    const s = t.controller.getState();
+    expect(s.status).toBe("dead");
+    expect(s.messages.slice(0, 2).map((m) => m.text)).toEqual([
+      "old question",
+      "old answer",
+    ]);
+    expect(s.messages.at(-1)?.role).toBe("error");
+    t.next.openError = undefined;
+    t.next.restored = true;
+    await t.controller.reopen();
+    expect(t.openedWith).toEqual(["H-old", "H-old"]);
+  });
+
+  test("refused while a turn is in flight", async () => {
+    const t = setup();
+    const p = t.controller.send("busy");
+    await waitFor(() => t.replies.length > 0);
+    expect(t.controller.canResume).toBe(false);
+    expect(await t.controller.resume(saved())).toBe(false);
+    expect(t.controller.getState().messages[0]?.text).toBe("busy");
+    t.replies[0]?.resolve("done");
+    await p;
+  });
+
+  test("refused while something is queued", async () => {
+    const t = setup();
+    const p = t.controller.send("busy");
+    await waitFor(() => t.replies.length > 0);
+    await t.controller.send("queued");
+    expect(t.controller.canResume).toBe(false);
+    t.replies[0]?.resolve("done");
+    await p;
+    await waitFor(() => t.replies.length > 1);
+    t.replies[1]?.resolve("done too");
+    await waitFor(() => t.controller.getState().status === "idle");
+    expect(t.controller.canResume).toBe(true);
+  });
+
+  test("pending attachments survive a resume", async () => {
+    const t = setup();
+    t.controller.addAttachment({ path: "a.ts", bytes: 3, content: "abc" });
+    await t.controller.resume(saved());
+    expect(t.controller.getState().pendingAttachments).toEqual([
+      { path: "a.ts", bytes: 3 },
+    ]);
+  });
+
+  test("a resumed TUI shell entry is shown as text and saved unchanged", async () => {
+    const shell = {
+      role: "shell" as const,
+      text: "ls",
+      shell: {
+        command: "ls",
+        output: "a\n",
+        exitCode: 0,
+        interrupted: false,
+        droppedBytes: 0,
+        durationMs: 3,
+      },
+    };
+    const t = setup();
+    await t.controller.resume(saved({ messages: [shell] }));
+    expect(t.controller.getState().messages[0]).toEqual({
+      role: "user",
+      text: "$ ls\na\n",
+      attachments: [],
+    });
+    await t.r.recorder.flush();
+    expect(t.r.files.get(OLD)?.messages[0]).toEqual(shell);
+  });
+  describe("while a logout deletes the sessions", () => {
+    /** Starts clearSessions with the delete held until `open()`. */
+    function gatedClear(t: ReturnType<typeof setup>) {
+      const gate = deferred<void>();
+      t.r.state.clearGate = gate.promise;
+      const clearing = t.controller.clearSessions();
+      return {
+        clearing,
+        async open() {
+          gate.resolve();
+          await clearing;
+        },
+      };
+    }
+
+    test("a turn that settles meanwhile is not saved", async () => {
+      const t = setup();
+      await t.turn("one", "1");
+      const p = t.controller.send("two");
+      await waitFor(() => t.replies.length > 1);
+      const c = gatedClear(t);
+      t.replies[1]?.resolve("2");
+      await p;
+      await c.open();
+      await t.r.recorder.flush();
+      expect(t.r.files.size).toBe(0);
+      // The view still shows it.
+      expect(t.controller.getState().messages.at(-1)?.text).toBe("2");
+    });
+
+    test("a queued turn drained, sent and answered meanwhile is not saved", async () => {
+      const t = setup();
+      await t.turn("one", "1");
+      const p = t.controller.send("two");
+      await waitFor(() => t.replies.length > 1);
+      await t.controller.send("three");
+      const c = gatedClear(t);
+      t.replies[1]?.resolve("2");
+      await p;
+      await waitFor(() => t.replies.length > 2);
+      t.replies[2]?.resolve("3");
+      await waitFor(() => t.controller.getState().status === "idle");
+      await c.open();
+      await t.r.recorder.flush();
+      expect(t.r.files.size).toBe(0);
+      expect(t.controller.getState().messages.at(-1)?.text).toBe("3");
+    });
+
+    test("a turn sent meanwhile is not saved, even when its open lands after", async () => {
+      const t = setup();
+      t.next.conversation = "H1";
+      await t.turn("one", "1");
+      // No browser: the next send opens one lazily, and its restore note is
+      // spliced in front of the user entry after the delete has finished.
+      await t.controller.close();
+      t.next.restored = false;
+      const opening = deferred<void>();
+      t.next.openGate = opening.promise;
+      const c = gatedClear(t);
+      const p = t.controller.send("two");
+      await c.open();
+      opening.resolve();
+      await waitFor(() => t.replies.length > 1);
+      t.replies[1]?.resolve("2");
+      await p;
+      await t.r.recorder.flush();
+      expect(t.r.files.size).toBe(0);
+    });
+
+    test("a rejecting delete leaves saving on", async () => {
+      const t = setup();
+      t.r.state.failClear = true;
+      await expect(t.controller.clearSessions()).rejects.toThrow();
+      await t.turn("two", "2");
+      await t.r.recorder.flush();
+      expect([...t.r.files.values()].map((f) => f.messages)).toEqual([
+        [
+          { role: "user", text: "two" },
+          { role: "assistant", text: "2" },
+        ],
+      ]);
+    });
+
+    test("a resume is refused", async () => {
+      const t = setup();
+      const c = gatedClear(t);
+      expect(t.controller.canResume).toBe(false);
+      expect(await t.controller.resume(saved())).toBe(false);
+      expect(t.openedWith).toEqual([]);
+      await c.open();
+      expect(t.controller.canResume).toBe(true);
+    });
   });
 });
