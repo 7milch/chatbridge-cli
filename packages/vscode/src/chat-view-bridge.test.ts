@@ -134,6 +134,22 @@ describe("ChatViewBridge", () => {
     expect(calls).toEqual(["cmd:copy"]);
   });
 
+  test("a /resume command is accepted and routed", () => {
+    const calls: string[] = [];
+    const bridge = new ChatViewBridge(() => state, {
+      ...noopHandlers,
+      command: (n) => calls.push(`cmd:${n}`),
+    });
+    const w = fakeWebview();
+    bridge.attach(w.webview);
+    w.receive({ type: "command", name: "resume" });
+    expect(calls).toEqual(["cmd:resume"]);
+  });
+
+  test("COMMAND_LIST names resume", () => {
+    expect(COMMAND_LIST).toContain("resume");
+  });
+
   test("pushState and pushProgress reach the attached webview only", () => {
     const bridge = new ChatViewBridge(() => state, {
       send() {},
@@ -298,6 +314,7 @@ describe("ChatViewBridge", () => {
       newChat: true,
       installBrowser: true,
       reopen: true,
+      resume: true,
       copy: true,
       help: true,
       pickFiles: true,

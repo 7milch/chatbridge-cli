@@ -815,6 +815,9 @@ export class ChatModel {
       case "reopen":
         await this.reset();
         return true;
+      case "resume":
+        await this.openResumePicker();
+        return true;
       case "logout": {
         // Announced before the reset, so the history reads in the order the
         // steps happened even when reopening then fails.
@@ -1016,11 +1019,14 @@ export class ChatModel {
   /** Whether a `/resume` may replace the chat now. `idle` rules out a turn,
    * a shell command, a login, a reset and the first open; `dead` is allowed
    * because resuming is a way out of it, like `/new`. A queued entry would
-   * otherwise be sent into a conversation it was not written for. */
+   * otherwise be sent into a conversation it was not written for. While
+   * `/logout` deletes the saved sessions the status can read `idle`, and a
+   * record adopted then would belong to the account being logged out. */
   private get canResume(): boolean {
     return (
       (this.status === "idle" || this.status === "dead") &&
-      this.queue.length === 0
+      this.queue.length === 0 &&
+      !this.discarding
     );
   }
 

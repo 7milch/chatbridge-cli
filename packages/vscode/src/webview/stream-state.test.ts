@@ -50,6 +50,28 @@ describe("commonPrefix", () => {
   test("empty", () => {
     expect(commonPrefix([], ["a"])).toBe(0);
   });
+  test("a replaced history shares no prefix with the one before it", () => {
+    const before = [
+      messageKey({ role: "user", text: "now", attachments: [] }),
+      messageKey({ role: "assistant", text: "ok" }),
+    ];
+    const after = [
+      messageKey({ role: "user", text: "old question", attachments: [] }),
+      messageKey({ role: "assistant", text: "old answer", format: "markdown" }),
+      messageKey({ role: "separator", text: "resumed · transcript only" }),
+    ];
+    expect(commonPrefix(before, after)).toBe(0);
+  });
+  test("a replaced history that is shorter keeps only what matches", () => {
+    const same = messageKey({ role: "user", text: "hi", attachments: [] });
+    const before = [
+      same,
+      messageKey({ role: "assistant", text: "a" }),
+      messageKey({ role: "error", text: "e" }),
+    ];
+    const after = [same, messageKey({ role: "assistant", text: "b" })];
+    expect(commonPrefix(before, after)).toBe(1);
+  });
 });
 
 describe("partial lifecycle", () => {

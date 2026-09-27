@@ -3310,6 +3310,137 @@ describe("ChatModel resume", () => {
     await model.ready;
   });
 
+  /** A model on `a` over the saved record, for the refusals whose
+   * arrangement needs options setup() does not take. */
+  async function busyModel(
+    opts: Partial<Parameters<typeof modelWith>[1]> = {},
+  ) {
+    const a = fakeSession("a");
+    const r = memoryRecorder();
+    r.files.set(OLD, saved());
+    const model = await modelWith(a.session, {
+      ...noReopen,
+      recorder: r.recorder,
+      closeTimeoutMs: 20,
+      ...opts,
+    });
+    return { a, r, model };
+  }
+
+  async function expectRefused(model: ChatModel): Promise<void> {
+    await model.openResumePicker();
+    expect(model.picker).toBeUndefined();
+    expect(model.notice).toBe(RESUME_BUSY_MESSAGE);
+    await model.resume(OLD);
+    expect(model.notice).toBe(RESUME_BUSY_MESSAGE);
+  }
+
+  test("refused while a shell command runs", async () => {
+    const runner = fakeRunner();
+    const t = await busyModel({ runCommand: runner.runCommand });
+    const shell = t.model.runShell("sleep");
+    await tick();
+    expect(t.model.status).toBe("running");
+    await expectRefused(t.model);
+    expect(t.model.messages.map((m) => m.role)).toEqual(["shell"]);
+    runner.finish();
+    await tick();
+    nth(t.a.replies, 0).resolve("ok");
+    await shell;
+  });
+
+  test("refused while /login is in flight", async () => {
+    const login = deferred<void>();
+    const openedWith: Array<string | undefined> = [];
+    const b = fakeSession("b");
+    const t = await busyModel({
+      login: () => login.promise,
+      openSession: async (_report, _onIdle, conversation) => {
+        openedWith.push(conversation);
+        return b.session;
+      },
+    });
+    const p = t.model.submit("/login");
+    expect(t.model.status).toBe("logging-in");
+    await expectRefused(t.model);
+    expect(openedWith).toEqual([]);
+    login.resolve();
+    await p;
+    // The login's own reopen, not the saved conversation.
+    expect(openedWith).toEqual([undefined]);
+  });
+
+  test("refused while a reset is in flight", async () => {
+    const gate = deferred<void>();
+    const openedWith: Array<string | undefined> = [];
+    const b = fakeSession("b");
+    const t = await busyModel({
+      openSession: async (_report, _onIdle, conversation) => {
+        openedWith.push(conversation);
+        await gate.promise;
+        return b.session;
+      },
+    });
+    const reset = t.model.reset();
+    await tick();
+    expect(t.model.status).toBe("resetting");
+    await expectRefused(t.model);
+    gate.resolve();
+    await reset;
+    expect(openedWith).toEqual([undefined]);
+    expect(t.model.status).toBe("idle");
+  });
+
+  test("refused while /logout deletes the saved sessions", async () => {
+    const gate = deferred<void>();
+    const openedWith: Array<string | undefined> = [];
+    const b = fakeSession("b");
+    const t = await busyModel({
+      openSession: async (_report, _onIdle, conversation) => {
+        openedWith.push(conversation);
+        return b.session;
+      },
+    });
+    t.r.state.clearGate = gate.promise;
+    const logout = t.model.submit("/logout");
+    await tick();
+    expect(t.r.state.cleared).toBe(1);
+    await expectRefused(t.model);
+    expect(openedWith).toEqual([]);
+    gate.resolve();
+    await logout;
+    // Only the logout's own reopen, with the handle forgotten.
+    expect(openedWith).toEqual([undefined]);
+    expect(t.model.messages.map((m) => m.text)).not.toContain("old question");
+  });
+
+  test("/resume opens the picker and is not sent", async () => {
+    const t = await setup();
+    expect(await t.model.submit("/resume")).toBe(true);
+    expect(t.model.picker?.map((s) => s.id)).toEqual([OLD]);
+    expect(t.a.calls).toEqual([]);
+    expect(t.model.messages).toEqual([]);
+  });
+
+  test("/resume with arguments is an error and opens nothing", async () => {
+    const t = await setup();
+    expect(await t.model.submit("/resume 1")).toBe(false);
+    expect(t.model.picker).toBeUndefined();
+    expect(t.model.messages.at(-1)).toEqual({
+      role: "error",
+      text: "/resume takes no arguments.",
+    });
+  });
+
+  test("/resume typed during a turn is refused, not queued", async () => {
+    const t = await setup();
+    void t.model.submit("busy");
+    await tick();
+    expect(await t.model.submit("/resume")).toBe(true);
+    expect(t.model.queue).toEqual([]);
+    expect(t.model.notice).toBe(RESUME_BUSY_MESSAGE);
+  });
+
   test("resume swaps the history, reopens with the handle and notes the restore", async () => {
     const t = await setup();
     void t.model.submit("now");

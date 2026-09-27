@@ -179,6 +179,14 @@ describe("buildSections: filtering", () => {
     ]);
   });
 
+  test("resume is offered with the built-ins", () => {
+    const sections = buildSections("Dummy Chat", custom, "res");
+    expect(sections.map((s) => s.title)).toEqual(["Commands"]);
+    expect(sections[0]?.items).toEqual([
+      { name: "resume", description: "Go back to a saved session" },
+    ]);
+  });
+
   test("no match at all is no section", () => {
     expect(buildSections("Dummy Chat", custom, "zz")).toEqual([]);
   });

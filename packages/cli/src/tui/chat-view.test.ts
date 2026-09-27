@@ -2580,6 +2580,15 @@ describe("ChatView session picker", () => {
     expect(frame).toContain(POPUP_HINT);
   });
 
+  test("typing /resume and Enter opens the picker", async () => {
+    const t = await setup({ recorder: recorderWith(2) });
+    await t.mockInput.typeText("/resume");
+    t.mockInput.pressEnter();
+    const frame = await t.frameWith("saved prompt 1");
+    expect(frame).toContain("saved prompt 2");
+    expect(t.view.inputText).toBe("");
+  });
+
   test("enter resumes the selected session and redraws the history", async () => {
     const t = await setup({ recorder: recorderWith(2) });
     await t.mockInput.typeText("before");
