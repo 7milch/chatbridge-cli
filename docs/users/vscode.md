@@ -23,9 +23,10 @@ button that runs the same install and retries the turn.
 | Command | Does |
 |---|---|
 | Log in | Shows a cancellable notification `Log in to <Vendor>`. Refused while a turn is in flight: `Wait for the current reply to finish, then log in.` On success, a `Logged in` separator is added to the history. |
-| Log out | Deletes the saved auth state, closes the browser, adds a `Logged out` separator, and forgets the current conversation. |
+| Log out | Deletes the saved auth state, closes the browser, adds a `Logged out` separator, and forgets the current conversation. A message sent while it runs is queued until it finishes. |
 | New Chat | Closes the browser and adds a `New chat` separator; the browser reopens lazily on the next send. Refused mid-turn: `Wait for the current reply to finish, or press Ctrl+R to reopen.` |
 | Reopen Browser (Ctrl+R / Cmd+R while the view is focused) | Replaces the browser regardless of its current state and adds a `reopened` separator, including a restore note about the conversation. |
+| Resume (`<id>.resume`) | Pick a saved session and go back to it. In the view's `...` menu and the palette when the extension's manifest declares it. |
 | Send Selection to \<Vendor\> (editor context menu) | Attaches the current selection as `<path>:L<start>-L<end>` (1-based, inclusive lines), or the whole buffer when nothing is selected. |
 | Send File to \<Vendor\> (explorer context menu) | Attaches the chosen file, or the active editor's buffer when invoked with no file argument. |
 | Focus Chat | Focuses the chat view. |
@@ -41,6 +42,7 @@ the next time the browser opens.
 | `<id>.headless` | The vendor's choice, normally `true` | Set to `false` to show the browser; this is the remedy suggested when the service blocks the browser. |
 | `<id>.timeoutSec` | The vendor's `timeoutMs`, or 120 seconds | Applies to each turn, and to the opening phase unless the provider sets its own `open.timeoutMs`. An invalid value shows one warning per session and falls back to the default. |
 | `<id>.idleTimeoutMinutes` | The provider's own idle timeout, or 1440 minutes (24 hours); `0` disables it | An invalid value shows one warning per session and falls back to the default. |
+| `<id>.saveSessions` | `true` | Save interactive sessions and offer them to Resume. |
 
 See [configuration.md](configuration.md) for how these settings relate to
 the CLI's own configuration.
@@ -87,8 +89,8 @@ format. A provider's URL hooks attach content the same way; see
 ## Slash commands
 
 The composer uses the same parser and built-in commands as the terminal UI
-(`/login`, `/logout`, `/new`, `/reopen`, `/copy`, `/help`, plus whatever the
-provider adds); see [interactive-mode.md](interactive-mode.md) for the full
+(`/login`, `/logout`, `/new`, `/reopen`, `/resume`, `/copy`, `/help`, plus
+whatever the provider adds); see [interactive-mode.md](interactive-mode.md) for the full
 list. `/new` runs New Chat. `/copy` copies the last complete reply to the
 clipboard and reports `Nothing to copy yet.`, `Copied the last reply.`, or
 `Could not copy the last reply.` if the clipboard write fails. An unknown
@@ -135,3 +137,11 @@ When a chat has been idle longer than `<id>.idleTimeoutMinutes`, the browser
 closes and a `closed after idle` separator is added. The next message
 reopens the browser lazily, restoring the conversation when possible and
 adding a restore note otherwise.
+
+## Saved sessions
+
+See [Saved sessions and /resume](interactive-mode.md#saved-sessions-and-resume)
+for what is saved, the separators and the retention rule; it applies here too.
+Two differences from the terminal UI: the picker is VSCode's own QuickPick
+(type to filter), and a `!` command saved by the TUI is shown as plain text
+(`$ command` and its output).

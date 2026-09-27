@@ -14,7 +14,8 @@ export const { activate, deactivate } = createExtension({
   ui: {
     welcome: "Ask the dummy chat anything.\nReplies are echoes.",
     banner: "media/banner.svg",
-    footer: "Conversations are not stored by this extension.",
+    footer:
+      "Conversations are saved on this machine only. Log out to delete them.",
     sendButton: { background: "#2f6f4f", foreground: "#ffffff" },
     userMessage: { borderColor: "#2f6f4f" },
   },

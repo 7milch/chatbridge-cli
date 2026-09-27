@@ -24,6 +24,7 @@ Type `/` followed by a word. Built-in commands run immediately in any state, eve
 | `/logout` | Separator `Logged out`, deletes the saved auth state, reopens the browser, and forgets the current conversation. |
 | `/new` | Separator `new chat`, reopens the browser, and forgets the current conversation. |
 | `/reopen` | Same as Ctrl+R. Separator `reopened`; restores the conversation when the provider supports it, noted as `reopened · conversation restored` or `reopened · conversation could not be restored`. |
+| `/resume` | Go back to a saved session. Opens a list of this provider's saved sessions; Up/Down to move, Enter to resume, Esc to cancel. |
 | `/copy` | Copies the last complete reply as raw text. Shows `copied`, `copy failed`, or `nothing to copy yet` on the status line for 2 seconds. |
 | `/help` | Lists built-ins, then the provider's own commands, one aligned line each. |
 
@@ -155,9 +156,47 @@ A response timeout leaves the session usable for the next turn. Any other error 
 
 After 24 hours without a turn (configurable; see [configuration.md](configuration.md)) the browser closes and the auth state is saved. The status guide changes to the idle message shown above. Your next prompt reopens the browser, with a `reopened after idle` separator plus the same restore note `/reopen` uses.
 
-The conversation handle used to restore a chat lives only in memory: `/new` and `/logout` forget it, same as `/reopen`'s reset does when asked to forget.
+The handle is kept in memory and saved with the session, so `/resume` can return to the conversation in a later run. `/new` and `/logout` forget it, same as `/reopen`'s reset does when asked to forget.
 
 While the browser is closed from being idle, `/copy` and `!` shell commands still work; a shell result is held and goes out with the next message.
+
+## Saved sessions and /resume
+
+Every interactive session is saved as it proceeds, one file per session, under
+`~/.config/<configDir>/sessions/<provider name>/`. A session in which nothing
+was sent leaves no file. `/new` starts a new saved session; `/reopen` and the
+reopen after an idle close stay in the same one.
+
+`/resume` lists the saved sessions of the current provider, newest first, each
+with its last update, the first line of its first prompt and its number of
+turns. The session you are in is not listed. Resuming replaces the history on
+screen with the saved one and reopens the browser. The separator that follows
+says what came back:
+
+| Separator | Meaning |
+|---|---|
+| `resumed · conversation restored` | The service reopened the conversation. It continues where it stopped. |
+| `resumed · conversation could not be restored` | The service did not reopen it. The history is on screen, but the assistant starts a new chat and does not know it. |
+| `resumed · transcript only` | The session had no conversation to reopen, or the provider cannot name its conversations. Same consequence as above. |
+
+`/resume` waits its turn: while a reply, a shell command, a login or a reopen is
+in flight, or while messages are queued, it answers
+`Wait for the current step to finish before /resume.` and does nothing.
+
+While the picker is open it is modal: typing does not reach the input box and
+Ctrl+R does not reopen the browser.
+
+Saved sessions need no housekeeping. Sessions not updated for 14 days are
+deleted, and only the 50 most recent are kept. `/logout` and `auth logout`
+delete every saved session of the provider. An expired login deletes nothing.
+
+What is saved: the messages as the history shows them, the output of `!`
+commands, the paths and sizes of attached files, and the conversation handle.
+Not saved: the content of attached files, `/help` output, and a reply still
+being written.
+
+To turn saving off, see `sessions.enabled` in
+[configuration](configuration.md). One-shot mode (`-p`) never saves.
 
 ## Copying
 

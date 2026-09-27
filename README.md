@@ -4,6 +4,8 @@ A reusable OSS framework for using web-based chat AI services from the command l
 
 Service-specific behaviour (URLs, DOM selectors, login flows, response detection) is isolated behind a Provider / Adapter interface, so the same core can drive multiple web chat AI services.
 
+Interactive sessions are saved locally and `/resume` goes back to one, conversation included when the provider supports it.
+
 ## Concept
 
 ```

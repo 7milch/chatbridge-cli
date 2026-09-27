@@ -47,6 +47,10 @@ Agreed with the maintainer during brainstorming:
 - Encrypting saved sessions.
 - Storing sessions in the OS temp directory. Considered and rejected: the path
   and the clean-up behaviour differ per OS, Windows in particular.
+- Fixing the interactive `/logout` and the VSCode Log out command leaving the
+  auth state on disk (#137). Both delete the saved sessions as this milestone
+  intends; the auth-state deletion they already claim to do is a pre-existing
+  defect, tracked separately.
 
 ## Design
 
@@ -184,6 +188,8 @@ Both the TUI `ChatModel` and the VSCode `SessionController` follow this table.
 - A failed save does not stop the chat. The UI shows
   `Could not save this session.` once per session, not per turn, and tries
   again on the next save.
+- Nothing that settles while a logout is deleting the saved sessions is
+  saved, and `/resume` is refused during that time, in both UIs.
 
 ### 3. Turning saving off
 
@@ -275,6 +281,10 @@ VSCode. They are not history entries, so they are never saved.
   so resuming and saving in VSCode does not lose the `shell` data.
 - `discard` already refuses while a turn is in flight; `/resume` follows the
   same rule.
+- A logout claims the controller for its whole duration: no turn starts and
+  nothing is saved from the moment it begins until the `Logged out` separator
+  is pushed. A send that arrives meanwhile queues instead of running. New chat
+  claims the controller the same way while it closes the browser.
 
 ### 7. Security and privacy
 

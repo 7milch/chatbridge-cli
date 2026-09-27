@@ -29,7 +29,7 @@ process.exitCode = await createCli({
   banner: {
     lines: [
       "<Vendor> internal assistant",
-      "Conversations are not stored by this CLI.",
+      "Conversations are saved on this machine only. Log out to delete them.",
     ],
     colors: ["#ff5f87", "#ffaf00"],
     mode: "gradient",

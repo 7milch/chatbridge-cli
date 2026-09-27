@@ -23,7 +23,7 @@ It runs these checks in this order. Each failure throws a plain `Error` with the
 | # | Checks | Message |
 |---|---|---|
 | 1 | Each `commands[].name` matches `/^[a-z]+$/` | `Provider command name "<n>" must match /^[a-z]+$/.` |
-| 2 | No command uses a built-in name: `login`, `logout`, `new`, `reopen`, `copy`, `help` | `Provider command "/<n>" collides with a built-in command.` |
+| 2 | No command uses a built-in name: `login`, `logout`, `new`, `reopen`, `resume`, `copy`, `help` | `Provider command "/<n>" collides with a built-in command.` |
 | 3 | No command name appears twice | `Provider command "/<n>" is defined twice.` |
 | 4 | No `urlHooks[].match` RegExp has the `g` or `y` flag | `URL hook RegExp <re> must not use the g or y flag (it makes .test stateful).` |
 | 5 | `browser.reducedMotion`, if set, is `"reduce"` or `"no-preference"` | `Provider browser.reducedMotion must be "reduce" or "no-preference", got <value>.` |
@@ -208,6 +208,11 @@ The first fires for an empty, absolute or escaping (`..`) path.
         "icon": "$(refresh)"
       },
       {
+        "command": "<vendor>.resume",
+        "title": "Resume",
+        "category": "<Vendor>"
+      },
+      {
         "command": "<vendor>.installBrowser",
         "title": "Install Browser",
         "category": "<Vendor>"
@@ -252,6 +257,11 @@ The first fires for an empty, absolute or escaping (`..`) path.
           "command": "<vendor>.reopen",
           "when": "view == <vendor>.chat",
           "group": "navigation@2"
+        },
+        {
+          "command": "<vendor>.resume",
+          "when": "view == <vendor>.chat",
+          "group": "0_session@1"
         },
         {
           "command": "<vendor>.login",
@@ -303,6 +313,11 @@ The first fires for an empty, absolute or escaping (`..`) path.
         "<vendor>.idleTimeoutMinutes": {
           "type": "number",
           "description": "Minutes of inactivity before the browser is closed; 0 disables. Unset: the provider's own value, normally 1440."
+        },
+        "<vendor>.saveSessions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Save chat sessions on this machine so that Resume can go back to them."
         }
       }
     }
@@ -317,12 +332,14 @@ What each part does, and what happens without it:
 | `views.<id>` | webview `<id>.chat` | Required |
 | `commands` | `<id>.login`, `<id>.logout`, `<id>.newChat`, `<id>.reopen`, `<id>.installBrowser`, `<id>.sendSelection`, `<id>.sendFile`, `<id>.focus` | Required |
 | `commands` | `<id>.help` | Recommended |
+| `commands` | `<id>.resume` | Recommended |
 | `commands[].icon` | `$(add)` on `<id>.newChat`, `$(refresh)` on `<id>.reopen` | Recommended |
 | `menus.view/title` | `newChat` `navigation@1`, `reopen` `navigation@2`, `login` `1_auth@1`, `logout` `1_auth@2`, `installBrowser` `2_setup@1`, `help` `3_help@1`, each with `when: "view == <id>.chat"` | Recommended |
+| `menus.view/title` | `<id>.resume` | Recommended |
 | `keybindings` | `ctrl+r` / `cmd+r` on `<id>.reopen` when `focusedView == <id>.chat` | Not checked |
 | `menus.editor/context` | `<id>.sendSelection` | Not checked |
 | `menus.explorer/context` | `<id>.sendFile` with `when: "!explorerResourceIsFolder"` | Not checked |
-| `configuration` | `<id>.headless`, `<id>.timeoutSec`, `<id>.idleTimeoutMinutes` | Not checked |
+| `configuration` | `<id>.headless`, `<id>.timeoutSec`, `<id>.idleTimeoutMinutes`, `<id>.saveSessions` | Not checked |
 
 **Required.** A missing entry stops activation. The error lists every missing id:
 
@@ -330,11 +347,11 @@ What each part does, and what happens without it:
 <displayName>: package.json lacks contributes entries for "<id>": commands: <id>.focus, views.<id>: <id>.chat
 ```
 
-**Recommended.** A missing entry logs one `console.warn` and activation carries on. The view title bar stays empty, and the composer's `/` menu still reaches every action. `<id>.help` is registered whether or not it is declared; declaring it adds it to the palette and the title bar. Only the two `navigation` commands render as icons, so only they need an `icon`. The check matches `view/title` entries by their `when`; it does not check `group`.
+**Recommended.** A missing entry logs one `console.warn` and activation carries on. The view title bar stays empty, and the composer's `/` menu still reaches every action. `<id>.help` and `<id>.resume` are registered whether or not they are declared; declaring them adds them to the palette and the title bar. Only the two `navigation` commands render as icons, so only they need an `icon`. The check matches `view/title` entries by their `when`; it does not check `group`.
 
 **Not checked.** The keybinding and the two context menus only add shortcuts. The webview also handles Ctrl+R itself when the composer has focus.
 
-**Settings.** The extension reads only values the user set, at folder, workspace or global scope. A `default` declared in the manifest is ignored at runtime, so `<id>.headless` falls back to your `headless` option, `<id>.timeoutSec` to your `timeoutMs` option, and `<id>.idleTimeoutMinutes` to the provider's `idle.timeoutMs`. Declare a `default` only where it helps the Settings UI, as the template does for `<id>.headless`, and keep it in step with the option you pass. State the real fallback in each `description`.
+**Settings.** The extension reads only values the user set, at folder, workspace or global scope. A `default` declared in the manifest is ignored at runtime, so `<id>.headless` falls back to your `headless` option, `<id>.timeoutSec` to your `timeoutMs` option, `<id>.idleTimeoutMinutes` to the provider's `idle.timeoutMs`, and `<id>.saveSessions` to `true`. Declare a `default` only where it helps the Settings UI, as the template does for `<id>.headless` and `<id>.saveSessions`, and keep it in step with the option you pass. State the real fallback in each `description`.
 
 The user-facing view of these commands and settings is in [../users/vscode.md](../users/vscode.md).
 

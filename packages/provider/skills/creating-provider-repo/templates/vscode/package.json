@@ -161,6 +161,11 @@
         "<vendor>.idleTimeoutMinutes": {
           "type": "number",
           "description": "Minutes of inactivity before the browser is closed; 0 disables. Unset: the provider's own value, normally 1440."
+        },
+        "<vendor>.saveSessions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Save chat sessions on this machine so that Resume can go back to them."
         }
       }
     }
